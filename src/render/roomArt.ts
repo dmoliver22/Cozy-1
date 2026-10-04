@@ -15,7 +15,7 @@ export interface Theme {
 }
 
 export const THEMES: Record<ThemeId, Theme> = {
-  kitchen: { wall: '#F6EBDC', wallLow: '#F1E2CD', trim: '#FBF6EE', floor: PALETTE.oak, accent: PALETTE.teacup, cabinet: '#BFDCCB', pattern: 'plain' },
+  kitchen: { wall: '#F8EAD3', wallLow: '#F2DDBF', trim: '#FBF6EE', floor: PALETTE.oak, accent: PALETTE.teacup, cabinet: '#BFDCCB', pattern: 'plain' },
   bathroom: { wall: '#EEF3EC', wallLow: PALETTE.mint, trim: '#FFFFFF', floor: '#D9CFC2', accent: PALETTE.rose, cabinet: '#F3E6D6', pattern: 'tiles' },
   living: { wall: '#F4E1CF', wallLow: '#E9CDB4', trim: '#FBF3E8', floor: PALETTE.oak, accent: PALETTE.ginger, cabinet: '#E2C6A6', pattern: 'stripes' },
   laundry: { wall: '#E3ECF2', wallLow: '#CFDDE8', trim: '#FAFCFD', floor: '#CDB89C', accent: PALETTE.butter, cabinet: '#F4EADB', pattern: 'dots' },
@@ -164,7 +164,7 @@ export function drawSunbeams(ctx: Ctx, decor: DecorPlacement[]): void {
   ctx.save();
   ctx.globalCompositeOperation = 'soft-light';
   for (const d of decor) {
-    if (d.type !== 'window') continue;
+    if (d.type !== 'window' || d.variant === 3) continue;
     const w = d.w ?? 110;
     const h = d.h ?? 130;
     const x0 = d.x - w / 2;
@@ -172,8 +172,8 @@ export function drawSunbeams(ctx: Ctx, decor: DecorPlacement[]): void {
     const drop = FLOOR_Y + 30 - (y0 + h);
     const skew = drop * 0.55;
     const g = ctx.createLinearGradient(0, y0, 0, FLOOR_Y + 30);
-    g.addColorStop(0, 'rgba(255,236,190,0.9)');
-    g.addColorStop(1, 'rgba(255,236,190,0.15)');
+    g.addColorStop(0, 'rgba(255,226,160,0.95)');
+    g.addColorStop(1, 'rgba(255,226,160,0.2)');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.moveTo(x0 + 6, y0 + h);
@@ -201,11 +201,18 @@ export function drawDecor(ctx: Ctx, d: DecorPlacement, theme: Theme, seed: numbe
       ctx.strokeStyle = shade(theme.trim, 0.18);
       ctx.lineWidth = 1.6;
       ctx.stroke();
+      const night = (d.variant ?? 0) === 3;
       // sky
       const g = ctx.createLinearGradient(0, y, 0, y + h);
-      g.addColorStop(0, '#BFDDF2');
-      g.addColorStop(0.7, '#F6E7C8');
-      g.addColorStop(1, '#F9D9A9');
+      if (night) {
+        g.addColorStop(0, '#2E3159');
+        g.addColorStop(0.7, '#4B4A7A');
+        g.addColorStop(1, '#6B5F8E');
+      } else {
+        g.addColorStop(0, '#BFDDF2');
+        g.addColorStop(0.7, '#F6E7C8');
+        g.addColorStop(1, '#F9D9A9');
+      }
       ctx.fillStyle = g;
       roundRect(ctx, x, y, w, h, 6);
       ctx.fill();
@@ -213,11 +220,29 @@ export function drawDecor(ctx: Ctx, d: DecorPlacement, theme: Theme, seed: numbe
       ctx.save();
       roundRect(ctx, x, y, w, h, 6);
       ctx.clip();
-      ctx.fillStyle = 'rgba(255,240,200,0.95)';
-      ctx.beginPath();
-      ctx.arc(x + w * 0.72, y + h * 0.55, w * 0.16, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      if (night) {
+        // moon and stars
+        ctx.fillStyle = '#FFF4CF';
+        ctx.beginPath();
+        ctx.arc(x + w * 0.7, y + h * 0.3, w * 0.13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#3B3D69';
+        ctx.beginPath();
+        ctx.arc(x + w * 0.75, y + h * 0.27, w * 0.12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,248,220,0.9)';
+        for (let k = 0; k < 14; k++) {
+          const sx = x + hash01(seed, k + 40) * w;
+          const sy = y + hash01(seed, k + 80) * h * 0.65;
+          ctx.fillRect(sx, sy, 1.6, 1.6);
+        }
+      } else {
+        ctx.fillStyle = 'rgba(255,240,200,0.95)';
+        ctx.beginPath();
+        ctx.arc(x + w * 0.72, y + h * 0.55, w * 0.16, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = night ? 'rgba(170,170,220,0.35)' : 'rgba(255,255,255,0.75)';
       for (let k = 0; k < 3; k++) {
         const cx = x + w * (0.15 + hash01(seed, k) * 0.6);
         const cy = y + h * (0.15 + hash01(seed, k + 9) * 0.25);
@@ -226,7 +251,7 @@ export function drawDecor(ctx: Ctx, d: DecorPlacement, theme: Theme, seed: numbe
         ctx.ellipse(cx + 10, cy - 3, 10, 6, 0, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = '#A9C3A0';
+      ctx.fillStyle = night ? '#3E4A62' : '#A9C3A0';
       ctx.beginPath();
       ctx.moveTo(x, y + h);
       ctx.quadraticCurveTo(x + w * 0.3, y + h * 0.72, x + w * 0.6, y + h * 0.86);

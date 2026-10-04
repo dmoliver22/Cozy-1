@@ -345,7 +345,7 @@ export const BREEDS: Record<BreedId, Breed> = {
     name: 'The Void',
     flow: 'pours like ink',
     flowShort: 'ink',
-    blurb: 'A small night that wandered in. Fits in absolutely anything.',
+    blurb: 'A small night that wandered in. Light as a shadow, fits in absolutely anything.',
     secret: true,
     physics: {
       radius: 28,
@@ -361,7 +361,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.3,
       upright: 0.03,
       hop: 360,
-      pull: 1.8,
+      pull: 2.05,
       slurp: 1.2,
       plasticity: 1.4,
       loafAspect: 1.3,

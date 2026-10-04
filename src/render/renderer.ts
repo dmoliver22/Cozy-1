@@ -41,6 +41,9 @@ export interface HintGhost {
 }
 
 export class Renderer {
+  static nightTint = 'rgba(104,96,172,0.52)';
+  static nightGlowOp: GlobalCompositeOperation = 'lighter';
+  static lampColor = 'rgba(255,170,90,0.34)';
   readonly canvas: HTMLCanvasElement;
   readonly ctx: Ctx;
   dpr = 1;
@@ -128,6 +131,26 @@ export class Renderer {
     this.camTarget = { x, y, zoom };
   }
 
+  /** Keep a zoomed camera inside the painted room (no peeking past the edges). */
+  private clampCamera(): void {
+    const z = this.cam.zoom;
+    if (z <= 1.0001) return;
+    const vr = this.visibleWorldRect();
+    const halfW = (vr.x1 - vr.x0) / 2 / z;
+    const halfH = (vr.y1 - vr.y0) / 2 / z;
+    // the rest view is centred on (restCx, restCy); visible rect at zoom 1 is vr
+    const restCx = WORLD_W / 2;
+    const restCy = (ROOM_TOP + ROOM_BOTTOM) / 2;
+    const offX = (vr.x0 + vr.x1) / 2 - restCx;
+    const offY = (vr.y0 + vr.y1) / 2 - restCy;
+    const minX = vr.x0 + halfW - offX;
+    const maxX = vr.x1 - halfW - offX;
+    const minY = vr.y0 + halfH - offY;
+    const maxY = vr.y1 - halfH - offY;
+    this.cam.x = clamp(this.cam.x, Math.min(minX, maxX), Math.max(minX, maxX));
+    this.cam.y = clamp(this.cam.y, Math.min(minY, maxY), Math.max(minY, maxY));
+  }
+
   /** world -> css px for the current camera */
   private camTransform(): { s: number; tx: number; ty: number } {
     const s = this.scale * this.cam.zoom;
@@ -169,7 +192,7 @@ export class Renderer {
   private ensureLayers(): void {
     const s = this.session;
     if (!s) return;
-    const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${s.props.map((p) => `${p.uid}:${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('|')}:${[...this.liveProps].join(',')}`;
+    const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${s.props.map((p) => (this.liveProps.has(p.uid) ? `${p.uid}:live` : `${p.uid}:${p.x.toFixed(1)},${p.y.toFixed(1)}`)).join('|')}`;
     if (key === this.layerKey && this.layerBack) return;
     this.layerKey = key;
     const r = this.visibleWorldRect();
@@ -366,6 +389,7 @@ export class Renderer {
     this.cam.x = lerp(this.cam.x, this.camTarget.x, k);
     this.cam.y = lerp(this.cam.y, this.camTarget.y, k);
     this.cam.zoom = lerp(this.cam.zoom, this.camTarget.zoom, k);
+    this.clampCamera();
     this.glow = lerp(this.glow, this.glowTarget, damp(1.5, dt));
 
     const dpr = this.dpr;
@@ -401,6 +425,8 @@ export class Renderer {
     for (const cat of s.cats) if (cat.seat) this.drawPurr(ctx, cat);
     this.drawHint(ctx, dt);
     this.drawEffects(ctx, dt);
+    // lamp-lit night rooms: dusk tint with warm pools of light
+    if (this.def?.mood === 'night') this.drawNight(ctx);
     // screen-space overlays
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (this.glow > 0.01) {
@@ -417,7 +443,7 @@ export class Renderer {
     if (this.grain) {
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = 0.32;
+      ctx.globalAlpha = 0.24;
       ctx.fillStyle = this.grain;
       ctx.fillRect(0, 0, this.W, this.H);
       ctx.restore();
@@ -425,9 +451,30 @@ export class Renderer {
     // vignette
     const vg = ctx.createRadialGradient(this.W / 2, this.H / 2, Math.min(this.W, this.H) * 0.45, this.W / 2, this.H / 2, Math.max(this.W, this.H) * 0.8);
     vg.addColorStop(0, 'rgba(62,58,79,0)');
-    vg.addColorStop(1, 'rgba(62,58,79,0.14)');
+    vg.addColorStop(1, 'rgba(62,58,79,0.1)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, this.W, this.H);
+  }
+
+  private drawNight(ctx: Ctx): void {
+    const r = this.layerRect;
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = Renderer.nightTint;
+    ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    ctx.globalCompositeOperation = Renderer.nightGlowOp;
+    for (const d of this.def!.decor) {
+      if (d.type !== 'pendant' && d.type !== 'window') continue;
+      const cx = d.x;
+      const cy = d.type === 'pendant' ? d.y + 20 : d.y + (d.h ?? 120) / 2;
+      const rad = d.type === 'pendant' ? 230 : 120;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      g.addColorStop(0, d.type === 'pendant' ? Renderer.lampColor : 'rgba(150,160,230,0.22)');
+      g.addColorStop(1, 'rgba(255,196,120,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+    }
+    ctx.restore();
   }
 
   private poseFor(cat: Cat, v: CatView): CatPose {

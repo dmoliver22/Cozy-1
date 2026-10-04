@@ -7,7 +7,8 @@ import type { BodySnapshot, SoftBody } from '../physics/softbody';
 import { GRAVITY, type World } from '../physics/world';
 import { clamp } from '../util/math';
 import { cozyScore, measureOverlap, shareFace, type CozyResult, type Overlap } from './fit';
-import { FLOOR_Y, WORLD_W, type Prop } from './props';
+import { buildContainer, FLOOR_Y, WORLD_W, type ContainerPlacement, type Prop } from './props';
+import { SoftBody as Body } from '../physics/softbody';
 import { buildRoom, type RoomDef } from './room';
 
 /** Fraction of the finger's force that may point upward (cats are lazy). */
@@ -522,6 +523,87 @@ export class Session {
     });
     const cozy = cats.length ? Math.round(cats.reduce((a, c) => a + c.score, 0) / cats.length) : 0;
     return { cats, cozy, paws: this.paws, par: this.def.par, faces: cats.map((c) => c.face).join('') };
+  }
+
+  // --- Sandbox editing -------------------------------------------------------
+
+  private registerShapes(): void {
+    this.shapeToContainer.clear();
+    this.shapeIsFurniture.clear();
+    this.containers.forEach((c, i) => c.shapes.forEach((sh) => this.shapeToContainer.set(sh.id, i)));
+    for (const sh of this.world.statics) if (!this.shapeToContainer.has(sh.id)) this.shapeIsFurniture.add(sh.id);
+  }
+
+  /** Drop a new cat into the room (sandbox). */
+  addCat(breed: BreedId, x: number, y: number, name: string): Cat {
+    const body = new Body(breed, x, y);
+    this.world.addBody(body);
+    const cat: Cat = {
+      index: this.cats.length,
+      name,
+      breed,
+      body,
+      seat: null,
+      settled: 0,
+      near: -1,
+      overlaps: this.containers.map(() => ({ covered: 0, fill: 0, inside: 0 })),
+      blockedBy: -1,
+      lastPour: -999,
+      grabbed: false,
+      sinceTouch: 999,
+      intent: null,
+    };
+    this.cats.push(cat);
+    return cat;
+  }
+
+  addContainer(placement: ContainerPlacement): Prop {
+    const prop = buildContainer(placement);
+    for (const sh of prop.shapes) this.world.addStatic(sh);
+    this.containers.push(prop);
+    this.props.push(prop);
+    for (const c of this.cats) c.overlaps.push({ covered: 0, fill: 0, inside: 0 });
+    this.registerShapes();
+    return prop;
+  }
+
+  /** Rebuild a container at a new spot (sandbox drag). */
+  moveContainer(k: number, x: number, y: number): Prop {
+    const old = this.containers[k];
+    this.world.removeStaticsOfProp(old.uid);
+    const prop = buildContainer({ type: old.type as ContainerPlacement['type'], x, y, flip: old.flip, scale: old.scale, tint: old.tint }, old.uid);
+    for (const sh of prop.shapes) this.world.addStatic(sh);
+    this.containers[k] = prop;
+    this.props[this.props.indexOf(old)] = prop;
+    for (const c of this.cats) {
+      if (c.seat?.container === k) c.seat = null;
+      if (c.intent?.k === k) c.intent = null;
+    }
+    this.registerShapes();
+    return prop;
+  }
+
+  removeContainer(k: number): void {
+    const old = this.containers[k];
+    this.world.removeStaticsOfProp(old.uid);
+    this.containers.splice(k, 1);
+    this.props.splice(this.props.indexOf(old), 1);
+    for (const c of this.cats) {
+      c.overlaps.splice(k, 1);
+      if (c.seat) {
+        if (c.seat.container === k) c.seat = null;
+        else if (c.seat.container > k) c.seat.container--;
+      }
+      c.intent = null;
+    }
+    this.registerShapes();
+  }
+
+  removeCat(cat: Cat): void {
+    if (this.grabbing === cat) this.endGrab();
+    this.world.removeBody(cat.body);
+    this.cats.splice(this.cats.indexOf(cat), 1);
+    this.cats.forEach((c, i) => (c.index = i));
   }
 
   /** A gentle suggestion: which cat to nudge toward which container. */

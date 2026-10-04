@@ -22,7 +22,7 @@ export type ContainerType =
 
 export type FurnitureType = 'shelf' | 'counter' | 'table' | 'stool' | 'fridge' | 'cabinet' | 'sill' | 'ramp' | 'bookcase' | 'crate';
 
-export const WORLD_W = 360;
+export const WORLD_W = 380;
 export const FLOOR_Y = 560;
 
 type Part =
@@ -298,11 +298,11 @@ function toWorld(p: Vec2, x: number, y: number, s: number, flip: boolean): Vec2 
   return { x: x + (flip ? -p.x : p.x) * s, y: y + p.y * s };
 }
 
-export function buildContainer(c: ContainerPlacement): Prop {
+export function buildContainer(c: ContainerPlacement, keepUid?: number): Prop {
   const spec = CONTAINERS[c.type];
   const s = c.scale ?? 1;
   const flip = !!c.flip;
-  const uid = nextPropUid++;
+  const uid = keepUid ?? nextPropUid++;
   const shapes: StaticShape[] = [];
   const opts = { material: spec.material, propId: uid, container: true, friction: spec.friction ?? 0.5 };
   for (const part of spec.parts) {

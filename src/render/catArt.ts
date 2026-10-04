@@ -5,7 +5,7 @@
 import type { BreedLook } from '../physics/breeds';
 import { NODE_RADIUS, type SoftBody } from '../physics/softbody';
 import { clamp } from '../util/math';
-import { hash01, shade, smoothClosedPath, tint, type Ctx } from './paint';
+import { hash01, mix, shade, smoothClosedPath, tint, type Ctx } from './paint';
 
 export type Expression = 'open' | 'happy' | 'sleepy' | 'wide' | 'squint' | 'blink' | 'content';
 
@@ -360,7 +360,7 @@ export function drawCat(ctx: Ctx, b: SoftBody, v: CatView, pose: CatPose, scaleH
     const cxm = ol.cx;
     // belly shade
     const g = ctx.createRadialGradient(cxm, ol.maxY + r * 0.2, r * 0.2, cxm, ol.maxY + r * 0.2, Math.max(r * 1.3, (ol.maxX - ol.minX) * 0.7));
-    g.addColorStop(0, shade(look.body, 0.18));
+    g.addColorStop(0, mix(look.body, look.persona === 'void' ? '#1E1B28' : '#8A5A3A', 0.16));
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(ol.minX - 5, ol.minY - 5, ol.maxX - ol.minX + 10, ol.maxY - ol.minY + 10);

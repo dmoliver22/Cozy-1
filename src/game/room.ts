@@ -85,6 +85,8 @@ export interface RoomDef {
   plan?: PlanStep[];
   /** First-run guided room. */
   tutorial?: boolean;
+  /** Lighting: sunny afternoon (default) or lamp-lit night. */
+  mood?: 'day' | 'night';
   subtitle?: string;
 }
 
