@@ -1,12 +1,12 @@
 // Cat Drop: little painted effects in world space: puffs of fluff on a
 // landing, sparkles and a "+12" when a fish is eaten, droplets when a cat
-// plops out of a tube, hearts, and bath time's drizzle, drips and loose soap
-// bubbles that drift down and pop.
+// plops out of a tube, and hearts. (Bath time's bubbles and drops are
+// simulated in suds.ts.)
 
 import { lightOf, pill, rgba, shadowOf, type Ctx } from '../../render/paint';
 import { sparkle } from '../../render/propKit';
 
-type Kind = 'puff' | 'spark' | 'heart' | 'label' | 'drop' | 'ring' | 'rain' | 'bubble';
+type Kind = 'puff' | 'spark' | 'heart' | 'label' | 'drop' | 'ring';
 
 interface P {
   kind: Kind;
@@ -26,8 +26,6 @@ interface P {
 
 export class Fx {
   private list: P[] = [];
-  /** Called when a loose bubble pops (for a sound). */
-  onPop: ((x: number, y: number) => void) | null = null;
 
   clear(): void {
     this.list.length = 0;
@@ -82,30 +80,11 @@ export class Fx {
     }
   }
 
-  /** A drop of bath time's drizzle, falling. */
-  rain(x: number, y: number, vy: number): void {
-    this.add('rain', x, y, { vx: (Math.random() - 0.5) * 16, vy, life: 0.75 + Math.random() * 0.4, size: 1 + Math.random() * 0.5 });
-  }
-
-  /** A drip off a soaked cat. */
-  drip(x: number, y: number): void {
-    this.add('drop', x, y + 2, { vx: (Math.random() - 0.5) * 10, vy: 30 + Math.random() * 40, life: 0.7, size: 1.7 + Math.random() * 0.8, color: 'rgba(160,200,238,0.95)' });
-  }
-
-  /** A loose soap bubble drifting down, swaying, until it pops. */
-  bubble(x: number, y: number, vy: number, r: number): void {
-    this.add('bubble', x, y, { vx: 0, vy, life: 1.1 + Math.random() * 1.6, size: r, spin: Math.random() * 6 });
-  }
-
   update(dt: number): void {
     const keep: P[] = [];
-    const popped: P[] = [];
     for (const p of this.list) {
       p.t += dt;
-      if (p.t >= p.life) {
-        if (p.kind === 'bubble') popped.push(p);
-        continue;
-      }
+      if (p.t >= p.life) continue;
       if (p.anchor) {
         const a = p.anchor();
         p.x = a.x;
@@ -113,9 +92,7 @@ export class Fx {
         keep.push(p);
         continue;
       }
-      if (p.kind === 'bubble') p.vx = Math.sin(p.t * 2.3 + p.spin) * 16;
-      else if (p.kind === 'rain') p.vy += 1100 * dt;
-      else if (p.kind === 'drop') p.vy += 900 * dt;
+      if (p.kind === 'drop') p.vy += 900 * dt;
       else if (p.kind === 'spark') {
         p.vx *= 1 - 3 * dt;
         p.vy *= 1 - 3 * dt;
@@ -128,24 +105,12 @@ export class Fx {
       keep.push(p);
     }
     this.list = keep;
-    for (const p of popped) this.pop(p);
-  }
-
-  /** A bubble pops: a quick ring and a few specks of spray. */
-  private pop(p: P): void {
-    this.add('ring', p.x, p.y, { life: 0.2, size: p.size * 2.2, color: '#D8E8FA' });
-    for (let k = 0; k < 3; k++) {
-      const a = -Math.PI / 2 + (k - 1) * 1.1 + Math.random() * 0.4;
-      this.add('drop', p.x, p.y, { vx: Math.cos(a) * 60, vy: Math.sin(a) * 60, life: 0.35, size: 0.9 + Math.random() * 0.5, color: 'rgba(196,222,248,0.95)' });
-    }
-    this.onPop?.(p.x, p.y);
   }
 
   draw(ctx: Ctx): void {
     for (const p of this.list) {
       const k = p.t / p.life;
-      // drizzle and bubbles stay clear until near the end; the rest fade as they go
-      const a = p.kind === 'rain' || p.kind === 'bubble' ? Math.min(1, k / 0.08, (1 - k) / 0.2 + (p.kind === 'bubble' ? 1 : 0)) : k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85;
+      const a = k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85;
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, a));
       switch (p.kind) {
@@ -204,54 +169,6 @@ export class Fx {
           ctx.fillStyle = 'rgba(255,255,255,0.7)';
           ctx.beginPath();
           ctx.arc(p.x - p.size * 0.25, p.y - p.size * 0.3, p.size * 0.3, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
-        case 'rain': {
-          const len = Math.min(18, 5 + p.vy * 0.018);
-          ctx.lineCap = 'round';
-          ctx.strokeStyle = 'rgba(122,172,226,0.85)';
-          ctx.lineWidth = p.size * 1.6;
-          ctx.beginPath();
-          ctx.moveTo(p.x - p.vx * 0.01, p.y - len);
-          ctx.lineTo(p.x, p.y);
-          ctx.stroke();
-          ctx.fillStyle = 'rgba(226,240,253,0.95)';
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size * 0.75, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
-        case 'bubble': {
-          // a soap bubble: a clear film with a rainbow rim and a window of light
-          const r = p.size * (1 + 0.05 * Math.sin(p.t * 6 + p.spin));
-          ctx.translate(p.x, p.y);
-          ctx.fillStyle = 'rgba(232,240,255,0.18)';
-          ctx.beginPath();
-          ctx.arc(0, 0, r, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.lineWidth = Math.max(0.7, r * 0.14);
-          ctx.lineCap = 'round';
-          const arcs: [string, number, number][] = [
-            ['rgba(246,168,196,0.7)', 0.85, 1.3],
-            ['rgba(250,222,140,0.6)', 1.3, 1.55],
-            ['rgba(140,196,246,0.7)', 1.55, 1.95],
-            ['rgba(150,226,190,0.6)', 0.1, 0.55],
-          ];
-          for (const [col, a0, a1] of arcs) {
-            ctx.strokeStyle = col;
-            ctx.beginPath();
-            ctx.arc(0, 0, r * 0.9, a0 * Math.PI, a1 * Math.PI);
-            ctx.stroke();
-          }
-          ctx.strokeStyle = 'rgba(150,136,200,0.45)';
-          ctx.lineWidth = Math.max(0.5, r * 0.06);
-          ctx.beginPath();
-          ctx.arc(0, 0, r, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillStyle = 'rgba(255,255,255,0.92)';
-          ctx.beginPath();
-          ctx.ellipse(-r * 0.38, -r * 0.4, r * 0.24, r * 0.14, -0.7, 0, Math.PI * 2);
           ctx.fill();
           break;
         }

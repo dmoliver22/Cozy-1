@@ -53,8 +53,11 @@ export const TUNE = {
 /** How much of a cushion's height its squash takes (art and collider agree). */
 export const CUSHION_GIVE = 0.75;
 
-/** The bath, once it has the cat (seconds): the foam billows down over it, holds, and settles back. */
-const SOAK = { cover: 0.32, hold: 0.58, settle: 1.05, sploosh: 0.2, sneeze: 1.3, end: 1.75 };
+/**
+ * The bath, once it has the cat (seconds): the foam billows down over it
+ * (sploosh), holds while the cat gets wet, settles back up, and the cat sneezes.
+ */
+export const SOAK = { cover: 0.36, hold: 0.8, settle: 1.3, sploosh: 0.24, wet: 0.5, sneeze: 1.62, end: 2.05 };
 
 export type Phase = 'ready' | 'play' | 'soak' | 'over';
 
@@ -121,6 +124,8 @@ export class DropGame {
   /** The lowest edge of the foam (world y), and its speed down the shaft. */
   foamY: number;
   foamV = 0;
+  /** Debug (captures): hold the foam's edge here instead (it catches nobody meanwhile). */
+  foamHold: number | null = null;
   /** Seconds since the bath got the cat, and whether it is soaked yet. */
   soakT = 0;
   soaked = false;
@@ -608,6 +613,11 @@ export class DropGame {
 
   /** Bath time creeps down the shaft, a little faster all the time, and never far behind. */
   private bath(): void {
+    if (this.foamHold !== null) {
+      this.foamV = (this.foamHold - this.foamY) / FRAME_DT;
+      this.foamY = this.foamHold;
+      return;
+    }
     if (this.time < TUNE.bathDelay) return;
     const gap = this.bathGap;
     const base = TUNE.bathSpeed + TUNE.bathAccel * (this.time - TUNE.bathDelay);
@@ -653,11 +663,11 @@ export class DropGame {
       c.vy[i] *= 0.86;
     }
     c.wake();
-    if (!this.soaked && t >= SOAK.sploosh) {
-      this.soaked = true;
+    if (t >= SOAK.sploosh && t - FRAME_DT < SOAK.sploosh) {
       c.computeCentroid();
       this.events.push({ t: 'sploosh', x: c.cx, y: c.cy });
     }
+    if (!this.soaked && t >= SOAK.wet) this.soaked = true;
     if (t >= SOAK.sneeze && t - FRAME_DT < SOAK.sneeze) {
       c.computeCentroid();
       c.kick(0, -70);

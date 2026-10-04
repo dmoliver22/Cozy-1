@@ -58,7 +58,7 @@ let viewRef: DropView | null = null;
 const stage = makeStage(document.getElementById('game') as HTMLCanvasElement, () => viewRef?.layout());
 const v = new DropView(stage);
 viewRef = v;
-v.fx.onPop = () => sfx.pop();
+v.suds.onPop = () => sfx.pop();
 
 let daily = false;
 let seed = randomSeed();
@@ -273,15 +273,13 @@ function handleEvents(): void {
         break;
       case 'sploosh':
         sfx.sploosh();
-        v.fx.drops(e.x, e.y, 9, 'rgba(176,212,244,0.95)');
-        for (let k = 0; k < 9; k++) v.fx.bubble(e.x + (Math.random() - 0.5) * c.p.radius * 3, e.y + (Math.random() - 0.3) * c.p.radius * 2, 10 + Math.random() * 30, 3 + Math.random() * 5);
         break;
       case 'sneeze': {
         sfx.sneeze(voice());
-        // a puff of tiny bubbles from the nose
+        // a puff of tiny bubbles out of the nose
         const f = v.painter.view(c);
         const ny = f.fy + 4 * f.fs;
-        for (let k = 0; k < 5; k++) v.fx.bubble(f.fx + (k - 2) * 3, ny + Math.random() * 3, -10 + Math.random() * 25, 1.6 + Math.random() * 2.2);
+        v.suds.puff(f.fx, ny, 7, 1.6, 4, 0, -50, 120);
         v.fx.puff(f.fx, ny + 2, 4);
         break;
       }
@@ -298,6 +296,7 @@ const loop = new Loop(
   () => {
     v.beforeStep(game);
     game.step();
+    v.afterStep(game);
     handleEvents();
   },
   (alpha, dt) => {
@@ -351,6 +350,7 @@ const handle = {
     for (let i = 0; i < n; i++) {
       v.beforeStep(game);
       game.step();
+      v.afterStep(game);
       handleEvents();
     }
     return game.state();
@@ -380,6 +380,10 @@ const handle = {
   /** Move bath time's foam to `gap` units above the cat (for tests and captures). */
   bathTo(gap: number): void {
     game.foamY = game.catTop() - gap;
+  },
+  /** Debug (captures): hold bath time's edge at a world y (null: let it chase again). */
+  foamTo(y: number | null): void {
+    game.foamHold = y;
   },
   /** The same as bathTo (from when the chaser was a vacuum). */
   vacuumTo(gap: number): void {

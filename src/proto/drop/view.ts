@@ -10,9 +10,10 @@ import { CatPainter, Lerp, type Stage } from '../kit';
 import { FISH_LEN, SIDE, drawCushion, fishSprite, frontRect, hasFront, paintChunkBack, paintChunkFront, paintFrame, paintGrain, paintRoom } from './art';
 import { Fx } from './fx';
 import type { DropGame } from './game';
-import { drawFoam } from './foam';
+import { drawDrops, drawSuds, foamDebug, prepareFoam } from './foam';
 import { SHAFT_W, type Chunk, type Storey } from './level';
-import { drawSoaked, soakedBottom, wetBreed, withBreed } from './soaked';
+import { drawSoaked, wetBreed, withBreed } from './soaked';
+import { Suds } from './suds';
 
 /** Visible world height we aim for (the shaft fills the width on phones). */
 const MIN_VIEW_H = 700;
@@ -78,11 +79,11 @@ export class DropView {
   private camRow = 0;
   /** Shake (world units) from bumps, decaying. */
   shake = 0;
-  /** The foam's edge between physics steps. */
-  private foamDraw = 0;
-  private prevFoam = 0;
-  /** Drizzle drops, loose bubbles and drips owed (spawned at fractional rates). */
-  private owe = { rain: 0, bubble: 0, drip: 0 };
+  /** Bath time's foam: bubbles, drops and spray, simulated every physics frame. */
+  readonly suds = new Suds();
+  /** Debug: draw the foam (off to measure what it costs), and which of its layers. */
+  showSuds = true;
+  readonly foamDebug = foamDebug;
 
   constructor(readonly stage: Stage) {
     this.ctx = stage.ctx;
@@ -96,6 +97,7 @@ export class DropView {
     this.ppu = this.scale * dpr;
     this.cachePpu = Math.min(this.ppu, MAX_PPU);
     this.viewH = h / this.scale;
+    prepareFoam(this.ppu);
     const key = `${w}x${h}@${dpr}`;
     if (key !== this.key) {
       this.key = key;
@@ -111,7 +113,7 @@ export class DropView {
     this.fx.clear();
     this.camInit = false;
     this.lerp.forget(game.cat);
-    this.foamDraw = this.prevFoam = game.foamY;
+    this.suds.reset(game);
   }
 
   screenToWorldX(px: number): number {
@@ -125,7 +127,11 @@ export class DropView {
   /** Remember positions before a physics step (for drawing between steps). */
   beforeStep(game: DropGame): void {
     this.lerp.remember([game.cat]);
-    this.prevFoam = game.foamY;
+  }
+
+  /** After a physics step: the foam follows (it reads the game, never changes it). */
+  afterStep(game: DropGame): void {
+    this.suds.step(game, this.camY, this.viewH);
   }
 
   // --- Camera ------------------------------------------------------------------
@@ -280,7 +286,6 @@ export class DropView {
     cat.computeCentroid();
     const catY = cat.cy;
     const catX = cat.cx;
-    this.foamDraw = this.prevFoam + (game.foamY - this.prevFoam) * alpha;
     this.follow(game, catY, dt);
     this.shake = Math.max(0, this.shake - dt * 6);
     // pixel-aligned origin for the cached layers
@@ -331,18 +336,16 @@ export class DropView {
       withBreed(cat, wetBreed(cat.breed), () => this.painter.draw(ctx, cat, this.pose(game)));
       drawSoaked(ctx, cat, this.painter.view(cat), this.time, this.ppu);
     } else this.painter.draw(ctx, cat, this.pose(game));
+    // bath time's bubbles, over the cat (and under the glass, when they are in a tube)
+    const ey = -this.camRow + this.shakeOffset();
+    if (this.showSuds) drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH);
     // glass over the cat
     for (const c of chunks) {
       const f = this.fronts.get(c.id);
       if (f && !f.tasks.length) this.blit(f);
     }
+    if (this.showSuds) drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey);
     this.world();
-    // bath time: the foam over everything, its drizzle and stray bubbles
-    const fy = this.foamDraw;
-    if (game.phase !== 'ready') {
-      if (fy > this.camY - 60) drawFoam(ctx, fy, this.time, this.camY - 30, this.ppu);
-      this.spawnBath(game, fy, dt);
-    }
     this.fx.update(dt);
     this.fx.draw(ctx);
     this.lerp.end();
@@ -355,39 +358,6 @@ export class DropView {
   nearness(game: DropGame): number {
     if (game.phase !== 'play') return game.phase === 'ready' ? 0 : 1;
     return Math.max(0, Math.min(1, 1 - (game.bathGap - 60) / 700));
-  }
-
-  /** Drizzle and loose bubbles from the foam (or in from the top while it is above the screen), and drips off a soaked cat. */
-  private spawnBath(game: DropGame, fy: number, dt: number): void {
-    if (dt <= 0) return;
-    const near = this.nearness(game);
-    const play = game.phase === 'play';
-    const top = this.camY;
-    const above = fy < top + 4;
-    const fall = play ? game.foamV : 0;
-    const owe = this.owe;
-    owe.rain += (play ? (near > 0 ? 3 + 36 * near * near : 0) : game.phase === 'soak' ? 36 : 8) * dt;
-    owe.bubble += (play ? (near > 0 ? 0.4 + 4.5 * near : 0) : game.phase === 'soak' ? 6 : 1.2) * dt;
-    // (whatever comes in from the top must outrun the camera to be seen)
-    const cam = Math.max(0, this.camV);
-    for (; owe.rain >= 1; owe.rain--) {
-      const x = Math.random() * (SHAFT_W + 8) - 4;
-      if (above) this.fx.rain(x, top - 12 - Math.random() * 30, Math.max(fall + 420, cam + 300) + Math.random() * 180);
-      else this.fx.rain(x, fy - 6 - Math.random() * 10, fall + 240 + Math.random() * 160);
-    }
-    for (; owe.bubble >= 1; owe.bubble--) {
-      const x = 14 + Math.random() * (SHAFT_W - 28);
-      const vy = Math.max(fall * 1.05 + 26, above ? cam + 50 : 0) + Math.random() * 50;
-      this.fx.bubble(x, above ? top - 14 : fy - 4, vy, 3 + Math.random() * 6);
-    }
-    // drips off a soaked cat
-    if (game.soaked && game.soakT > 0.9) {
-      owe.drip += 5 * dt;
-      for (; owe.drip >= 1; owe.drip--) {
-        const p = soakedBottom(this.painter.view(game.cat), Math.random());
-        this.fx.drip(p.x, p.y);
-      }
-    }
   }
 
   private pose(game: DropGame): { expression: Expression; look: number; resting: boolean; purr: number; grabbed: boolean } {
