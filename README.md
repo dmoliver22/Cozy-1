@@ -74,7 +74,13 @@ The solver then plays it like a person, dragging one cat at a time and letting
 go once the cat is over the opening, and only publishes rooms where every cat
 gets seated. The number of nudges it needed is par. The simulation only uses
 `+ - * /` and `sqrt` (plus a deterministic sine), so every device builds and
-checks the same room. The work happens in a Web Worker and is cached for the day.
+checks the same room. To make mornings load instantly, `npm run precompute`
+runs the same generator and solver ahead of time and stores which variant
+passed, its par and the solver's plan (used for hints) in
+`src/game/daily-index.json` (about 100 bytes a day). Any date outside the index
+is generated and solved in a Web Worker on the player's device and cached.
+Changing the generator bumps `GENERATOR_VERSION`; re-run the precompute (a test
+checks the index still matches).
 
 ## Scripts
 
@@ -85,6 +91,7 @@ npm run e2e           # Playwright smoke tests (builds + previews first)
 npm run typecheck
 npm run build         # static site in dist/
 npm run build:single  # one self-contained HTML file in dist-single/ (portals, itch.io)
+npm run precompute    # re-solve the next 200 mornings into src/game/daily-index.json
 ```
 
 For the e2e tests on a machine with a system Chromium:

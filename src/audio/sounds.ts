@@ -43,12 +43,11 @@ function breathAt(kind: number, level: number, u: number): number {
  * small body resonances (~210 and ~480 Hz x pitch, so phone speakers carry
  * it) and gates a burst of raspy noise; a whisper of hum at twice the pulse
  * rate adds warmth on headphones. Everything goes through a soft lowpass
- * (~620-900 Hz x pitch), then a gentle tanh saturation evens out the
- * twitch peaks. The buffer starts and ends mid-pause, so the loop seam is
- * silent.
+ * (~620-900 Hz x pitch), then gentle soft-clipping evens out the twitch
+ * peaks. The buffer starts and ends mid-pause, so the loop seam is silent.
  *
- * A generator: it yields every `slice` samples so the engine can spread the
- * ~5 s render over several frames instead of hitching one.
+ * A generator: it yields every `slice` samples (a multiple of 64) so the
+ * engine can spread the ~5 s render over several frames instead of hitching one.
  */
 export function* purrSlices(sr: number, p: PurrParams, seed: number, slice = 8192): Generator<void, Float32Array, void> {
   const r = rng(seed);
@@ -77,7 +76,7 @@ export function* purrSlices(sr: number, p: PurrParams, seed: number, slice = 819
   const dc = new Biquad(sr).set('hp', 50, 0.6);
   const A = 0.1; // twitch attack, as a share of the pulse period
   const K = 4.5 + 4 * rough; // twitch decay steepness: rougher purrs are snappier
-  const BLOCK = 32;
+  const BLOCK = 64;
   const smBlock = 1 - Math.exp(-BLOCK / (0.08 * sr)); // inhale/exhale pitch shift glides over ~80 ms
   let gRasp = 1;
   let gAir = 1;
@@ -137,11 +136,14 @@ export function* purrSlices(sr: number, p: PurrParams, seed: number, slice = 819
       dec *= kDec;
     }
     const w = r() * 2 - 1;
+    // low hum at twice the pulse rate (parabolic sine: plenty for a whisper)
+    const hx = (2 * ph) % 1;
+    const hum = hx < 0.5 ? 16 * hx * (0.5 - hx) : -16 * (hx - 0.5) * (1 - hx);
     const x =
       0.9 * body.run(kick) +
       0.5 * body2.run(kick) +
       (0.5 + 0.4 * rough) * tw * rasp.run(w) * gRasp +
-      0.12 * tw * Math.sin(TAU * 2 * ph) +
+      0.12 * tw * hum +
       0.05 * air.run(w) * gAir;
     breath += dBreath;
     const y = dc.run(tone.run(x)) * breath;
@@ -150,11 +152,13 @@ export function* purrSlices(sr: number, p: PurrParams, seed: number, slice = 819
     else if (-y > peak) peak = -y;
   }
   // Gentle saturation: tame the twitch peaks so the purr sits fuller at the same 0.85 peak.
+  // (A rational tanh-like soft-clip curve; smooth and monotonic over the +-1.6 range we drive.)
+  const sat = (x: number): number => (x * (27 + x * x)) / (27 + 9 * x * x);
   const drive = peak > 0 ? 1.6 / peak : 0;
-  const norm = 0.85 / Math.tanh(1.6);
+  const norm = 0.85 / sat(1.6);
   for (let i = 0; i < n; i++) {
     if (i % slice === 0) yield;
-    out[i] = Math.tanh(out[i] * drive) * norm;
+    out[i] = sat(out[i] * drive) * norm;
   }
   return out;
 }

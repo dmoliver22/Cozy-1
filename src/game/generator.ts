@@ -12,7 +12,7 @@ import { CONTAINERS, FLOOR_Y, WORLD_W, type ContainerPlacement, type ContainerTy
 import type { CatPlacement, DecorPlacement, RoomDef, ThemeId } from './room';
 import { solveRoom } from './solver';
 
-export const GENERATOR_VERSION = 5;
+export const GENERATOR_VERSION = 6;
 
 interface Span {
   x0: number;
@@ -299,6 +299,9 @@ export function composeRoom(seed: string, dateKey: string, variant: number): Roo
   const chosen = rng.shuffle([...BASE_BREEDS]).slice(0, 3);
   // On rare mornings the Void wanders in.
   if (rng.chance(0.08)) chosen[rng.int(0, 2)] = 'void';
+  // Three big cats rarely fit side by side; the zippy kitten can be carried
+  // from a high shelf, so it often joins three-cat mornings.
+  if (want === 3 && !chosen.includes('kitten') && rng.chance(0.6)) chosen[2] = 'kitten';
   // A kitten in a three-cat room is carried, so lay out the other two first.
   if (want === 3 && chosen.includes('kitten')) {
     chosen.splice(chosen.indexOf('kitten'), 1);
@@ -519,14 +522,22 @@ export function dailyRoom(dateKey: string, opts: DailyOptions = {}): RoomDef {
     if (!def) continue;
     const res = solveRoom(def, { maxFrames: 14000 });
     if (res.ok) {
-      return { ...def, id: `daily-${dateKey}`, par: res.par, plan: res.plan, subtitle: '' };
+      return { ...def, id: `daily-${dateKey}`, par: res.par, plan: res.plan, subtitle: '', variant: v };
     }
   }
   return fallbackRoom(dateKey);
 }
 
+/** Rebuild a known-good morning from the precomputed index (no solving needed). */
+export function dailyFromIndex(dateKey: string, variant: number, par: number, plan: RoomDef['plan']): RoomDef | null {
+  const def = variant < 0 ? fallbackRoom(dateKey) : composeRoom(`if-it-fits:${dateKey}`, dateKey, variant);
+  if (!def) return null;
+  return { ...def, id: `daily-${dateKey}`, par, plan, subtitle: '', variant };
+}
+
 /** Safe fallback: a known-good layout with today's cats. */
 function fallbackRoom(dateKey: string): RoomDef {
+  // (variant -1 in the index)
   const rng = new Rng(`fallback:${dateKey}`);
   const names = rng.shuffle([...CAT_NAMES]);
   return {
@@ -551,5 +562,6 @@ function fallbackRoom(dateKey: string): RoomDef {
       { type: 'rug', x: 180, y: FLOOR_Y, w: 150 },
     ],
     par: 2,
+    variant: -1,
   };
 }

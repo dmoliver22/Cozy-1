@@ -87,6 +87,8 @@ export interface RoomDef {
   tutorial?: boolean;
   /** Lighting: sunny afternoon (default) or lamp-lit night. */
   mood?: 'day' | 'night';
+  /** Daily rooms: which generator variant passed the solver. */
+  variant?: number;
   subtitle?: string;
 }
 

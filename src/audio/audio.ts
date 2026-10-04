@@ -16,6 +16,7 @@
 import { clamp, hash } from './dsp';
 import { Composer, FLOURISH, PIANO_NOTES, SPB, type DrumKind } from './music';
 import {
+  purrSlices,
   renderBell,
   renderBrush,
   renderClick,
@@ -24,7 +25,6 @@ import {
   renderIR,
   renderKick,
   renderMew,
-  purrSlices,
   renderPiano,
   renderSigh,
   renderTick,
@@ -42,9 +42,9 @@ export interface PurrParams {
 
 // ---- Levels (linear gain). Recipes are peak-normalised; loudness lives here.
 const MASTER = 1;
-const MUSIC_LEVEL = 0.1; // the music bus sits 20 dB under the sfx bus
+const MUSIC_LEVEL = 0.2; // the music bus sits ~14 dB under the sfx bus (audible on phone speakers, still in the background)
 const MUSIC_VERB = 0.6; // music -> reverb send
-const CHIME_VERB = 0.3; // chimes / flourish -> reverb send
+const CHIME_VERB = 0.7; // chimes / flourish -> reverb send
 const PURR_GAIN = 0.3;
 const PIANO_GAIN = 0.9; // background piano (before the music bus)
 const FLOURISH_GAIN = 0.4; // reveal flourish (on the sfx bus)
@@ -68,11 +68,12 @@ const TICK_MS = 25; // scheduler period
 const PURR_TC = 0.4; // purr level smoothing time constant (s)
 const PURR_REST = 2.2; // seconds at zero before a purr voice is released
 const MAX_VOICES = 48; // one-shot polyphony cap
-const LO_RATE = 24000; // render rate for dark / voice-like sounds (purrs, piano, glorps, mews)
+const LO_RATE = 24000; // render rate for sounds with little top end (purrs, piano, voices, chimes)
 const IMPACT_VARIANTS = 2;
 const MATERIALS: readonly ImpactMaterial[] = ['ceramic', 'cardboard', 'rubber', 'metal', 'wicker', 'wood', 'fabric', 'glass', 'terracotta', 'wall'];
 
 type CtxCtor = new (options?: AudioContextOptions) => AudioContext;
+const RETRY_EVENTS = ['touchend', 'click'] as const;
 
 interface Graph {
   ctx: AudioContext;
@@ -91,6 +92,7 @@ interface PurrVoice {
   src: AudioBufferSourceNode;
   gain: GainNode;
   pan: AudioNode | null;
+  params: PurrParams;
   target: number;
   zeroAt: number;
   seen: number;
@@ -126,6 +128,9 @@ const loRate = (g: Graph): number => Math.min(g.ctx.sampleRate, LO_RATE);
 const jitter = (amount: number): number => 1 + (Math.random() - 0.5) * amount;
 /** Piano notes are rendered every 3 semitones and repitched by at most +-1.5. */
 const zoneOf = (midi: number): number => 3 * Math.round(midi / 3);
+/** Same purr voice? (Params are constant per cat; a big change means the id was reused.) */
+const samePurr = (a: PurrParams, b: PurrParams): boolean =>
+  !b || (Math.abs(a.pitch - b.pitch) < 0.03 && Math.abs(a.rate - b.rate) < 0.03 && Math.abs(a.rough - b.rough) < 0.15) || !Number.isFinite(b.pitch + b.rate + b.rough);
 
 export class AudioEngine {
   /** Last error swallowed internally (debugging aid only). */
@@ -194,6 +199,7 @@ export class AudioEngine {
     return this.musicOn;
   }
 
+  /** Sound effects and purrs on/off (purrs fade out and are released while off). */
   setSfxEnabled(on: boolean): void {
     try {
       this.sfxOn = !!on;
@@ -208,6 +214,7 @@ export class AudioEngine {
     }
   }
 
+  /** Music on/off: off fades the music bus and stops the scheduler; on resumes it if startMusic() was called. */
   setMusicEnabled(on: boolean): void {
     try {
       this.musicOn = !!on;
@@ -329,11 +336,15 @@ export class AudioEngine {
       if (!g) return;
       const want = this.sfxOn && level > 0.001 ? Math.min(level, 1) : 0; // NaN -> 0
       let v = this.purrs.get(id);
+      if (v && want && !samePurr(v.params, params)) {
+        this.dropPurr(id, v, 0.15); // the id now belongs to a different cat: start its own voice
+        v = undefined;
+      }
       if (!v) {
         if (!want) return;
         const buf = this.purrBuffer(g, params);
-        if (!buf) return; // still rendering (a slice per frame); the voice starts in a few frames
-        v = this.makePurr(g, id, buf);
+        if (!buf) return; // still rendering (~2 ms of work per frame); the voice starts a few frames later
+        v = this.makePurr(g, id, buf, params);
       }
       const now = g.ctx.currentTime;
       v.seen = now;
@@ -344,6 +355,7 @@ export class AudioEngine {
     }
   }
 
+  /** Fade out and release every purr voice (e.g. when a room changes), and reset the reveal swell. */
   stopAllPurrs(): void {
     try {
       for (const [id, v] of this.purrs) this.dropPurr(id, v, 0.12);
@@ -373,6 +385,7 @@ export class AudioEngine {
 
   // ---------------------------------------------------------------- music
 
+  /** Gentle generative lo-fi piano + brushes (see music.ts). Safe to call before unlock(): it starts once audio is unlocked. */
   startMusic(): void {
     try {
       this.musicWanted = true;
@@ -382,6 +395,7 @@ export class AudioEngine {
     }
   }
 
+  /** Stop composing and let ringing notes fade out quickly. */
   stopMusic(): void {
     try {
       this.musicWanted = false;
@@ -463,6 +477,8 @@ export class AudioEngine {
 
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
       document.addEventListener('visibilitychange', this.onVisibility);
+      // iOS only honours some gestures for audio; keep retrying on those until we're running.
+      for (const type of RETRY_EVENTS) document.addEventListener(type, this.retry, { capture: true, passive: true });
     }
     // iOS: one silent sample played inside the gesture fully unlocks output.
     const blip = ctx.createBufferSource();
@@ -480,6 +496,7 @@ export class AudioEngine {
     this.musicTimer = this.purrTimer = this.warmTimer = undefined;
     if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
       document.removeEventListener('visibilitychange', this.onVisibility);
+      for (const type of RETRY_EVENTS) document.removeEventListener(type, this.retry, { capture: true });
     }
     this.purrs.clear();
     this.purrJobs.clear();
@@ -516,6 +533,16 @@ export class AudioEngine {
         this.resumeOnShow = false;
         this.resume(g);
       }
+    } catch (e) {
+      this.oops(e);
+    }
+  };
+
+  /** Gesture listener: resume a context that is still (or again) suspended, e.g. after an iOS interruption. */
+  private readonly retry = (): void => {
+    try {
+      const g = this.g;
+      if (g && g.ctx.state !== 'running' && g.ctx.state !== 'closed' && !document.hidden) this.resume(g);
     } catch (e) {
       this.oops(e);
     }
@@ -575,7 +602,7 @@ export class AudioEngine {
   }
 
   private bellBuffer(g: Graph, midi: number, sparkle: boolean): AudioBuffer {
-    return this.cached(g, `bell:${midi}:${sparkle}`, g.ctx.sampleRate, (sr) => renderBell(sr, midi, sparkle, midi));
+    return this.cached(g, `bell:${midi}:${sparkle}`, loRate(g), (sr) => renderBell(sr, midi, sparkle, midi));
   }
 
   private uiBuffer(g: Graph, kind: 'undo' | 'click', variant: number): AudioBuffer {
@@ -780,7 +807,7 @@ export class AudioEngine {
 
   // ---------------------------------------------------------------- internals: purrs
 
-  private makePurr(g: Graph, id: number, buf: AudioBuffer): PurrVoice {
+  private makePurr(g: Graph, id: number, buf: AudioBuffer, params: PurrParams): PurrVoice {
     const ctx = g.ctx;
     // Per-cat detune, pan and breath phase so layered purrs never phase-lock.
     const h = hash(`cat:${id}`);
@@ -799,14 +826,15 @@ export class AudioEngine {
       pan.connect(g.purrBus);
     } else gain.connect(g.purrBus);
     src.start(ctx.currentTime, (((h >>> 16) & 1023) / 1024) * buf.duration);
-    const v: PurrVoice = { src, gain, pan, target: 0, zeroAt: 0, seen: ctx.currentTime };
+    const v: PurrVoice = { src, gain, pan, params: { pitch: params?.pitch, rate: params?.rate, rough: params?.rough }, target: 0, zeroAt: 0, seen: ctx.currentTime };
     this.purrs.set(id, v);
     if (this.purrTimer === undefined) this.purrTimer = setInterval(this.sweepPurrs, 500);
     return v;
   }
 
   private purrLevel(v: PurrVoice, level: number, now: number): void {
-    if (level === v.target || (level > 0 && v.target > 0 && Math.abs(level - v.target) < 0.01)) return;
+    // Only re-aim the smoother on meaningful changes (keeps the automation timeline short).
+    if (level === v.target || (level > 0 && v.target > 0 && Math.abs(level - v.target) < 0.01 + 0.05 * v.target)) return;
     if (level === 0) v.zeroAt = now;
     v.target = level;
     v.gain.gain.setTargetAtTime(level * PURR_GAIN, now, PURR_TC);

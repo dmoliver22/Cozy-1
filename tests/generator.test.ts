@@ -27,3 +27,19 @@ describe('daily generator', () => {
     console.log('fallbacks', fallbacks);
   });
 });
+
+import INDEX from '../src/game/daily-index.json';
+import { GENERATOR_VERSION } from '../src/game/generator';
+
+describe('precomputed mornings', () => {
+  it('match what the generator + solver produce today', () => {
+    const idx = INDEX as unknown as { v: number; days: Record<string, [number, number, unknown[]]> };
+    expect(idx.v).toBe(GENERATOR_VERSION);
+    const keys = Object.keys(idx.days);
+    expect(keys.length).toBeGreaterThan(90);
+    for (const key of [keys[3], keys[Math.floor(keys.length / 2)], keys[keys.length - 1]]) {
+      const room = dailyRoom(key);
+      expect([room.variant, room.par]).toEqual(idx.days[key].slice(0, 2));
+    }
+  });
+});

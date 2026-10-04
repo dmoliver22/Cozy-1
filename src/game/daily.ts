@@ -1,8 +1,32 @@
 // Getting today's room: cached, else built in a worker, else on the main thread.
 
 import DailyWorker from './daily.worker?worker&inline';
-import { GENERATOR_VERSION, dailyRoom } from './generator';
-import type { RoomDef } from './room';
+import { GENERATOR_VERSION, dailyFromIndex, dailyRoom } from './generator';
+import type { PlanStep, RoomDef } from './room';
+import INDEX from './daily-index.json';
+
+type IndexEntry = [number, number, Array<[number, number, number, number, number, number, number, number, number | null, number | null]>];
+
+/** Mornings solved ahead of time (scripts/precompute-daily.ts). */
+function fromIndex(dateKey: string): RoomDef | null {
+  const idx = INDEX as unknown as { v: number; days: Record<string, IndexEntry> };
+  if (idx.v !== GENERATOR_VERSION) return null;
+  const e = idx.days[dateKey];
+  if (!e) return null;
+  const plan: PlanStep[] = e[2].map(([cat, container, gx, gy, tx, ty, hold, boop, wx, wy]) => ({
+    cat,
+    container,
+    gx,
+    gy,
+    tx,
+    ty,
+    hold,
+    kind: boop ? 'boop' : 'drag',
+    wx: wx ?? undefined,
+    wy: wy ?? undefined,
+  }));
+  return dailyFromIndex(dateKey, e[0], e[1], plan);
+}
 
 const cacheKey = (dateKey: string): string => `if-it-fits:daily:v${GENERATOR_VERSION}:${dateKey}`;
 
@@ -29,6 +53,8 @@ function writeCache(dateKey: string, room: RoomDef): void {
 }
 
 export async function getDailyRoom(dateKey: string): Promise<RoomDef> {
+  const known = fromIndex(dateKey);
+  if (known) return known;
   const cached = readCache(dateKey);
   if (cached) return cached;
   let room: RoomDef | null = null;

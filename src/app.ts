@@ -155,6 +155,7 @@ export class App {
   }
 
   private startRoom(def: RoomDef): void {
+    if (this.kind !== 'sandbox') this.sandbox = null;
     this.closeOverlay();
     this.closeDrawer();
     this.audio.stopAllPurrs();
@@ -365,7 +366,10 @@ export class App {
       this.goldCount = n;
       r.resetCamera();
       r.glowTarget = 1;
-      setTimeout(() => this.showResults(), quick ? 300 : 1100);
+      const session = this.session;
+      setTimeout(() => {
+        if (this.session === session) this.showResults();
+      }, quick ? 300 : 1100);
     }
   }
 
@@ -541,7 +545,14 @@ export class App {
 
   private async share(): Promise<void> {
     const res = this.lastResult ?? this.session.results();
-    const url = location.protocol.startsWith('http') && !location.hostname.includes('localhost') ? location.origin + location.pathname : undefined;
+    let framed = true;
+    try {
+      framed = window.top !== window.self;
+    } catch {
+      framed = true;
+    }
+    // Only share our address when we're the page itself (not embedded in a portal or viewer).
+    const url = !framed && location.protocol.startsWith('http') && !location.hostname.includes('localhost') ? location.origin + location.pathname : undefined;
     const text = shareText({
       result: res,
       roomName: this.session.def.name,
@@ -655,6 +666,7 @@ export class App {
       `<div class="card" role="dialog" aria-label="Photo">
         <h2>Say "loaf"!</h2>
         <div class="photo-frame"><img alt="A photo of your cats" src="${url}"></div>
+        <p class="sub" style="margin-top:-4px">Long-press or right-click the photo to save it.</p>
         <div class="btns">
           <button class="btn primary" data-act="share"><svg viewBox="0 0 24 24"><use href="#i-share"/></svg>Share</button>
           <button class="btn mint" data-act="save">Save</button>
