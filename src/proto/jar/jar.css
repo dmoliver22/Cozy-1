@@ -1,0 +1,228 @@
+/* Cat Jar: HUD and cards on top of the shared prototype look (proto.css). */
+
+body {
+  background: #e9d7bd;
+}
+
+.jar-hud {
+  align-items: flex-start;
+  transition: opacity 0.25s ease;
+}
+
+.jar-hud.jar-dim {
+  opacity: 0.35;
+}
+
+.jar-score {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 92px;
+  padding: 5px 14px 6px;
+  border-radius: 20px;
+}
+
+.jar-score-n {
+  display: inline-block;
+  font-size: 28px;
+  line-height: 1.05;
+  transform-origin: 20% 60%;
+  color: var(--ink);
+}
+
+.jar-score small {
+  line-height: 1.15;
+}
+
+.jar-mode:empty {
+  display: none;
+}
+
+.jar-mode {
+  color: var(--ginger) !important;
+}
+
+.jar-boops {
+  display: flex;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255, 248, 238, 0.78);
+  box-shadow: 0 2px 0 rgba(62, 58, 79, 0.1), 0 6px 16px rgba(62, 58, 79, 0.1);
+}
+
+.jar-boops:empty {
+  display: none;
+}
+
+.jar-paw {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+}
+
+.jar-paw svg {
+  width: 100%;
+  height: 100%;
+  fill: rgba(62, 58, 79, 0.16);
+  transition: fill 0.2s ease, transform 0.2s ease;
+}
+
+.jar-paw.on svg {
+  fill: var(--ginger);
+}
+
+.jar-paw.new svg {
+  animation: jar-pop 0.5s ease;
+}
+
+.jar-shake {
+  animation: jar-shake 0.4s ease;
+}
+
+@keyframes jar-pop {
+  0% {
+    transform: scale(0.3);
+  }
+  60% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes jar-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.jar-music {
+  pointer-events: auto;
+  appearance: none;
+  border: 0;
+  width: 38px;
+  height: 38px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 50%;
+  background: rgba(255, 248, 238, 0.85);
+  color: var(--ink-soft);
+  fill: var(--ink-soft);
+  box-shadow: 0 2px 0 rgba(62, 58, 79, 0.1), 0 6px 16px rgba(62, 58, 79, 0.1);
+  cursor: pointer;
+}
+
+.jar-music[aria-pressed='false'] {
+  opacity: 0.45;
+}
+
+.jar-music svg {
+  width: 100%;
+  height: 100%;
+}
+
+.jar-next {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.jar-next small {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(255, 248, 238, 0.85);
+  padding: 0 7px;
+  border-radius: 999px;
+}
+
+.jar-next-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #fffdf8, #f6ead8 70%, #ecdcc4);
+  box-shadow: inset 0 -3px 0 rgba(62, 58, 79, 0.08), 0 3px 0 rgba(62, 58, 79, 0.1), 0 8px 18px rgba(62, 58, 79, 0.14);
+}
+
+.jar-card h2 {
+  font-size: 34px;
+}
+
+.jar-chain {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  margin: 2px 0 6px;
+}
+
+.jar-chain-cat {
+  display: inline-flex;
+}
+
+.jar-arrow {
+  font-family: var(--display);
+  font-weight: 800;
+  color: var(--ink-soft);
+  opacity: 0.5;
+  padding-bottom: 4px;
+}
+
+.jar-tip {
+  font-size: 13px;
+  margin: 2px 0 12px !important;
+}
+
+.jar-small {
+  font-size: 13px;
+  margin: 6px 0 2px !important;
+}
+
+.jar-small:empty {
+  display: none;
+}
+
+.jar-new {
+  color: var(--ginger) !important;
+}
+
+.jar-final {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 48px;
+  line-height: 1;
+  margin-top: 6px;
+}
+
+.jar-biggest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0 14px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.jar-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+}
