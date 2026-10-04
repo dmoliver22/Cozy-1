@@ -54,9 +54,11 @@ Handy URLs while developing: `?room=1|2|3` (hand-made rooms), `?daily=2026-10-05
 surface (constant tension, evened-out spacing), an area constraint keeps the
 volume, weak shape matching gives each breed its loaf, and viscosity damps only
 deformation, so a honey Persian falls as fast as a water kitten but oozes much
-more slowly. Seated cats get rest damping so they loaf calmly. The face always
-floats to the top of the blob, so a cat poured into a teacup still reads as a
-loaf with two ears and a tail draped over the rim.
+more slowly. Seated cats get rest damping so they loaf calmly, and a cat that
+has rested truly still for a moment falls asleep: it is frozen (no solver
+chatter at all) until a finger, a boop, a game nudge, a cat bumping into it or
+a moved prop wakes it. The face always floats to the top of the blob, so a cat
+poured into a teacup still reads as a loaf with two ears.
 
 **Painting.** Everything is painted in code with one shared kit
 (`src/render/paint.ts`): a single warm light from the upper left, painterly
@@ -66,12 +68,12 @@ textures (fur, wood grain, plaster, brush strokes, cardboard, weave) laid over
 the flat gouache colour. Cats are repainted every frame from the physics ring:
 locks of fur are worked into the silhouette, then coat markings, fur texture,
 form shading, occlusion underneath and a rim of light; ears with pink insides,
-dot eyes with highlights, whisker pads, little paws. A cat in a container is
-painted in two passes, its body under the container's front and its tail and
-front paws over it, so the tail drapes over the rim instead of poking through
-the cup; a cat sitting deeper than the rim peeks over it. Containers are
-glazed, woven, stamped or brushed (cylinder shading baked into cached maps so
-painted motifs shade with the body), and the rooms get plaster walls,
+dot eyes with highlights, whisker pads, little paws, and a slow breath while
+resting. Ears follow the top of the head smoothly (eased in the head's frame),
+and fur lies flat wherever a cat presses against a wall or glass. Every
+container is glass, so you can watch a cat squish into it: the body is painted
+under the container's translucent front, its front paws over the rim, and it
+sits in a soft shadow on the container's floor. The rooms get plaster walls,
 wainscoting, plank floors, deep windows with a painted view, light shafts with
 drifting dust, and lamp-lit nights. The room and the props are painted once
 into cached layers.

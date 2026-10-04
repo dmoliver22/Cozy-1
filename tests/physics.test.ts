@@ -3,7 +3,7 @@ import { BREED_ORDER, type BreedId } from '../src/physics/breeds';
 import { SoftBody } from '../src/physics/softbody';
 import { GRAVITY, World } from '../src/physics/world';
 import { buildContainer, roomShell } from '../src/game/props';
-import { LIFT } from '../src/game/session';
+import { LIFT, Session } from '../src/game/session';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 
 function dropInto(breed: BreedId, container?: 'teacup' | 'box'): { body: SoftBody; world: World } {
@@ -67,5 +67,56 @@ describe('soft-body cats', () => {
       expect(startY - body.cy).toBeLessThan(215);
     }
     expect(early.kitten).toBeGreaterThan(early.chonk + 10);
+  });
+
+  it('a cat squeezed into a snug mug comes to complete rest (no jitter)', () => {
+    const s = new Session(
+      {
+        id: 'snug',
+        name: 'snug',
+        theme: 'kitchen',
+        furniture: [],
+        decor: [],
+        containers: [{ type: 'mug', x: 190, y: 560 }],
+        cats: [{ breed: 'tabby', x: 190, y: 486, name: 't' }],
+      },
+      { settleFrames: 0 },
+    );
+    for (let f = 0; f < 360; f++) s.step();
+    const b = s.cats[0].body;
+    expect(s.cats[0].seat).not.toBeNull();
+    expect(b.asleep).toBe(true);
+    const x = Array.from(b.x);
+    const y = Array.from(b.y);
+    for (let f = 0; f < 30; f++) s.step();
+    expect(Array.from(b.x)).toEqual(x);
+    expect(Array.from(b.y)).toEqual(y);
+  });
+
+  it('a cat that lands with a spin settles where it lands instead of rolling away', () => {
+    for (const breed of ['tabby', 'mainecoon', 'chonk'] as const) {
+      const world = new World();
+      for (const s of roomShell()) world.addStatic(s);
+      const body = world.addBody(new SoftBody(breed, 190, 380));
+      body.computeCentroid();
+      for (let i = 0; i < body.n; i++) {
+        body.vx[i] = -80 + 3 * (body.y[i] - body.cy);
+        body.vy[i] = -3 * (body.x[i] - body.cx);
+      }
+      let landed = -1;
+      let xAt = 0;
+      for (let f = 0; f < 420; f++) {
+        body.loafiness = Math.min(1, f / 60);
+        world.step();
+        if (landed < 0 && body.airborneFrames === 0) landed = f;
+        if (landed >= 0 && f === landed + 60) {
+          body.computeCentroid();
+          xAt = body.cx;
+        }
+      }
+      body.computeCentroid();
+      expect(Math.abs(body.cx - xAt)).toBeLessThan(5);
+      expect(body.asleep).toBe(true);
+    }
   });
 });

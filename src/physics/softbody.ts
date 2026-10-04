@@ -99,7 +99,7 @@ export class SoftBody {
   settleY = 0;
   /** Set while the cat is pouring into something: no rest damping. */
   pouring = false;
-  /** Set while the cat is seated: it loafs (always calm). */
+  /** Set while the cat is seated (or perched on top): it loafs (always calm). */
   sitting = false;
   /** Kinetic energy per unit mass; used for "settled" detection. */
   energy = 0;
@@ -109,6 +109,17 @@ export class SoftBody {
   /** Energy smoothed over ~10 frames (what a viewer perceives as motion). */
   emaEnergy = 0;
   calm = false;
+  /**
+   * Asleep: resting so still that it is frozen (no solving, no micro-jitter)
+   * until something disturbs it: a finger, a boop, a game force, a moving cat
+   * bumping into it, or the furniture changing.
+   */
+  asleep = false;
+  /** Multiplier on friction against furniture (the game eases cats off rims). */
+  frictionMul = 1;
+  private stillFrames = 0;
+  private readonly refX: Float64Array;
+  private readonly refY: Float64Array;
   /** Frames since the body last had any contact with anything. */
   airborneFrames = 0;
   /** Largest impact speed against a static shape this frame, and which. */
@@ -134,6 +145,8 @@ export class SoftBody {
     this.loafX = new Float64Array(n);
     this.loafY = new Float64Array(n);
     this.contactShape = new Int32Array(n).fill(-1);
+    this.refX = new Float64Array(n);
+    this.refY = new Float64Array(n);
     this.contactNx = new Float32Array(n);
     this.contactNy = new Float32Array(n);
 
@@ -211,8 +224,29 @@ export class SoftBody {
     return out;
   }
 
+  wake(): void {
+    this.asleep = false;
+    this.stillFrames = 0;
+  }
+
+  private sleep(): void {
+    this.asleep = true;
+    for (let i = 0; i < this.n; i++) {
+      this.px[i] = this.x[i];
+      this.py[i] = this.y[i];
+      this.vx[i] = 0;
+      this.vy[i] = 0;
+    }
+    this.energy = 0;
+    this.emaVx = 0;
+    this.emaVy = 0;
+    this.vcx = 0;
+    this.vcy = 0;
+  }
+
   /** Teleport the whole body so its centroid is at (x, y), killing velocity. */
   placeAt(x: number, y: number): void {
+    this.wake();
     this.computeCentroid();
     const dx = x - this.cx;
     const dy = y - this.cy;
@@ -229,6 +263,7 @@ export class SoftBody {
 
   /** Add a velocity to every node (boops and hops). */
   kick(dvx: number, dvy: number): void {
+    this.wake();
     for (let i = 0; i < this.n; i++) {
       this.vx[i] += dvx;
       this.vy[i] += dvy;
@@ -256,6 +291,7 @@ export class SoftBody {
    * is pulled; the rest lags behind, which is what makes cats stretch.
    */
   startGrab(wx: number, wy: number, force: number, lift: number): Grab {
+    this.wake();
     const n = this.n;
     const r = this.p.radius;
     const reach = r * 1.05;
@@ -650,6 +686,7 @@ export class SoftBody {
   /** Called once per frame by the world (not per substep). */
   frameUpdate(dt: number): void {
     this.emaEnergy += (this.energy - this.emaEnergy) * 0.15;
+    if (!this.asleep) this.considerSleep();
     // Rest shape: blend round <-> loaf, plus plastic creep toward current shape.
     const n = this.n;
     const lf = this.loafiness;
@@ -677,6 +714,57 @@ export class SoftBody {
     normalizeShape(this.qx, this.qy, n, this.area0);
   }
 
+  /**
+   * Fall asleep after resting truly still for ~2/3 s: touching something,
+   * nothing pulling on it, the centre not drifting, and no node creeping more
+   * than half a unit (a seated cat: 1.2) in each of two 20-frame windows (a
+   * slow ooze keeps it awake; invisible solver chatter in a tight cup does not).
+   */
+  private considerSleep(): void {
+    const n = this.n;
+    let contacts = false;
+    for (let i = 0; i < n; i++)
+      if (this.contactShape[i] !== -1) {
+        contacts = true;
+        break;
+      }
+    const quiet =
+      contacts &&
+      !this.grab &&
+      this.settleForce === 0 &&
+      this.assistAx > -40 &&
+      this.assistAx < 40 &&
+      this.emaVx * this.emaVx + this.emaVy * this.emaVy < (this.sitting ? 2.5 * 2.5 : 1.5 * 1.5);
+    if (!quiet) {
+      this.stillFrames = 0;
+      return;
+    }
+    if (this.stillFrames === 0) {
+      this.refX.set(this.x);
+      this.refY.set(this.y);
+    }
+    this.stillFrames++;
+    if (this.stillFrames % 20 !== 0) return;
+    let drift = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = this.x[i] - this.refX[i];
+      const dy = this.y[i] - this.refY[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > drift) drift = d2;
+    }
+    // a seated cat may doze off while still creeping a hair (it should stay put)
+    const lim = this.sitting ? 1.2 : 0.5;
+    if (drift > lim * lim) {
+      this.stillFrames = 0;
+      return;
+    }
+    if (this.stillFrames >= 40) this.sleep();
+    else {
+      this.refX.set(this.x);
+      this.refY.set(this.y);
+    }
+  }
+
   /** Copy the full dynamic state (for undo snapshots). */
   snapshot(): BodySnapshot {
     return {
@@ -692,6 +780,7 @@ export class SoftBody {
       contactNx: this.contactNx.slice(),
       contactNy: this.contactNy.slice(),
       ema: [this.emaVx, this.emaVy, this.emaEnergy, this.energy, this.airborneFrames],
+      sleep: { asleep: this.asleep, still: this.stillFrames, refX: this.refX.slice(), refY: this.refY.slice() },
     };
   }
 
@@ -710,6 +799,11 @@ export class SoftBody {
     this.contactNx.set(s.contactNx);
     this.contactNy.set(s.contactNy);
     [this.emaVx, this.emaVy, this.emaEnergy, this.energy, this.airborneFrames] = s.ema;
+    this.asleep = s.sleep.asleep;
+    this.stillFrames = s.sleep.still;
+    this.refX.set(s.sleep.refX);
+    this.refY.set(s.sleep.refY);
+    this.frictionMul = 1;
     this.grab = null;
     this.assistAx = 0;
     this.settleForce = 0;
@@ -730,6 +824,7 @@ export interface BodySnapshot {
   contactNx: Float32Array;
   contactNy: Float32Array;
   ema: [number, number, number, number, number];
+  sleep: { asleep: boolean; still: number; refX: Float64Array; refY: Float64Array };
 }
 
 /** Centre a shape on its centroid and scale it to the given area. */

@@ -14,7 +14,7 @@ export const HANDMADE: RoomDef[] = [
     plan: [
       { cat: 0, container: 0, gx: 15, gy: -4, tx: 166, ty: 323, hold: 40, kind: 'drag' },
       { cat: 2, container: 2, gx: -11, gy: -3, tx: 306, ty: 349, hold: 40, kind: 'drag', wx: 243, wy: 221 },
-      { cat: 1, container: 1, gx: 8, gy: -2, tx: 250, ty: 184, hold: 40, kind: 'drag' },
+      { cat: 1, container: 1, gx: 8, gy: -2, tx: 250, ty: 184, hold: 60, kind: 'drag' },
     ],
     tutorial: true,
     furniture: [

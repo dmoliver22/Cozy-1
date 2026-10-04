@@ -1,6 +1,6 @@
-// Painting the cats: round squishy loaves with two ears, dot eyes, a tiny mouth
-// and a tail. The face always floats to the top of the blob ("cats land on
-// their feet"), so a cat poured into a teacup still reads as a loaf with ears.
+// Painting the cats: round squishy loaves with two ears, dot eyes and a tiny
+// mouth. The face always floats to the top of the blob ("cats land on their
+// feet"), so a cat poured into a teacup still reads as a loaf with ears.
 //
 // The look is painted, not drawn: a flat coat colour, breed markings, a fur
 // texture, soft shading that hugs the outline (one warm light from the upper
@@ -8,8 +8,7 @@
 // little tufts of fur breaking the silhouette.
 //
 // Cats sitting in a container are painted in two passes: the body goes under
-// the container's front (so the cup hides what's inside it) and the tail and
-// front paws go over it, draped over the rim.
+// the container's (glass) front, and the front paws go over its rim.
 
 import type { BreedLook } from '../physics/breeds';
 import { NODE_RADIUS, type SoftBody } from '../physics/softbody';
@@ -30,13 +29,13 @@ export interface CatPose {
   expression: Expression;
   /** -1..1 horizontal look direction. */
   look: number;
-  /** The container the cat is in (or pouring into): the tail goes over its rim. */
+  /** The container the cat is in (or pouring into). */
   rim: Rim | null;
   /** Settled in a container: front paws rest on the rim. */
   seated: boolean;
   /** Loafing on a surface: paws tucked in front. */
   resting: boolean;
-  /** 0..1 purr intensity: drives ear wiggle and tail. */
+  /** 0..1 purr intensity: drives a little ear wiggle. */
   purr: number;
   /** Grabbed: ears go out sideways, paws dangle. */
   grabbed: boolean;
@@ -44,14 +43,12 @@ export interface CatPose {
   glow: number;
   /** Silhouette (locked collection cards). */
   silhouette?: boolean;
-  /** World x-range the tail should stay inside (room walls). */
-  bounds?: [number, number];
 }
 
 /**
  * Which part to paint: 'all' (a free cat, everything), 'body' (a cat in a
- * container, before the container front) or 'over' (that cat's tail and rim
- * paws, after the container front).
+ * container, before the container front) or 'over' (that cat's paws on the
+ * rim, after the container front).
  */
 export type CatLayer = 'all' | 'body' | 'over';
 
@@ -71,7 +68,8 @@ export class CatView {
   blinkAt = 2 + Math.random() * 3;
   twitchAt = 1 + Math.random() * 4;
   twitch = 0;
-  tailPhase = Math.random() * 10;
+  phase = Math.random() * 10;
+  /** Which flank gets the markings' larger patch. */
   side: 1 | -1;
   /** Outline buffers */
   ox: Float64Array;
@@ -91,17 +89,17 @@ export class CatView {
   sx = new Float64Array(0);
   sy = new Float64Array(0);
   sm = 0;
-  /** Tail control points relative to the head anchor (eased), and visibility. */
-  tail = new Float64Array(8);
-  tailA = 1;
-  tailInited = false;
+  /** Ear bases relative to the head anchor, and ear angles, both eased. */
+  earRX = [0, 0];
+  earRY = [0, 0];
+  earAng = [0, 0];
+  earInit = false;
+  /** 0..1 how much the cat breathes visibly (resting or seated). */
+  breath = 0;
   /** Paw visibility: tucked under the chest / dangling, and over a rim. */
   pawRest = 0;
   pawRim = 0;
   dangle = 0;
-  /** Sitting deeper than the rim: the head peeks over it (0..1), at this x. */
-  peek = 0;
-  peekX = 0;
 
   constructor(n: number, seed: number) {
     this.ox = new Float64Array(n);
@@ -115,7 +113,7 @@ export class CatView {
   update(dt: number): void {
     this.t += dt;
     this.dt = dt;
-    if (this.twitch > 0) this.twitch = Math.max(0, this.twitch - dt * 6);
+    if (this.twitch > 0) this.twitch = Math.max(0, this.twitch - dt * 4);
     if (this.t > this.twitchAt) {
       this.twitch = 1;
       this.twitchAt = this.t + 2 + Math.random() * 5;
@@ -204,7 +202,7 @@ function inkFor(look: BreedLook): Ink {
 // Geometry
 
 /** Compute the visible outline (nodes pushed out by the collision skin). */
-function computeOutline(b: SoftBody, v: CatView): void {
+function computeOutline(b: SoftBody, v: CatView, breathe: number): void {
   const n = b.n;
   const skin = NODE_RADIUS * 0.95;
   let minY = Infinity;
@@ -232,60 +230,69 @@ function computeOutline(b: SoftBody, v: CatView): void {
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
   }
+  cx /= n;
+  if (breathe !== 0) {
+    // A resting cat breathes: the back rises a touch, the bottom stays put.
+    for (let i = 0; i < n; i++) {
+      v.oy[i] = maxY - (maxY - v.oy[i]) * (1 + breathe);
+      v.ox[i] = cx + (v.ox[i] - cx) * (1 + breathe * 0.3);
+    }
+    minY = maxY - (maxY - minY) * (1 + breathe);
+    minX = cx + (minX - cx) * (1 + breathe * 0.3);
+    maxX = cx + (maxX - cx) * (1 + breathe * 0.3);
+  }
   v.box = { x0: minX, y0: minY, x1: maxX, y1: maxY };
-  v.cx = cx / n;
+  v.cx = cx;
 }
 
-/** Index of the outline point nearest to x among the upper part of the body. */
-function nearestTopIndex(v: CatView, n: number, x: number, yLimit: number): number {
-  let best = -1;
-  let bd = Infinity;
+/**
+ * Where the top of the outline crosses the vertical line x = X, with the
+ * outward normal there (interpolated between nodes, so it slides smoothly as
+ * the ring moves instead of jumping from node to node).
+ */
+function topCrossing(v: CatView, n: number, X: number): { x: number; y: number; nx: number; ny: number } {
+  const x = clamp(X, v.box.x0 + 0.5, v.box.x1 - 0.5);
+  let bestY = Infinity;
+  let nx = 0;
+  let ny = -1;
   for (let i = 0; i < n; i++) {
-    if (v.oy[i] > yLimit) continue;
-    const d = Math.abs(v.ox[i] - x) + (v.oy[i] - yLimit) * -0.01;
-    if (d < bd) {
-      bd = d;
-      best = i;
+    const j = i + 1 === n ? 0 : i + 1;
+    const x0 = v.ox[i];
+    const x1 = v.ox[j];
+    if ((x0 - x) * (x1 - x) > 0 || x0 === x1) continue;
+    const t = (x - x0) / (x1 - x0);
+    const y = v.oy[i] + (v.oy[j] - v.oy[i]) * t;
+    if (y < bestY) {
+      bestY = y;
+      nx = v.nx[i] + (v.nx[j] - v.nx[i]) * t;
+      ny = v.ny[i] + (v.ny[j] - v.ny[i]) * t;
     }
   }
-  if (best < 0) {
-    let my = Infinity;
-    for (let i = 0; i < n; i++)
-      if (v.oy[i] < my) {
-        my = v.oy[i];
-        best = i;
-      }
-  }
-  return best;
+  if (bestY === Infinity) bestY = v.box.y0;
+  const l = Math.hypot(nx, ny) || 1;
+  return { x, y: bestY, nx: nx / l, ny: ny / l };
 }
 
-/** Outermost outline x on one side within a band of y. */
-function sideExtent(v: CatView, n: number, side: number, y0: number, y1: number): { x: number; y: number } | null {
-  let best = -1;
-  let bx = side > 0 ? -Infinity : Infinity;
-  for (let i = 0; i < n; i++) {
-    const y = v.oy[i];
-    if (y < y0 || y > y1) continue;
-    const x = v.ox[i];
-    if (side > 0 ? x > bx : x < bx) {
-      bx = x;
-      best = i;
-    }
-  }
-  return best < 0 ? null : { x: v.ox[best], y: v.oy[best] };
+/** Shortest signed difference between two angles. */
+function angleDiff(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
 
 const ease = (dt: number, rate: number): number => (dt <= 0 ? 1 : 1 - Math.exp(-dt * rate));
 
-/** Work out where everything goes this frame (head, face, ears, tail, paws). */
+/** Work out where everything goes this frame (head, face, ears, paws). */
 function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   const look = b.breed.look;
   const n = b.n;
   const r = b.p.radius;
-  computeOutline(b, v);
+  const calmNow = (pose.resting || pose.seated) && !pose.grabbed ? 1 : 0;
+  v.breath += (calmNow - v.breath) * (v.inited ? ease(v.dt, 2) : 1);
+  computeOutline(b, v, v.breath * Math.sin(v.t * (1.9 + pose.purr * 0.8) + v.phase) * (0.011 + pose.purr * 0.004));
   const ol = v.box;
-  const h = ol.y1 - ol.y0;
-  // Head anchor: weighted top of the blob, smoothed over time.
+  // Head anchor: weighted top of the blob, eased over time.
   let wx = 0;
   let wy = 0;
   let ws = 0;
@@ -303,8 +310,8 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
     v.hy = ty;
     v.inited = true;
   } else {
-    v.hx += (tx - v.hx) * 0.35;
-    v.hy += (ty - v.hy) * 0.5;
+    v.hx += (tx - v.hx) * ease(v.dt, 24);
+    v.hy += (ty - v.hy) * ease(v.dt, 36);
   }
   const hx = clamp(v.hx, ol.x0 + r * 0.45, ol.x1 - r * 0.45);
   const hy = Math.max(v.hy, ol.y0);
@@ -315,113 +322,50 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   v.fy = hy + faceDrop;
   v.lw = Math.max(1.1, 1.5 * (r / 30) ** 0.25);
 
-  // Ears: on the outline either side of the head anchor.
-  const spread = Math.min(r * 0.62, (ol.x1 - ol.x0) * 0.3);
-  const earLimit = hy + Math.max(r * 0.55, h * 0.35);
-  const twitch = v.twitch * Math.sin(v.t * 40) * 0.25;
-  const wiggle = pose.purr > 0 ? Math.sin(v.t * 2.2 + v.tailPhase) * 0.05 * pose.purr : 0;
+  // Ears: where the top of the outline crosses either side of the head, eased
+  // in the head's frame so they ride along smoothly instead of hopping between
+  // nodes. A grabbed cat's ears go out sideways; content cats wiggle them.
+  const spread = Math.min(r * 0.6, (ol.x1 - ol.x0) * 0.3);
+  const ke = snap || !v.earInit ? 1 : ease(v.dt, 16);
+  const ka = snap || !v.earInit ? 1 : ease(v.dt, 12);
+  const wiggle = pose.purr > 0 ? Math.sin(v.t * 2.2 + v.phase) * 0.05 * pose.purr : 0;
+  const twitch = v.twitch * Math.sin(v.t * 16) * 0.12;
   v.ears = [];
-  for (const s of [-1, 1]) {
-    const idx = nearestTopIndex(v, n, hx + s * spread, earLimit);
-    if (idx < 0) continue;
-    let dx = v.nx[idx] * 0.45;
-    let dy = v.ny[idx] * 0.45 - 1;
+  for (let e = 0; e < 2; e++) {
+    const s = e === 0 ? -1 : 1;
+    const top = topCrossing(v, n, hx + s * spread);
+    let dx = top.nx * 0.45;
+    let dy = top.ny * 0.45 - 1;
     if (pose.grabbed) {
       dx += s * 0.9;
       dy += 0.35;
     }
-    const tw = (s > 0 ? twitch : -twitch * 0.3) + s * wiggle;
-    const l = Math.hypot(dx, dy) || 1;
-    dx /= l;
-    dy /= l;
-    const c = Math.cos(tw);
-    const sn = Math.sin(tw);
-    v.ears.push({ x: v.ox[idx] - v.nx[idx] * 2, y: v.oy[idx] - v.ny[idx] * 2, dx: dx * c - dy * sn, dy: dx * sn + dy * c });
+    const ang = Math.atan2(dy, dx);
+    v.earRX[e] += (top.x - top.nx * 2 - v.hx - v.earRX[e]) * ke;
+    v.earRY[e] += (top.y - top.ny * 2 - v.hy - v.earRY[e]) * ke;
+    v.earAng[e] += angleDiff(ang, v.earAng[e]) * ka;
+    const a = v.earAng[e] + s * wiggle + (s > 0 ? twitch : 0);
+    v.ears.push({ x: v.hx + v.earRX[e], y: v.hy + v.earRY[e], dx: Math.cos(a), dy: Math.sin(a) });
   }
-
-  // Tail: pick a pose, then ease the control points (kept relative to the head
-  // so a falling cat never leaves its tail behind).
-  const L = r * (0.95 + look.tailFluff * 0.15);
-  const swish = Math.sin(v.t * (1.4 + pose.purr * 0.8) + v.tailPhase) * (0.6 + pose.purr * 0.4) + (pose.grabbed ? Math.sin(v.t * 9) * 0.5 : 0);
-  const rim = pose.rim;
-  let target: number[] | null = null;
-  if (rim) {
-    // Which rim? The side the body is already close to.
-    const band0 = rim.y - r * 0.4;
-    const band1 = rim.y + r * 0.15;
-    const right = sideExtent(v, n, 1, band0, band1);
-    const left = sideExtent(v, n, -1, band0, band1);
-    if (right && left) {
-      const gr = rim.x1 - right.x;
-      const gl = left.x - rim.x0;
-      if (v.side > 0 && gl < gr - r * 0.5) v.side = -1;
-      else if (v.side < 0 && gr < gl - r * 0.5) v.side = 1;
-    }
-    const s = v.side;
-    const edge = s > 0 ? right : left;
-    if (edge && ol.y0 < rim.y - r * 0.08) {
-      const gap = s > 0 ? rim.x1 - edge.x : edge.x - rim.x0;
-      const rimX = s > 0 ? rim.x1 + rim.lip : rim.x0 - rim.lip;
-      if (gap < r * 0.8) {
-        // Draped over the rim, hanging down the outside.
-        const x0 = clamp(edge.x - s * r * 0.22, rim.x0 + 2, rim.x1 - 2);
-        target = [x0, rim.y - r * 0.16, rimX - s * L * 0.04, rim.y - L * 0.26, rimX + s * L * 0.22, rim.y - L * 0.13, rimX + s * L * (0.28 + swish * 0.04), rim.y + L * (0.62 + swish * 0.05)];
-      } else {
-        // Poking up out of a roomy container, curled like a question mark.
-        const x0 = edge.x - s * r * 0.18;
-        const y0 = rim.y + 4;
-        target = [x0, y0, x0 + s * L * 0.05, y0 - L * 0.6, x0 + s * L * 0.55, y0 - L * 0.95, x0 + s * L * (0.62 + swish * 0.08), y0 - L * (0.58 + swish * 0.1)];
-      }
-    }
-  } else {
-    // Free: keep the tail inside the room.
-    const bnd = pose.bounds;
-    if (bnd) {
-      if (v.side > 0 && ol.x1 + L * 0.85 > bnd[1] && ol.x0 - L * 0.85 > bnd[0]) v.side = -1;
-      else if (v.side < 0 && ol.x0 - L * 0.85 < bnd[0] && ol.x1 + L * 0.85 < bnd[1]) v.side = 1;
-    }
-    const s = v.side;
-    const root = sideExtent(v, n, s, hy + h * 0.3, ol.y1 - h * 0.14) ?? { x: s > 0 ? ol.x1 : ol.x0, y: (ol.y0 + ol.y1) / 2 };
-    const x0 = root.x - s * r * 0.16;
-    const y0 = root.y;
-    if (pose.grabbed || b.airborneFrames > 8) {
-      // dangling
-      target = [x0, y0, x0 + s * L * 0.3, y0 + L * 0.22, x0 + s * L * 0.45, y0 + L * 0.62, x0 + s * L * (0.3 + swish * 0.2), y0 + L * 0.95];
-    } else {
-      // out along the surface, tip curling up
-      target = [x0, y0, x0 + s * L * 0.55, y0 + L * 0.12, x0 + s * L * 1.0, y0 - L * 0.04, x0 + s * L * (0.92 + swish * 0.08), y0 - L * (0.56 - swish * 0.15)];
-    }
-  }
-  const k = snap || !v.tailInited ? 1 : ease(v.dt, 16);
-  if (target) {
-    for (let i = 0; i < 8; i++) {
-      const rel = target[i] - (i % 2 === 0 ? v.hx : v.hy);
-      v.tail[i] = v.tailInited ? v.tail[i] + (rel - v.tail[i]) * k : rel;
-    }
-    v.tailInited = true;
-  }
-  v.tailA += ((target ? 1 : 0) - v.tailA) * (snap ? 1 : ease(v.dt, 10));
+  v.earInit = true;
 
   // Paws: tucked under the chest when loafing, dangling when lifted, over the
-  // rim when sitting in a container with the head poking out.
+  // rim when sitting in a container with the head poking out (with a little
+  // hysteresis so they never flicker).
+  const rim = pose.rim;
   const rest = !rim && (pose.resting || pose.grabbed) ? 1 : 0;
   v.pawRest += (rest - v.pawRest) * (snap ? 1 : ease(v.dt, 8));
   v.dangle += ((pose.grabbed ? 1 : 0) - v.dangle) * (snap ? 1 : ease(v.dt, 8));
   let onRim = 0;
-  if (rim && pose.seated && v.fy < rim.y - r * 0.05 && v.fy > rim.y - r * 1.25 && ol.y1 > rim.y + r * 0.25) {
-    const px0 = v.fx - r * 0.42;
-    const px1 = v.fx + r * 0.42;
-    if (px0 > rim.x0 + 2 && px1 < rim.x1 - 2) onRim = 1;
+  if (rim && pose.seated) {
+    const was = v.pawRim > 0.5;
+    const above = rim.y - v.fy;
+    const lo = was ? r * -0.02 : r * 0.08;
+    const hi = was ? r * 1.35 : r * 1.2;
+    const fits = v.fx - r * 0.42 > rim.x0 + 2 && v.fx + r * 0.42 < rim.x1 - 2;
+    if (above > lo && above < hi && ol.y1 > rim.y + r * 0.25 && fits) onRim = 1;
   }
-  // A cat sitting deeper than its rim peeks over it: eyes, ears and paws up.
-  const deep = rim && pose.seated && ol.y0 > rim.y - r * 0.3 ? 1 : 0;
-  if (rim && deep) {
-    const px = clamp(v.fx, rim.x0 + r * 0.5, rim.x1 - r * 0.5);
-    v.peekX = v.peek < 0.02 || snap ? px : v.peekX + (px - v.peekX) * ease(v.dt, 8);
-    onRim = rim.x1 - rim.x0 > r * 1.2 ? 1 : 0;
-  }
-  v.peek += (deep - v.peek) * (snap ? 1 : ease(v.dt, 5));
-  v.pawRim += (onRim - v.pawRim) * (snap ? 1 : ease(v.dt, 7));
+  v.pawRim += (onRim - v.pawRim) * (snap ? 1 : ease(v.dt, 6));
   furOutline(b, v, r, look);
 }
 
@@ -481,6 +425,9 @@ function furOutline(b: SoftBody, v: CatView, r: number, look: BreedLook): void {
     const nx = ty;
     const ny = -tx;
     if (ny > 0.3) continue;
+    // fur pressed flat against a wall or the glass: no lock there
+    const node = Math.floor(c / S);
+    if (b.contactShape[node] !== -1 || b.contactShape[(node + 1) % n] !== -1) continue;
     const cheek = Math.exp(-(((sy[c] - v.fy) / (r * 0.5)) ** 2)) * Math.abs(nx);
     // short coats only get locks on the cheeks and the crown
     const where = fluff > 0.6 ? 1 : Math.max(cheek, ny < -0.8 ? 0.55 : 0);
@@ -544,94 +491,29 @@ export function drawCat(ctx: Ctx, b: SoftBody, v: CatView, pose: CatPose, scaleH
 
   if (pose.silhouette) {
     ctx.fillStyle = look.shade;
-    const tail = tailGeometry(v, r, look);
-    if (tail) ctx.fill(tail.path);
     for (const e of v.ears) ctx.fill(earPath(e, r * 0.46 * look.earSize));
     ctx.fill(smoothPath2D(v.sx, v.sy, v.sm));
     return;
   }
   if (layer === 'over') {
-    drawOver(ctx, v, pose, r, look, ink);
+    drawOver(ctx, v, pose, r, ink);
     return;
   }
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  if (!pose.rim) drawTailShape(ctx, v, r, look, ink);
-  if (v.peek < 0.3) for (const e of v.ears) drawEar(ctx, v, e, r, look, ink);
+  for (const e of v.ears) drawEar(ctx, v, e, r, look, ink);
   drawBody(ctx, v, pose, r, look, ink);
-  // a peeking head carries the face over the rim instead
-  if (v.peek < 0.3) drawFace(ctx, look, ink, v.fx, v.fy, v.fs, r, pose, v);
+  drawFace(ctx, look, ink, v.fx, v.fy, v.fs, r, pose, v);
   if (!pose.rim && v.pawRest > 0.02) drawRestPaws(ctx, v, r, ink);
   ctx.restore();
-  if (layer === 'all' && pose.rim) drawOver(ctx, v, pose, r, look, ink);
+  if (layer === 'all' && pose.rim) drawOver(ctx, v, pose, r, ink);
 }
 
-/** Tail and rim paws of a cat in a container, painted over the container front. */
-function drawOver(ctx: Ctx, v: CatView, pose: CatPose, r: number, look: BreedLook, ink: Ink): void {
+/** Front paws of a cat in a container, resting on the rim over the container front. */
+function drawOver(ctx: Ctx, v: CatView, pose: CatPose, r: number, ink: Ink): void {
   const rim = pose.rim;
-  if (!rim) return;
-  ctx.save();
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  // Nothing of the tail may show inside the container below its rim.
-  ctx.beginPath();
-  ctx.rect(v.box.x0 - r * 4, v.box.y0 - r * 4, v.box.x1 - v.box.x0 + r * 8, v.box.y1 - v.box.y0 + r * 8);
-  ctx.rect(rim.x0 - 1, rim.y, rim.x1 - rim.x0 + 2, r * 8);
-  ctx.clip('evenodd');
-  if (v.tailA > 0.02) drawTailShape(ctx, v, r, look, ink);
-  ctx.restore();
-  if (v.peek > 0.02) drawPeek(ctx, v, pose, rim, r, look, ink);
-  if (v.pawRim > 0.02) drawRimPaws(ctx, v, rim, r, ink);
-}
-
-/** The head of a cat sitting deep in a container, peeking over the rim. */
-function drawPeek(ctx: Ctx, v: CatView, pose: CatPose, rim: Rim, r: number, look: BreedLook, ink: Ink): void {
-  const p = v.peek;
-  const rx = Math.min(r * 0.62, (rim.x1 - rim.x0) / 2 + rim.lip * 0.6);
-  const ry = rx * 0.84;
-  const k = rx / (r * 0.62);
-  const hx = v.peekX;
-  const cy = rim.y + ry * 0.62 - r * 0.62 * k * p;
-  ctx.save();
-  ctx.globalAlpha *= clamp(p * 1.5, 0, 1);
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  // only what's above the near rim shows
-  ctx.beginPath();
-  ctx.rect(hx - r * 2, rim.y - r * 3, r * 4, r * 3 + 1.2);
-  ctx.clip();
-  for (const s of [-1, 1]) {
-    const a = 0.62;
-    let dx = s * 0.38;
-    let dy = -1;
-    const l = Math.hypot(dx, dy);
-    dx /= l;
-    dy /= l;
-    drawEar(ctx, v, { x: hx + s * rx * Math.sin(a) * 0.92, y: cy - ry * Math.cos(a) * 0.92, dx, dy }, r * k, look, ink);
-  }
-  const P = new Path2D();
-  P.ellipse(hx, cy, rx, ry, 0, 0, Math.PI * 2);
-  const box: Box = { x0: hx - rx, y0: cy - ry, x1: hx + rx, y1: cy + ry };
-  ctx.fillStyle = ink.base;
-  ctx.fill(P);
-  ctx.save();
-  ctx.clip(P);
-  if (ink.fur) fillTexture(ctx, ink.fur, box, ink.furAlpha, 'overlay', ink.furScale, hx, cy);
-  const g = ctx.createRadialGradient(hx - rx * 0.35, cy - ry * 0.45, rx * 0.05, hx - rx * 0.35, cy - ry * 0.45, rx * 2);
-  g.addColorStop(0, rgba(ink.lit, ink.dark ? 0.35 : 0.42));
-  g.addColorStop(0.45, rgba(ink.lit, 0));
-  g.addColorStop(0.65, rgba(ink.shade, 0));
-  g.addColorStop(1, rgba(ink.shade, 0.5));
-  ctx.fillStyle = g;
-  ctx.fillRect(box.x0, box.y0, rx * 2, ry * 2);
-  innerBands(ctx, P, box, ink.rim, r * 0.08, ink.rimAlpha, 'light', 1);
-  ctx.restore();
-  ctx.lineWidth = v.lw * 0.8;
-  ctx.strokeStyle = rgba(ink.line, ink.lineAlpha);
-  ctx.stroke(P);
-  drawFace(ctx, look, ink, hx, cy + ry * 0.2, v.fs * Math.min(1, k * 1.1), r * k, pose, v);
-  ctx.restore();
+  if (rim && v.pawRim > 0.02) drawRimPaws(ctx, v, rim, r, ink);
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,125 +890,6 @@ function drawEar(ctx: Ctx, v: CatView, e: Ear, r: number, look: BreedLook, ink: 
 }
 
 // ---------------------------------------------------------------------------
-// Tail
-
-interface TailGeo {
-  path: Path2D;
-  box: Box;
-  lx: number[];
-  ly: number[];
-  rx: number[];
-  ry: number[];
-  tipX: number;
-  tipY: number;
-  thick: number;
-}
-
-const TAIL_N = 16;
-
-/** The tail's outline along its eased Bezier spine (tapered, rounded tip). */
-function tailGeometry(v: CatView, r: number, look: BreedLook): TailGeo | null {
-  if (!v.tailInited || v.tailA <= 0.02) return null;
-  const T = v.tail;
-  const ax = v.hx;
-  const ay = v.hy;
-  const p0x = T[0] + ax;
-  const p0y = T[1] + ay;
-  const p1x = T[2] + ax;
-  const p1y = T[3] + ay;
-  const p2x = T[4] + ax;
-  const p2y = T[5] + ay;
-  const p3x = T[6] + ax;
-  const p3y = T[7] + ay;
-  const thick = r * (0.18 + look.tailFluff * 0.14) * (0.4 + 0.6 * v.tailA);
-  const N = TAIL_N;
-  const lx: number[] = [];
-  const ly: number[] = [];
-  const rx: number[] = [];
-  const ry: number[] = [];
-  const cxs: number[] = [];
-  const cys: number[] = [];
-  const fluffy = look.tailFluff > 0.5;
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (let k = 0; k <= N; k++) {
-    const t = k / N;
-    const u = 1 - t;
-    const x = u * u * u * p0x + 3 * u * u * t * p1x + 3 * u * t * t * p2x + t * t * t * p3x;
-    const y = u * u * u * p0y + 3 * u * u * t * p1y + 3 * u * t * t * p2y + t * t * t * p3y;
-    const dx = 3 * u * u * (p1x - p0x) + 6 * u * t * (p2x - p1x) + 3 * t * t * (p3x - p2x);
-    const dy = 3 * u * u * (p1y - p0y) + 6 * u * t * (p2y - p1y) + 3 * t * t * (p3y - p2y);
-    const l = Math.hypot(dx, dy) || 1;
-    let w = thick * (1 - t * 0.38) * (fluffy ? 1 + Math.sin(t * Math.PI) * 0.25 : 1);
-    if (fluffy && k > 0 && k < N) w *= 0.9 + hash01(k, v.seed + 7) * 0.22;
-    cxs.push(x);
-    cys.push(y);
-    const ex = (dy / l) * w * 0.5;
-    const ey = (dx / l) * w * 0.5;
-    lx.push(x - ex);
-    ly.push(y + ey);
-    rx.push(x + ex);
-    ry.push(y - ey);
-    x0 = Math.min(x0, x - Math.abs(ex));
-    x1 = Math.max(x1, x + Math.abs(ex));
-    y0 = Math.min(y0, y - Math.abs(ey));
-    y1 = Math.max(y1, y + Math.abs(ey));
-  }
-  const tipX = cxs[N];
-  const tipY = cys[N];
-  const p = new Path2D();
-  p.moveTo(lx[0], ly[0]);
-  for (let k = 1; k < N; k++) p.quadraticCurveTo(lx[k], ly[k], (lx[k] + lx[k + 1]) / 2, (ly[k] + ly[k + 1]) / 2);
-  // rounded tip
-  const dxe = tipX - cxs[N - 1];
-  const dye = tipY - cys[N - 1];
-  const de = Math.hypot(dxe, dye) || 1;
-  const cap = Math.hypot(lx[N] - rx[N], ly[N] - ry[N]) * 0.75;
-  p.lineTo(lx[N], ly[N]);
-  p.bezierCurveTo(lx[N] + (dxe / de) * cap, ly[N] + (dye / de) * cap, rx[N] + (dxe / de) * cap, ry[N] + (dye / de) * cap, rx[N], ry[N]);
-  for (let k = N - 1; k > 0; k--) p.quadraticCurveTo(rx[k], ry[k], (rx[k] + rx[k - 1]) / 2, (ry[k] + ry[k - 1]) / 2);
-  p.lineTo(rx[0], ry[0]);
-  p.closePath();
-  return { path: p, box: { x0, y0: y0 - cap, x1, y1: y1 + cap }, lx, ly, rx, ry, tipX, tipY, thick };
-}
-
-/** Paint the tail: coat, rings or tip colour, fur, shade and rim light, line. */
-function drawTailShape(ctx: Ctx, v: CatView, r: number, look: BreedLook, ink: Ink): void {
-  const t = tailGeometry(v, r, look);
-  if (!t) return;
-  const { path: P, box, lx, ly, rx, ry, thick } = t;
-  ctx.save();
-  ctx.globalAlpha *= clamp(v.tailA * 1.4, 0, 1);
-  ctx.fillStyle = ink.base;
-  ctx.fill(P);
-  ctx.save();
-  ctx.clip(P);
-  // rings for the tabbies, a pale tip for the kitten, a dark tip for the coon
-  if (look.pattern === 'tabby' || look.pattern === 'mane' || look.pattern === 'belly') {
-    ctx.strokeStyle = rgba(ink.accent, look.pattern === 'belly' ? 0.4 : 0.55);
-    ctx.lineWidth = thick * 0.42;
-    ctx.beginPath();
-    for (let k = 4; k < TAIL_N; k += 3) {
-      ctx.moveTo(lx[k] + (lx[k] - rx[k]) * 0.2, ly[k] + (ly[k] - ry[k]) * 0.2);
-      ctx.lineTo(rx[k] + (rx[k] - lx[k]) * 0.2, ry[k] + (ry[k] - ly[k]) * 0.2);
-    }
-    ctx.stroke();
-  }
-  if (look.pattern === 'patches') softBlob(ctx, t.tipX, t.tipY, thick * 1.1, thick * 1.1, ink.light, 0.95);
-  if (look.pattern === 'mane') softBlob(ctx, t.tipX, t.tipY, thick * 0.9, thick * 0.9, ink.accent, 0.7);
-  if (ink.fur) fillTexture(ctx, ink.fur, box, ink.furAlpha * 0.9, 'overlay', ink.furScale, v.hx, v.hy);
-  innerBands(ctx, P, box, ink.deep, thick * 0.42, 0.45, 'shadow', 1);
-  innerBands(ctx, P, box, ink.rim, thick * 0.2, ink.rimAlpha * 0.9, 'light', 1);
-  ctx.restore();
-  ctx.lineWidth = v.lw * 0.8;
-  ctx.strokeStyle = rgba(ink.line, ink.lineAlpha);
-  ctx.stroke(P);
-  ctx.restore();
-}
-
-// ---------------------------------------------------------------------------
 // Paws
 
 function paw(ctx: Ctx, x: number, y: number, rx: number, ry: number, ink: Ink, lw: number, toesDown: boolean): void {
@@ -1174,9 +937,8 @@ function drawRimPaws(ctx: Ctx, v: CatView, rim: Rim, r: number, ink: Ink): void 
   const rx = r * 0.18;
   const ry = r * 0.13;
   const y = rim.y + ry * 0.35;
-  const cx = v.peek > 0.5 ? v.peekX : v.fx;
   for (const s of [-1, 1]) {
-    const x = cx + s * r * 0.3;
+    const x = v.fx + s * r * 0.3;
     // a little contact shadow on the rim below each paw
     const sg = ctx.createRadialGradient(x, y + ry * 0.9, 0, x, y + ry * 0.9, rx * 1.3);
     sg.addColorStop(0, 'rgba(62,48,70,0.22)');

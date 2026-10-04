@@ -22,8 +22,8 @@ Tension is the skin's constant line tension; viscosity damps deformation only.
 | Persian | 32 | honey | 680 | 26 | 0 | 2.6 | slow ooze, overflows bowls |
 | Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 2.5 | the hero; heaviest to carry; sleepy z's when idle |
 | Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 2.8 | holds its shape; resists narrow necks (`slurp` 0.25) |
-| Tabby | 29 | custard | 700 | 8 | 0.0004 | 2.8 | the polite reference cat |
-| Maine Coon | 37 | cloud | 700 | 9 | 0.0003 | 2.7 | compresses to 78% of its area |
+| Tabby | 29 | custard | 700 | 8 | 0 | 2.8 | the polite reference cat |
+| Maine Coon | 37 | cloud | 700 | 9 | 0 | 2.7 | compresses to 78% of its area |
 | The Void | 28 | ink | 420 | 5 | 0 | 3.0 | secret; pours into anything |
 
 Every cat can be picked up, in puzzles and in the photo room alike: 80% of the
@@ -35,16 +35,16 @@ finger rather than bobbing.
 
 ## Painting and layering
 
-Draw order each frame: cached back layer (room, furniture, decor, container
-insides, paper grain) → cat shadows → bodies of cats that are in a container
-→ container fronts (cached) → those cats' tails and rim paws → free cats (the
-one in your hand last) → effects. A cat counts as "in" a container once 2% of
-it is inside the cavity (or it is seated). Its tail then either drapes over the
-nearer rim (when the body reaches the rim) or curls up out of a roomy container,
-clipped so nothing shows inside the container below the rim line. Tail control
-points are eased relative to the head, so pose changes never pop. A seated cat
-whose whole body is below the rim peeks over it: the over pass paints its head
-rising above the rim (ears and eyes), with its front paws on the rim.
+Draw order each frame: cached back layer (room, furniture, decor, the far
+wall of every glass container, paper grain) → cat shadows → bodies of cats
+that are in a container, each in a soft shadow on the container floor →
+container fronts (cached, translucent glass) → those cats' front paws on the
+rim → free cats (the one in your hand last) → effects. A cat counts as "in" a
+container once 2% of it is inside the cavity (or it is seated). Cats have no
+tails (they glitched through rims). Ears sit where the top of the outline
+crosses either side of the head and are eased in the head's frame, so they
+never hop from node to node. Fur locks are left out wherever a node touches a
+wall, so a cat pressed against the glass looks squished flat.
 
 Night rooms multiply the finished frame by a light map painted once per room
 (indigo ambient, darker corners, warm pools under pendant lamps, moonlight by
@@ -55,6 +55,20 @@ All paint shares one light (`LIGHT`, upper left). Shadows use `shadowOf` (darker
 nudged toward violet), lights use `lightOf` (lighter, nudged toward yellow),
 lines use `lineOf`. Textures are mid-grey tiles blended with `overlay` /
 `soft-light`, so they modulate any colour without shifting its hue.
+
+## Resting and sleeping
+
+A cat that is touching something, has nothing pulling on it (finger, slurp,
+nudge), whose smoothed centre speed is under 1.5 units/s (2.5 when seated or
+perched) and whose nodes each move under 0.5 units (1.2 when seated or perched)
+over two 20-frame windows falls asleep: its nodes are frozen and skipped by the
+solver. It wakes on a grab, a boop, a game nudge over 40 units/s², a moving or
+carried cat bumping into it, or any change to the furniture (sandbox). A
+sleeping cat is an immovable cushion for a neighbour settling gently against
+it. Seated cats get no more nudging at all, and a cat balanced on a rim it
+doesn't fit slides off on a slippery rim with a push that builds over 1/3 s,
+instead of teetering. The tabby and the Maine Coon have no shape matching (it
+made them slowly "unroll" across the floor after a tumble).
 
 ## Seating and cozy points
 

@@ -236,6 +236,7 @@ export class App {
     this.acc += dt;
     let steps = 0;
     while (this.acc >= FRAME_DT && steps < 4) {
+      this.session.rememberPositions();
       this.session.step();
       this.acc -= FRAME_DT;
       steps++;
@@ -245,7 +246,14 @@ export class App {
     this.tickReveal(dt);
     this.tickCoach(dt);
     this.tickAmbient(dt);
-    this.renderer.render(dt);
+    // Draw between the last two physics steps: smooth on 90/120 Hz screens
+    // and through uneven frame times.
+    this.session.beginLerp(Math.min(1, this.acc / FRAME_DT));
+    try {
+      this.renderer.render(dt);
+    } finally {
+      this.session.endLerp();
+    }
     this.updateHud();
   }
 

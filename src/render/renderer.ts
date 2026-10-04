@@ -488,10 +488,14 @@ export class Renderer {
       return this.poseFor(cat, v);
     });
     for (let i = 0; i < s.cats.length; i++) if (!poses[i].rim) this.drawCatShadow(ctx, s.cats[i]);
-    // Cats in a container go under its front; their tails and paws go over it.
+    // Cats in a container go under its (glass) front, resting on its floor in
+    // a soft shadow; their front paws go over the rim.
     for (let i = 0; i < s.cats.length; i++) {
       const cat = s.cats[i];
-      if (poses[i].rim) drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'body');
+      if (!poses[i].rim) continue;
+      const fp = catFootprint(cat.body);
+      contactShadow(ctx, fp.cx, fp.maxY, (fp.maxX - fp.minX) * 0.36, 0.2, 0.5);
+      drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'body');
     }
     // Front layer
     const fr = this.frontRect;
@@ -672,7 +676,6 @@ export class Renderer {
       purr: seat ? (s.complete ? 1 : 0.6) : 0,
       grabbed: cat.grabbed,
       glow: this.glow,
-      bounds: [0, WORLD_W],
     };
   }
 

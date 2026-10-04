@@ -27,6 +27,12 @@ export class World {
   addStatic(s: StaticShape): void {
     this.statics.push(s);
     this.shapeById.set(s.id, s);
+    this.wakeAll();
+  }
+
+  /** Something in the room changed: every cat re-checks its footing. */
+  wakeAll(): void {
+    for (const b of this.bodies) b.wake();
   }
 
   removeStaticsOfProp(propId: number): void {
@@ -36,6 +42,7 @@ export class World {
         this.statics.splice(i, 1);
       }
     }
+    this.wakeAll();
   }
 
   shape(id: number): StaticShape | undefined {
@@ -58,23 +65,26 @@ export class World {
     for (const b of bodies) {
       b.impactSpeed = 0;
       b.impactShape = -1;
+      // A sleeping cat wakes the moment the game or a finger pulls on it.
+      if (b.asleep && (b.grab || b.settleForce !== 0 || b.assistAx <= -40 || b.assistAx >= 40)) b.wake();
     }
     for (let s = 0; s < SUBSTEPS; s++) {
-      for (const b of bodies) b.integrate(h, GRAVITY);
+      for (const b of bodies) if (!b.asleep) b.integrate(h, GRAVITY);
       // Two passes so pressure and walls agree before velocities are derived
       // (one pass lets them fight, which shows up as chatter in tight cups).
       for (let it = 0; it < World.iterations; it++) {
         const first = it === 0;
         for (const b of bodies) {
+          if (b.asleep) continue;
           b.solveInternal(h, first);
           if (first) b.applyAssist(h);
         }
         for (let i = 0; i < bodies.length; i++) {
           for (let j = i + 1; j < bodies.length; j++) collideBodies(bodies[i], bodies[j]);
         }
-        for (const b of bodies) this.collideStatics(b, h, s === 0 && first, first);
+        for (const b of bodies) if (!b.asleep) this.collideStatics(b, h, s === 0 && first, first);
       }
-      for (const b of bodies) b.finishSubstep(h);
+      for (const b of bodies) if (!b.asleep) b.finishSubstep(h);
     }
     for (const b of bodies) {
       b.frameUpdate(FRAME_DT);
@@ -105,7 +115,7 @@ export class World {
     const statics = this.statics;
     const rN = NODE_RADIUS;
     // Held cats slide more easily (you're scooting them).
-    const mu = b.p.friction * (b.grab ? 0.45 : 1);
+    const mu = b.p.friction * (b.grab ? 0.45 : 1) * b.frictionMul;
     // Body AABB for broad phase
     let bminX = Infinity;
     let bminY = Infinity;
@@ -220,8 +230,13 @@ export class World {
 const skinBB = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 const skinBB2 = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
-/** Two cats squish against each other (node-vs-edge, both directions). */
+/**
+ * Two cats squish against each other (node-vs-edge, both directions). A
+ * sleeping cat is an immovable cushion for a gently settling neighbour, but a
+ * moving or carried cat bumping into it wakes it up.
+ */
 export function collideBodies(a: SoftBody, b: SoftBody): void {
+  if (a.asleep && b.asleep) return;
   const pad = NODE_RADIUS * 2;
   a.bounds(skinBB);
   b.bounds(skinBB2);
@@ -232,11 +247,16 @@ export function collideBodies(a: SoftBody, b: SoftBody): void {
     skinBB2.maxY + pad < skinBB.minY
   )
     return;
+  if (a.asleep && (b.grab || b.energy > BUMP_ENERGY)) a.wake();
+  if (b.asleep && (a.grab || a.energy > BUMP_ENERGY)) b.wake();
   nodesVsBody(a, b, skinBB2);
   b.bounds(skinBB2);
   a.bounds(skinBB);
   nodesVsBody(b, a, skinBB);
 }
+
+/** Kinetic energy per unit mass above which a cat bumping a sleeper wakes it. */
+const BUMP_ENERGY = 300;
 
 function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number; maxX: number; maxY: number }): void {
   const pad = NODE_RADIUS * 2;
@@ -244,8 +264,8 @@ function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number;
   const bn = b.n;
   const bx = b.x;
   const by = b.y;
-  const wa = a.invNodeMass;
-  const wb = b.invNodeMass;
+  const wa = a.asleep ? 0 : a.invNodeMass;
+  const wb = b.asleep ? 0 : b.invNodeMass;
   for (let i = 0; i < a.n; i++) {
     const px = a.x[i];
     const py = a.y[i];

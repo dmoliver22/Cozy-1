@@ -166,6 +166,59 @@ export class Session {
     this.load();
   }
 
+  private lerpFrom = new Map<SoftBody, { x: Float64Array; y: Float64Array; sx: Float64Array; sy: Float64Array }>();
+  private lerping = false;
+
+  /** Remember where every cat is before the next step (for smooth drawing). */
+  rememberPositions(): void {
+    for (const cat of this.cats) {
+      const b = cat.body;
+      let m = this.lerpFrom.get(b);
+      if (!m || m.x.length !== b.n) {
+        m = { x: new Float64Array(b.n), y: new Float64Array(b.n), sx: new Float64Array(b.n), sy: new Float64Array(b.n) };
+        this.lerpFrom.set(b, m);
+      }
+      m.x.set(b.x);
+      m.y.set(b.y);
+    }
+  }
+
+  /**
+   * For drawing only: put every cat `alpha` of the way from where it was
+   * before the last step to where it is now, so motion stays smooth on
+   * screens faster than the 60 Hz simulation. Always pair with endLerp().
+   */
+  beginLerp(alpha: number): void {
+    if (this.lerping) return;
+    this.lerping = true;
+    for (const cat of this.cats) {
+      const b = cat.body;
+      const m = this.lerpFrom.get(b);
+      if (!m || m.x.length !== b.n) continue;
+      m.sx.set(b.x);
+      m.sy.set(b.y);
+      // an undo or a sandbox tidy teleports cats: never blend across that
+      const jump = Math.abs(b.x[0] - m.x[0]) + Math.abs(b.y[0] - m.y[0]);
+      if (jump > 40) continue;
+      for (let i = 0; i < b.n; i++) {
+        b.x[i] = m.x[i] + (m.sx[i] - m.x[i]) * alpha;
+        b.y[i] = m.y[i] + (m.sy[i] - m.y[i]) * alpha;
+      }
+    }
+  }
+
+  endLerp(): void {
+    if (!this.lerping) return;
+    this.lerping = false;
+    for (const cat of this.cats) {
+      const b = cat.body;
+      const m = this.lerpFrom.get(b);
+      if (!m || m.x.length !== b.n) continue;
+      b.x.set(m.sx);
+      b.y.set(m.sy);
+    }
+  }
+
   /** Advance one fixed 1/60 s frame. */
   step(): void {
     this.world.step();
@@ -241,7 +294,8 @@ export class Session {
       if (cat.settled > 8) b.loafiness = Math.min(1, b.loafiness + dt * 1.4);
       else if (cat.grabbed || b.energy > 900) b.loafiness = Math.max(0, b.loafiness - dt * 3);
       b.plastic = cat.seat ? Math.min(1, b.plastic + dt * 1.2) : Math.max(0, b.plastic - dt * 5);
-      b.sitting = !!cat.seat && !cat.grabbed;
+      // Seated cats, and cats that gave up and perch on top, just sit there.
+      b.sitting = (!!cat.seat || cat.intent?.mode === 'perch') && !cat.grabbed;
       this.updateSeat(cat, best);
     }
     this.resolveClaims();
@@ -262,11 +316,14 @@ export class Session {
     b.settleForce = 0;
     b.shapeMul = 1;
     b.pouring = false;
+    b.frictionMul = 1;
     const it = cat.intent;
     if (cat.grabbed) {
       cat.intent = null;
       return;
     }
+    // A seated cat just sits: no more nudging (so it can rest perfectly still).
+    if (cat.seat) return;
     const touching = k >= 0 && (touchK === k || cat.overlaps[k].covered > 0);
     if (it) {
       if (touching && k === it.k) it.lastTouch = this.frame;
@@ -319,7 +376,11 @@ export class Session {
         cat.intent = null;
         return;
       }
-      b.assistAx = clamp(intent.dir * 560 - 6 * b.vcx, -700, 700);
+      // Slide off the rim it's balanced on: a slippery rim and a push that
+      // builds over a third of a second, so it eases off instead of teetering.
+      const ramp = clamp((this.frame - intent.since) / 20, 0, 1);
+      b.frictionMul = 0.3;
+      b.assistAx = clamp(intent.dir * (300 + 360 * ramp) - 6 * b.vcx, -700, 700);
     }
   }
 
@@ -436,6 +497,7 @@ export class Session {
     });
     this.paws = s.paws;
     this.allSeatedFrames = 0;
+    this.rememberPositions();
     this.events.push({ t: 'undo' });
     return true;
   }
