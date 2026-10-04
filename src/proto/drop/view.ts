@@ -10,7 +10,7 @@ import { CatPainter, Lerp, type Stage } from '../kit';
 import { FISH_LEN, SIDE, drawCushion, fishSprite, frontRect, hasFront, paintChunkBack, paintChunkFront, paintFrame, paintGrain, paintRoom } from './art';
 import { Fx } from './fx';
 import type { DropGame } from './game';
-import { drawDrops, drawSuds, foamDebug, prepareFoam } from './foam';
+import { drawDrops, drawSuds, prepareFoam } from './foam';
 import { SHAFT_W, type Chunk, type Storey } from './level';
 import { drawSoaked, wetBreed, withBreed } from './soaked';
 import { Suds } from './suds';
@@ -81,9 +81,8 @@ export class DropView {
   shake = 0;
   /** Bath time's foam: bubbles, drops and spray, simulated every physics frame. */
   readonly suds = new Suds();
-  /** Debug: draw the foam (off to measure what it costs), and which of its layers. */
+  /** Debug: draw the foam (off to measure what it costs). */
   showSuds = true;
-  readonly foamDebug = foamDebug;
 
   constructor(readonly stage: Stage) {
     this.ctx = stage.ctx;
@@ -338,13 +337,17 @@ export class DropView {
     } else this.painter.draw(ctx, cat, this.pose(game));
     // bath time's bubbles, over the cat (and under the glass, when they are in a tube)
     const ey = -this.camRow + this.shakeOffset();
-    if (this.showSuds) drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH);
+    if (this.showSuds) drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH, 0);
     // glass over the cat
     for (const c of chunks) {
       const f = this.fronts.get(c.id);
       if (f && !f.tasks.length) this.blit(f);
     }
-    if (this.showSuds) drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey);
+    // foam passing in front of the geometry, then drops and spray
+    if (this.showSuds) {
+      drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH, 1);
+      drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey);
+    }
     this.world();
     this.fx.update(dt);
     this.fx.draw(ctx);

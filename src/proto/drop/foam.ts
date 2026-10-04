@@ -3,12 +3,13 @@
 // each one, a window-shaped highlight up on the left with a small glint below
 // on the right, and a faint darker edge low on the right; each is squashed and
 // stretched as the simulation says. Behind densely packed bubbles goes a soft
-// white suds body, so the mass reads as foam rather than loose marbles. The
-// still parts are cached per radius bucket; the film's swirl and the squash are
-// applied live. Also: drops, splashes and the rings of popped bubbles, and the
+// white suds body, so the mass reads as foam rather than loose marbles. All of
+// it is cached per radius bucket (the film in a ring of turns its swirl steps
+// through), so every draw is a plain scaled sprite and a few hundred are cheap. Also: drops, splashes and the rings of popped bubbles, and the
 // opaque white suds that cling to a soaked cat.
 
 import { rgba, type Ctx } from '../../render/paint';
+import { SHAFT_W } from './level';
 import type { Suds } from './suds';
 
 const TAU = Math.PI * 2;
@@ -103,6 +104,12 @@ export function drawBubble(ctx: Ctx, x: number, y: number, r: number, v: number,
 /** Radii the bubble sprites are painted at; a bubble uses the smallest one at least its size. */
 const BUCKETS = [4, 6, 9, 13, 18, 24, 30];
 const PAD = 2;
+/** Little bubbles (the smallest buckets) keep one film: no swirl to see at that size. */
+const BAKED = 2;
+/** Turns of the thin film each bigger bubble can show (its swirl steps through them). */
+const TURNS = 24;
+/** The suds body is soft, so it is laid at low resolution (world units per pixel) and scaled up. */
+const BODY_RES = 2;
 
 interface Sprite {
   c: HTMLCanvasElement;
@@ -111,14 +118,11 @@ interface Sprite {
 }
 
 let foamKey = 0;
-let shells: Sprite[] = [];
-let films: Sprite[] = [];
+/** Per bucket, the bubble at each turn of its film (film and shell in one sprite). */
+let bubbles: Sprite[][] = [];
 let blob: Sprite | null = null;
-/** Debug: which layers of the foam to draw. */
-export const foamDebug = { all: true, body: true, films: true, shells: true, top: true, drops: true, straight: false };
-/** Little bubbles (the smallest buckets) are drawn in one go: film baked in, no swirl to see. */
-const BAKED = 2;
-
+let body: HTMLCanvasElement | null = null;
+let bodyG: Ctx | null = null;
 
 function makeSprite(R: number, ppu: number, paint: (g: Ctx, R: number) => void): Sprite {
   const half = R + PAD;
@@ -132,50 +136,80 @@ function makeSprite(R: number, ppu: number, paint: (g: Ctx, R: number) => void):
   return { c, half };
 }
 
-/** The still parts of a soap bubble: a faint body, a darker edge low right, a bright rim, a window highlight and a glint. */
+/** A film turned by `a` radians with the shell over it, in one sprite. */
+function turned(film: Sprite, shell: Sprite, a: number): Sprite {
+  const S = film.c.width;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  g.translate(S / 2, S / 2);
+  g.rotate(a);
+  g.drawImage(film.c, -S / 2, -S / 2);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(shell.c, 0, 0);
+  return { c, half: film.half };
+}
+
+function roundedRect(g: Ctx, x: number, y: number, w: number, h: number, r: number): void {
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+/**
+ * The still parts of a soap bubble: an almost clear body (a touch of lilac
+ * toward the edge), a faint darker edge low on the right, a thin bright rim, a
+ * window reflected up on the left, and a small glint low on the right.
+ */
 function paintShell(g: Ctx, R: number): void {
   const body = g.createRadialGradient(-R * 0.18, -R * 0.22, R * 0.1, 0, 0, R);
-  body.addColorStop(0, 'rgba(255,255,255,0.05)');
-  body.addColorStop(0.68, 'rgba(238,234,252,0.07)');
-  body.addColorStop(0.9, 'rgba(208,200,240,0.2)');
-  body.addColorStop(1, 'rgba(196,188,236,0.34)');
+  body.addColorStop(0, 'rgba(255,255,255,0.04)');
+  body.addColorStop(0.7, 'rgba(238,234,252,0.06)');
+  body.addColorStop(0.9, 'rgba(208,200,240,0.18)');
+  body.addColorStop(1, 'rgba(196,188,236,0.32)');
   g.fillStyle = body;
   g.beginPath();
   g.arc(0, 0, R, 0, TAU);
   g.fill();
   g.lineCap = 'round';
   // a faint darker edge, low on the right (away from the light)
-  g.strokeStyle = 'rgba(92,80,150,0.3)';
+  g.strokeStyle = 'rgba(88,76,146,0.3)';
   g.lineWidth = Math.max(0.5, R * 0.07);
   g.beginPath();
-  g.arc(0, 0, R * 0.95, -0.12 * Math.PI, 0.72 * Math.PI);
+  g.arc(0, 0, R * 0.95, -0.1 * Math.PI, 0.7 * Math.PI);
   g.stroke();
   // the thin bright rim
   const lw = Math.max(0.45, R * 0.045);
-  g.strokeStyle = 'rgba(255,255,255,0.82)';
+  g.strokeStyle = 'rgba(255,255,255,0.85)';
   g.lineWidth = lw;
   g.beginPath();
   g.arc(0, 0, R - lw / 2, 0, TAU);
   g.stroke();
-  // a window, reflected: four little panes up on the left
+  // a window, reflected up on the left: a soft glow and four panes
   g.save();
-  g.translate(-R * 0.4, -R * 0.42);
-  g.rotate(-Math.PI / 4);
-  g.fillStyle = 'rgba(255,255,255,0.9)';
+  g.translate(-R * 0.4, -R * 0.4);
+  g.rotate(-0.7);
+  const glow = g.createRadialGradient(0, 0, 0, 0, 0, R * 0.32);
+  glow.addColorStop(0, 'rgba(255,255,255,0.4)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = glow;
+  g.fillRect(-R * 0.34, -R * 0.34, R * 0.68, R * 0.68);
   const pw = R * 0.12;
-  const ph = R * 0.1;
-  const gap = Math.max(0.25, R * 0.03);
-  for (const sx of [-1, 1])
-    for (const sy of [-1, 1]) {
-      g.beginPath();
-      g.ellipse((sx * (pw + gap)) / 2, (sy * (ph + gap)) / 2, pw / 2, ph / 2, 0, 0, TAU);
-      g.fill();
-    }
+  const ph = R * 0.105;
+  const gap = Math.max(0.3, R * 0.026);
+  g.fillStyle = 'rgba(255,255,255,0.93)';
+  g.beginPath();
+  for (const sx of [-1, 0])
+    for (const sy of [-1, 0]) roundedRect(g, sx * (pw + gap) + gap / 2, sy * (ph + gap) + gap / 2, pw, ph, Math.min(pw, ph) * 0.3);
+  g.fill();
   g.restore();
   // a small glint low on the right, and a sliver of light bounced back in
-  g.fillStyle = 'rgba(255,255,255,0.62)';
+  g.fillStyle = 'rgba(255,255,255,0.65)';
   g.beginPath();
-  g.arc(R * 0.42, R * 0.46, Math.max(0.35, R * 0.06), 0, TAU);
+  g.arc(R * 0.42, R * 0.46, Math.max(0.35, R * 0.055), 0, TAU);
   g.fill();
   g.strokeStyle = 'rgba(255,255,255,0.3)';
   g.lineWidth = Math.max(0.35, R * 0.035);
@@ -198,9 +232,9 @@ function filmColor(u: number): string {
   return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
 }
 
-/** Thin-film colour: pastel rainbow bands round the bubble, brighter in two swirling lobes (drawn rotated, live). */
+/** Thin-film colour: pastel rainbow bands round the bubble, brighter in two lobes (which swirl). */
 function paintFilm(g: Ctx, R: number): void {
-  const segs = 64;
+  const segs = 48;
   g.lineCap = 'butt';
   for (let pass = 0; pass < 2; pass++) {
     const rad = pass === 0 ? R * 0.84 : R * 0.62;
@@ -238,14 +272,20 @@ export function prepareFoam(ppu: number): void {
   const key = Math.round(ppu * 100);
   if (key === foamKey) return;
   foamKey = key;
-  shells = BUCKETS.map((R, b) =>
-    makeSprite(R, ppu, (g, r) => {
-      if (b < BAKED) paintFilm(g, r);
-      paintShell(g, r);
-    }),
-  );
-  films = BUCKETS.map((R) => makeSprite(R, ppu, paintFilm));
-  blob = makeSprite(32, Math.min(ppu, 1.2), paintBlob);
+  bubbles = BUCKETS.map((R, b) => {
+    if (b < BAKED) {
+      return [
+        makeSprite(R, ppu, (g, r) => {
+          paintFilm(g, r);
+          paintShell(g, r);
+        }),
+      ];
+    }
+    const film = makeSprite(R, ppu, paintFilm);
+    const shell = makeSprite(R, ppu, paintShell);
+    return Array.from({ length: TURNS }, (_, k) => turned(film, shell, (k / TURNS) * TAU));
+  });
+  blob = makeSprite(32, 1 / BODY_RES, paintBlob);
 }
 
 function bucket(r: number): number {
@@ -254,91 +294,112 @@ function bucket(r: number): number {
 }
 
 /**
- * Draw the foam: the suds body, then each bubble (film swirled, then shell,
- * both squashed). World x maps to device ppu*x + ex (y likewise with ey);
- * `t` (0..1) is how far between the last two physics steps we are.
+ * Draw the foam: a soft white suds body behind packed bubbles, then each
+ * bubble (its film at the turn its swirl has reached, then its shell), squashed
+ * as the simulation says. Pass 0 draws the bubbles in the room (before the
+ * glass, so foam in a tube is behind it); pass 1 the ones passing in front of
+ * the geometry. World x maps to device ppu*x + ex (y likewise with ey); `t`
+ * (0..1) is how far between the last two physics steps we are.
  */
-export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, ey: number, camY: number, viewH: number): void {
-  if (!blob || s.n === 0 || !foamDebug.all) return;
+export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, ey: number, camY: number, viewH: number, pass: 0 | 1): void {
+  if (!blob || s.n === 0) return;
   const top = camY - 50;
   const bot = camY + viewH + 50;
   const n = s.n;
-  // where the mass stops short of the top of the screen (if it does), more suds
+  const want = pass;
+  // the suds body: soft white behind packed bubbles (the bigger ones carry it), laid
+  // at low resolution over just the foam's extent, then scaled up in one draw
+  let y0 = Infinity;
+  let y1 = -Infinity;
   let massTop = Infinity;
-  for (let i = 0; i < n; i++) if (!s.loose[i] && s.alpha[i] > 0.5) massTop = Math.min(massTop, s.y[i] - s.r[i]);
-  if (foamDebug.top && massTop < Infinity && massTop > camY && s.front > camY + 20) {
-    ctx.globalAlpha = 1;
-    ctx.setTransform(ppu, 0, 0, ppu, ex, ey);
-    const g = ctx.createLinearGradient(0, massTop - 30, 0, massTop + 50);
-    g.addColorStop(0, 'rgba(250,248,255,0.95)');
-    g.addColorStop(1, 'rgba(250,248,255,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(-12, camY - 10, 404, massTop + 50 - camY + 10);
-  }
-  // the suds body: soft white behind packed bubbles (the bigger ones carry it)
-  const B = blob;
   for (let i = 0; i < n; i++) {
-    const nb = s.nb[i];
+    if (s.loose[i]) continue;
     const r = s.r[i];
-    if (s.loose[i] || nb < 2 || r < 8 || !foamDebug.body) continue;
-    const y = s.py[i] + (s.y[i] - s.py[i]) * t;
-    if (y + r * 2.1 < top || y - r * 2.1 > bot) continue;
-    const x = s.px[i] + (s.x[i] - s.px[i]) * t;
-    const k = (ppu * r * 2) / 32;
-    ctx.globalAlpha = s.alpha[i] * Math.min(1, (nb - 1) / 3) * 0.8;
-    ctx.setTransform(k, 0, 0, k, ppu * x + ex, ppu * y + ey);
-    ctx.drawImage(B.c, -B.half, -B.half, B.half * 2, B.half * 2);
+    const y = s.y[i];
+    if (s.alpha[i] > 0.5 && y - r < massTop) massTop = y - r;
+    if (s.deep[i] !== want || s.nb[i] < 2 || r < 5) continue;
+    if (y - r * 2.3 < y0) y0 = y - r * 2.3;
+    if (y + r * 2.3 > y1) y1 = y + r * 2.3;
+  }
+  // (where the mass stops short of the top of the screen, more suds above it)
+  const topFill = pass === 0 && massTop < Infinity && massTop > camY + 20 && s.front > camY + 40;
+  if (topFill) y0 = camY - 10;
+  y0 = Math.max(y0, top);
+  y1 = Math.min(y1, bot);
+  if (y1 > y0 && blob) {
+    const bx0 = -14;
+    const bw = Math.ceil((SHAFT_W + 28) / BODY_RES);
+    const bh = Math.ceil((y1 - y0) / BODY_RES) + 1;
+    if (!body) {
+      body = document.createElement('canvas');
+      bodyG = body.getContext('2d')!;
+    }
+    if (body.width !== bw || body.height < bh) {
+      body.width = bw;
+      body.height = Math.max(bh, body.height);
+    }
+    const g = bodyG!;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.clearRect(0, 0, bw, bh);
+    if (topFill) {
+      const gr = g.createLinearGradient(0, (massTop - 30 - y0) / BODY_RES, 0, (massTop + 40 - y0) / BODY_RES);
+      gr.addColorStop(0, 'rgba(250,248,255,0.95)');
+      gr.addColorStop(1, 'rgba(250,248,255,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, bw, (massTop + 40 - y0) / BODY_RES);
+    }
+    const B = blob;
+    for (let i = 0; i < n; i++) {
+      const nb = s.nb[i];
+      const r = s.r[i];
+      if (s.deep[i] !== want || s.loose[i] || nb < 2 || r < 5) continue;
+      const y = s.py[i] + (s.y[i] - s.py[i]) * t;
+      if (y + r * 2.3 < y0 || y - r * 2.3 > y1) continue;
+      const x = s.px[i] + (s.x[i] - s.px[i]) * t;
+      const k = (r * 2.2) / 32 / BODY_RES;
+      g.globalAlpha = s.alpha[i] * Math.min(1, (nb - 1) / 4) * 0.78;
+      g.setTransform(k, 0, 0, k, (x - bx0) / BODY_RES, (y - y0) / BODY_RES);
+      g.drawImage(B.c, -B.half, -B.half, B.half * 2, B.half * 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.setTransform(ppu * BODY_RES, 0, 0, ppu * BODY_RES, ex + bx0 * ppu, ey + y0 * ppu);
+    ctx.drawImage(body, 0, 0, bw, bh, 0, 0, bw, bh);
   }
   for (let i = 0; i < n; i++) {
+    if (s.deep[i] !== want) continue;
     const r = s.r[i];
     const y = s.py[i] + (s.y[i] - s.py[i]) * t;
     if (y + r * 1.5 < top || y - r * 1.5 > bot) continue;
     const x = s.px[i] + (s.x[i] - s.px[i]) * t;
     const b = bucket(r);
     const sc = (ppu * r) / BUCKETS[b];
-    // squashed along its axis (area kept): M = R(a) diag(f, 1/f) R(-a)
+    // squashed (area kept): narrower and taller, or wider and shorter
     const f = 1 - s.q[i];
-    const g = 1 / f;
-    const ca = Math.cos(s.qa[i]);
-    const sa = Math.sin(s.qa[i]);
-    const A = sc * (ca * ca * f + sa * sa * g);
-    const Bm = sc * ca * sa * (f - g);
-    const D = sc * (sa * sa * f + ca * ca * g);
-    const E = ppu * x + ex;
-    const F = ppu * y + ey;
     ctx.globalAlpha = s.alpha[i];
-    // the film, swirling
-    if (b >= BAKED && foamDebug.films) {
-      const fs = films[b];
-      const cp = Math.cos(s.ph[i]);
-      const sp = Math.sin(s.ph[i]);
-      ctx.setTransform(A * cp + Bm * sp, Bm * cp + D * sp, -A * sp + Bm * cp, -Bm * sp + D * cp, E, F);
-      ctx.drawImage(fs.c, -fs.half, -fs.half, fs.half * 2, fs.half * 2);
-    }
-    // rim and highlights
-    const sh = shells[b];
-    if (!foamDebug.shells) continue;
-    if (foamDebug.straight) ctx.setTransform(A, 0, 0, D, E, F);
-    else ctx.setTransform(A, Bm, Bm, D, E, F);
-    ctx.drawImage(sh.c, -sh.half, -sh.half, sh.half * 2, sh.half * 2);
+    ctx.setTransform(sc * f, 0, 0, sc / f, ppu * x + ex, ppu * y + ey);
+    // its film at the turn its swirl has reached, with the rim and highlights over it
+    const turns = bubbles[b];
+    const turn = turns.length > 1 ? (((Math.round((s.ph[i] / TAU) * TURNS) % TURNS) + TURNS) % TURNS) : 0;
+    const sp = turns[turn];
+    ctx.drawImage(sp.c, -sp.half, -sp.half, sp.half * 2, sp.half * 2);
   }
   ctx.globalAlpha = 1;
 }
 
 /** Drops, splashes and the rings of popped bubbles (after the glass, over everything). */
 export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number): void {
-  if (!foamDebug.drops) return;
   ctx.setTransform(ppu, 0, 0, ppu, ex, ey);
   ctx.globalAlpha = 1;
   if (s.dn > 0) {
     ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(118,168,224,0.85)';
-    ctx.lineWidth = 1.9;
+    ctx.strokeStyle = 'rgba(112,164,224,0.9)';
+    ctx.lineWidth = 2.1;
     ctx.beginPath();
     for (let k = 0; k < s.dn; k++) {
       const x = s.dx[k];
       const y = s.dy[k];
-      const len = Math.min(0.02, 9 / Math.max(1, Math.abs(s.dvy[k])));
+      const len = Math.min(0.022, 11 / Math.max(1, Math.abs(s.dvy[k])));
       ctx.moveTo(x - s.dvx[k] * len, y - s.dvy[k] * len);
       ctx.lineTo(x, y);
     }
@@ -351,8 +412,17 @@ export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number
     }
     ctx.fill();
   }
+  // splats spreading where drops hit
+  ctx.lineWidth = 1.1;
+  for (let k = 0; k < s.kn; k++) {
+    const u = s.ka[k] / 0.22;
+    ctx.strokeStyle = `rgba(140,190,240,${0.85 * (1 - u)})`;
+    ctx.beginPath();
+    ctx.ellipse(s.kx[k], s.ky[k], s.ks[k] * (0.8 + u * 2), s.ks[k] * (0.3 + u * 0.5), s.kang[k], 0, TAU);
+    ctx.stroke();
+  }
   if (s.sn > 0) {
-    ctx.fillStyle = 'rgba(160,200,240,0.9)';
+    ctx.fillStyle = 'rgba(150,196,240,0.92)';
     ctx.beginPath();
     for (let k = 0; k < s.sn; k++) {
       const rr = s.ss[k] * (1 - (s.sa[k] / s.sl[k]) * 0.6);

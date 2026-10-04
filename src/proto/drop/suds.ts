@@ -37,6 +37,7 @@ const DEEP_LAG = 110;
 const DROPS = 220;
 const SPRAY = 320;
 const RINGS = 40;
+const SPLATS = 60;
 const SKIN = NODE_RADIUS * 0.95;
 
 type Rand = () => number;
@@ -76,22 +77,27 @@ export class Suds {
   /** Where each sits against the front (a lumpy edge, not a ruled line). */
   private readonly off = new Float32Array(CAP);
   private readonly stuck = new Float32Array(CAP);
-  /** Squash: amount (0 round .. 0.2 flattened, negative while it wobbles back), its rate, and its axis. */
+  /**
+   * Squash, and its rate: positive is pressed in from the sides (narrower and
+   * taller), negative is flattened from above or below (wider and shorter);
+   * the area stays the same. It springs back with a wobble that rings out.
+   */
   readonly q = new Float32Array(CAP);
   private readonly qv = new Float32Array(CAP);
-  readonly qa = new Float32Array(CAP);
   /** Thin-film swirl: phase and speed. */
   readonly ph = new Float32Array(CAP);
   private readonly phv = new Float32Array(CAP);
   /** Packed neighbours (dense foam gets a white suds body behind it). */
   readonly nb = new Uint8Array(CAP);
+  /** How hard each is pressed from the sides and from above/below (this step). */
   private readonly txx = new Float32Array(CAP);
-  private readonly txy = new Float32Array(CAP);
   private readonly tyy = new Float32Array(CAP);
   private readonly hit = new Float32Array(CAP);
   private readonly touch = new Uint8Array(CAP);
   /** Resting on something (a bubble or a surface below it): no more drive than keeping pace. */
   private readonly held = new Uint8Array(CAP);
+  /** Touching glass (a funnel or a tube), which channels the foam rather than holding it back. */
+  private readonly glass = new Uint8Array(CAP);
 
   // --- drops falling from the foam (and off a soaked cat) ---
   dn = 0;
@@ -120,6 +126,15 @@ export class Suds {
   readonly rr = new Float32Array(RINGS);
   readonly ra = new Float32Array(RINGS);
 
+  // --- splats: where a drop hit, a little flattened ring spreading along the surface ---
+  kn = 0;
+  readonly kx = new Float64Array(SPLATS);
+  readonly ky = new Float64Array(SPLATS);
+  /** The surface's angle there, the splat's size, and its age. */
+  readonly kang = new Float32Array(SPLATS);
+  readonly ks = new Float32Array(SPLATS);
+  readonly ka = new Float32Array(SPLATS);
+
   /** The front line this step (world y) and how fast it moves. */
   front = 0;
   frontV = 0;
@@ -129,7 +144,6 @@ export class Suds {
   onPop: ((x: number, y: number, r: number) => void) | null = null;
   /** Debug: pops by cause. */
   readonly pops = { random: 0, loose: 0, squeeze: 0, hit: 0, release: 0 };
-  readonly prof = [0, 0, 0, 0];
 
   private rnd: Rand = rng(1);
   private viewTop = 0;
@@ -147,16 +161,9 @@ export class Suds {
   private rows: StaticShape[][] = [];
   private rowTop = 0;
 
-  /** Debug: how hard each bubble is pressed (sum of its overlaps over its radius). */
-  pressures(): number[] {
-    const out: number[] = [];
-    for (let i = 0; i < this.n; i++) out.push(this.txx[i] + this.tyy[i]);
-    return out;
-  }
-
   /** A new run. */
   reset(game: DropGame): void {
-    this.n = this.dn = this.sn = this.rn = 0;
+    this.n = this.dn = this.sn = this.rn = this.kn = 0;
     this.front = game.foamY;
     this.frontV = 0;
     this.active = false;
@@ -200,22 +207,13 @@ export class Suds {
         this.active = true;
         this.fill(top, F);
       }
-      const t0 = performance.now();
       this.forces(game, top, near);
-      const t1 = performance.now();
       this.solve(cat, phase === 'soak' ? game.soakT : -1);
-      const t2 = performance.now();
       this.settle(phase);
       this.replenish(top, F);
-      const t3 = performance.now();
-      this.prof[0] = t1 - t0;
-      this.prof[1] = t2 - t1;
-      this.prof[2] = t3 - t2;
     }
-    const t4 = performance.now();
     this.stepDrops(game, near);
     this.stepSpray();
-    this.prof[3] = performance.now() - t4;
   }
 
   /** Fill the region behind a front that is about to come into view (off screen). */
@@ -259,7 +257,6 @@ export class Suds {
     this.stuck[i] = 0;
     this.q[i] = 0;
     this.qv[i] = 0;
-    this.qa[i] = rnd() * Math.PI;
     this.ph[i] = rnd() * Math.PI * 2;
     this.phv[i] = (rnd() - 0.5) * 1.4;
     this.nb[i] = 0;
@@ -287,7 +284,6 @@ export class Suds {
     this.stuck[i] = this.stuck[j];
     this.q[i] = this.q[j];
     this.qv[i] = this.qv[j];
-    this.qa[i] = this.qa[j];
     this.ph[i] = this.ph[j];
     this.phv[i] = this.phv[j];
     this.nb[i] = this.nb[j];
@@ -389,10 +385,18 @@ export class Suds {
           if (this.vy[i] < target) this.vy[i] += (target - this.vy[i]) * 0.14;
         }
         // held back far behind the front by a shelf or a floor: it is deeper in the room
+        // (glass funnels channel the foam for a while first, and big bubbles jammed in a
+        // neck burst)
         if (!this.deep[i]) {
-          if (lag > DEEP_LAG && this.touch[i]) this.stuck[i] += DT;
+          const g = this.glass[i];
+          if (lag > (g ? 60 : DEEP_LAG) && this.touch[i]) this.stuck[i] += DT;
           else this.stuck[i] = Math.max(0, this.stuck[i] - DT * 2);
-          if (this.stuck[i] > 0.3) this.deep[i] = 1;
+          if (g && r > 9 && this.stuck[i] > 0.35 && rnd() < 0.05) {
+            this.pops.squeeze++;
+            this.pop(i--);
+            continue;
+          }
+          if (this.stuck[i] > (g ? 1.1 : 0.3) && lag > DEEP_LAG) this.deep[i] = 1;
         } else if (lag < 40 && !this.overlapsStatic(i)) this.deep[i] = 0;
         // stranded far above the screen: fade away
         if (this.y[i] + r < top - 70 && this.fade[i] >= 0) this.fade[i] = -1;
@@ -461,11 +465,11 @@ export class Suds {
           }
     }
     this.txx.fill(0, 0, n);
-    this.txy.fill(0, 0, n);
     this.tyy.fill(0, 0, n);
     this.hit.fill(0, 0, n);
     this.touch.fill(0, 0, n);
     this.held.fill(0, 0, n);
+    this.glass.fill(0, 0, n);
     this.nb.fill(0, 0, n);
     // the cat: an obstacle (except while the foam swallows it whole)
     const release = SOAK.hold + 0.05;
@@ -521,10 +525,8 @@ export class Suds {
             const ci = (c - d) / r[i];
             const cj = (c - d) / r[j];
             this.txx[i] += ci * nx * nx;
-            this.txy[i] += ci * nx * ny;
             this.tyy[i] += ci * ny * ny;
             this.txx[j] += cj * nx * nx;
-            this.txy[j] += cj * nx * ny;
             this.tyy[j] += cj * ny * ny;
           }
         } else if (!this.loose[i] && !this.loose[j]) {
@@ -558,17 +560,17 @@ export class Suds {
               x[i] += ct.nx * ct.depth;
               y[i] += ct.ny * ct.depth;
               this.touch[i] = 1;
+              if (s.material === 'glass') this.glass[i] = 1;
               if (ct.ny < -0.35) this.held[i] = 1;
               if (last) {
                 const cs = ct.depth / ri;
                 this.txx[i] += cs * ct.nx * ct.nx;
-                this.txy[i] += cs * ct.nx * ct.ny;
                 this.tyy[i] += cs * ct.ny * ct.ny;
               }
               if (it === 0) {
-                // a hard knock sets it wobbling
+                // a hard knock sets it wobbling (flattened along the knock)
                 const vn = this.vx[i] * ct.nx + this.vy[i] * ct.ny;
-                if (vn < -120) this.qv[i] += Math.min(2.2, -vn / 300);
+                if (vn < -120) this.qv[i] += Math.min(2.2, -vn / 300) * (ct.nx * ct.nx - ct.ny * ct.ny);
               }
             }
         }
@@ -582,12 +584,11 @@ export class Suds {
             if (it === 0) {
               const vn = (this.vx[i] - cat.vcx) * ct.nx + (this.vy[i] - cat.vcy) * ct.ny;
               if (-vn > this.hit[i]) this.hit[i] = -vn;
-              if (vn < -120) this.qv[i] += Math.min(2.2, -vn / 300);
+              if (vn < -120) this.qv[i] += Math.min(2.2, -vn / 300) * (ct.nx * ct.nx - ct.ny * ct.ny);
             }
             if (last) {
               const cs = Math.min(1, ct.depth / ri);
               this.txx[i] += cs * ct.nx * ct.nx;
-              this.txy[i] += cs * ct.nx * ct.ny;
               this.tyy[i] += cs * ct.ny * ct.ny;
             }
           }
@@ -628,33 +629,18 @@ export class Suds {
         this.pop(i--);
         continue;
       }
-      // the shape: flattened by what presses on it, drawn out along a fast fall
-      let a = this.txx[i];
-      let b = this.txy[i];
-      let c = this.tyy[i];
-      const sp = Math.sqrt(vx * vx + vy * vy);
-      if (sp > 160) {
-        const k = Math.min(0.1, (sp - 160) / 4000);
-        const ux = -vy / sp;
-        const uy = vx / sp;
-        a += k * ux * ux;
-        b += k * ux * uy;
-        c += k * uy * uy;
+      // the shape: pressed in by what pushes on it, drawn out along a fast fall
+      let sq = (this.txx[i] - this.tyy[i]) * 0.45;
+      const sp2 = vx * vx + vy * vy;
+      if (sp2 > 25600) {
+        const sp = Math.sqrt(sp2);
+        sq += (Math.min(0.08, (sp - 160) / 5000) * (vy * vy - vx * vx)) / sp2;
       }
-      const half = (a - c) / 2;
-      const aniso = 2 * Math.sqrt(half * half + b * b);
-      const target = Math.min(0.13, aniso * 0.45);
-      if (target > 0.015) {
-        const ang = 0.5 * Math.atan2(2 * b, a - c);
-        let dA = ang - this.qa[i];
-        while (dA > Math.PI / 2) dA -= Math.PI;
-        while (dA < -Math.PI / 2) dA += Math.PI;
-        this.qa[i] += dA * Math.min(1, 10 * DT * (0.3 + target * 4));
-      }
+      const target = Math.max(-0.13, Math.min(0.13, sq));
       // a springy wobble that rings out
       const om = 10 + 34 / Math.sqrt(r);
       this.qv[i] += (om * om * (target - this.q[i]) - 2 * 0.16 * om * this.qv[i]) * DT;
-      this.q[i] = Math.max(-0.12, Math.min(0.2, this.q[i] + this.qv[i] * DT));
+      this.q[i] = Math.max(-0.18, Math.min(0.18, this.q[i] + this.qv[i] * DT));
       this.ph[i] += this.phv[i] * DT;
     }
   }
@@ -696,7 +682,7 @@ export class Suds {
     this.dy[k] = y;
     this.dvx[k] = vx;
     this.dvy[k] = vy;
-    this.ds[k] = 1.1 + this.rnd() * 0.7;
+    this.ds[k] = 1.3 + this.rnd() * 0.8;
     this.dage[k] = 0;
     this.dcat[k] = fromCat ? 1 : 0;
   }
@@ -803,13 +789,21 @@ export class Suds {
     const rnd = this.rnd;
     if (!this.visible(x, y, 10)) return;
     const sp = Math.min(1, Math.sqrt(vx * vx + vy * vy) / 700);
-    const m = 2 + Math.round(rnd() * 2 + sp * 2);
+    const m = 3 + Math.round(rnd() * 2 + sp * 2);
     const tx = -ny;
     const ty = nx;
     for (let s = 0; s < m; s++) {
-      const out = (50 + rnd() * 90) * (0.5 + sp);
-      const side = (rnd() - 0.5) * 2 * (60 + rnd() * 80) * (0.5 + sp);
-      this.addSpray(x, y, nx * out + tx * side, ny * out + ty * side, 0.25 + rnd() * 0.2, 0.7 + rnd() * 0.6);
+      const out = (60 + rnd() * 100) * (0.5 + sp);
+      const side = (rnd() - 0.5) * 2 * (60 + rnd() * 90) * (0.5 + sp);
+      this.addSpray(x, y, nx * out + tx * side, ny * out + ty * side, 0.28 + rnd() * 0.22, 1 + rnd() * 0.8);
+    }
+    if (this.kn < SPLATS) {
+      const k = this.kn++;
+      this.kx[k] = x;
+      this.ky[k] = y;
+      this.kang[k] = Math.atan2(ny, nx) + Math.PI / 2;
+      this.ks[k] = 2.2 + sp * 2.5;
+      this.ka[k] = 0;
     }
   }
 
@@ -840,6 +834,18 @@ export class Suds {
         this.sa[k] = this.sa[j];
         this.sl[k] = this.sl[j];
         this.ss[k] = this.ss[j];
+        k--;
+      }
+    }
+    for (let k = 0; k < this.kn; k++) {
+      this.ka[k] += DT;
+      if (this.ka[k] > 0.22) {
+        const j = --this.kn;
+        this.kx[k] = this.kx[j];
+        this.ky[k] = this.ky[j];
+        this.kang[k] = this.kang[j];
+        this.ks[k] = this.ks[j];
+        this.ka[k] = this.ka[j];
         k--;
       }
     }
