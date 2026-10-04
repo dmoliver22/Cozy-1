@@ -6,9 +6,9 @@
 
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { SoftBody } from '../../physics/softbody';
-import { FRAME_DT, World } from '../../physics/world';
-import type { Material } from '../../physics/shapes';
-import { Level, MAX_RADIUS, SHAFT_W, UNITS_PER_M, type Chunk, type Cushion, type Fish, type Squeeze, type Storey } from './level';
+import { FRAME_DT, GRAVITY, World } from '../../physics/world';
+import { translateShape, type Material } from '../../physics/shapes';
+import { Level, MAX_RADIUS, SHAFT_W, UNITS_PER_M, type Chunk, type Cushion, type Fish, type Squeeze } from './level';
 
 /** Tuning (world units, seconds). */
 export const TUNE = {
@@ -37,12 +37,24 @@ export const TUNE = {
   /** Vacuum: start gap, start speed, speed gained per second, leash, delay. */
   vacStartGap: 760,
   vacSpeed: 150,
-  vacAccel: 2.2,
-  vacLeash: 1250,
+  vacAccel: 2.0,
+  vacLeash: 1500,
   vacDelay: 1.6,
   /** Seconds without new depth before the cat gets a helping nudge. */
   stuckAfter: 2.4,
+  /** How close the nozzle gets before it has you (it then hovers and sucks). */
+  catchGap: 56,
+  /** Seconds without any new depth before a stuck cat is popped free. */
+  rescueAfter: 5,
+  /** Physics substeps per frame (the engine's default is 8; falls and squeezes here are rougher). */
+  substeps: 12,
 };
+
+/** How much of a cushion's height its squash takes (art and collider agree). */
+export const CUSHION_GIVE = 0.75;
+
+/** How far off the middle a cat can be sucked in (the drawn mouth is 276 wide). */
+const SLURP_SPAN = 96;
 
 export type Phase = 'ready' | 'play' | 'slurp' | 'over';
 
@@ -56,6 +68,7 @@ export type GameEvent =
   | { t: 'plop'; x: number; y: number }
   | { t: 'storey'; name: string; index: number }
   | { t: 'nudge' }
+  | { t: 'rescue'; x: number; y: number; why: 'stuck' | 'tangled' }
   | { t: 'slurp' }
   | { t: 'over' };
 
@@ -98,11 +111,14 @@ export class DropGame {
   readonly startY: number;
   deepest: number;
   events: GameEvent[] = [];
-  /** Nozzle (bottom) of the vacuum, its speed, and whether it is coming. */
+  /** The bottom of the vacuum's nozzle (world y), and its speed down the shaft. */
   vacY: number;
   vacV = 0;
-  /** Slurp progress (seconds) once caught. */
+  /** Slurp progress (seconds) once caught, and where the cat goes in. */
   slurpT = 0;
+  slurpX = SHAFT_W / 2;
+  /** The size multiplier when the vacuum got the cat (the cat shrinks as it goes in). */
+  private finalMult = 0;
   /** Frames since the last hop/bounce/nom (for the face). */
   sinceHop = 999;
   sinceBoing = 999;
@@ -113,8 +129,15 @@ export class DropGame {
   squeeze: Squeeze | null = null;
   private added = new Set<number>();
   private prevVy = 0;
+  /** A cushion bounce about to launch the cat. */
+  private boing: { k: Cushion; vin: number; at: number } | null = null;
   private stuckMark = 0;
   private stuckFrames = 0;
+  private nudges = 0;
+  /** The deepest point when the cat last got deeper, and when (nudges don't count). */
+  private progressMark = 0;
+  private progressFrame = 0;
+  private tangles = 0;
   private hidden = false;
 
   constructor(seed: number, breed: BreedId = 'tabby') {
@@ -123,12 +146,14 @@ export class DropGame {
     const r0 = BREEDS[breed].physics.radius;
     this.baseR = r0;
     this.maxR = Math.min(MAX_RADIUS, r0 * TUNE.maxGrowth);
-    this.level = new Level(seed, this.maxR);
+    this.level = new Level(seed, this.maxR, minTubeFor(BREEDS[breed].physics.maxStretch, this.maxR));
+    this.world.substeps = TUNE.substeps;
     this.cat = this.world.addBody(new SoftBody(breed, this.level.startX, this.level.perchY - r0 - 8));
     this.cat.computeCentroid();
     this.startY = this.cat.cy;
     this.deepest = this.cat.cy;
     this.stuckMark = this.cat.cy;
+    this.progressMark = this.cat.cy;
     this.vacY = this.cat.cy - TUNE.vacStartGap;
     this.syncChunks(this.cat.cy + 2400);
   }
@@ -159,10 +184,10 @@ export class DropGame {
     const grounded = c.airborneFrames < 5;
     if (!grounded && this.airHops <= 0) return false;
     const side = this.steerX === null ? 0 : Math.max(-1, Math.min(1, (this.steerX - c.cx) / 60));
-    if (grounded) c.kick(side * TUNE.hopSide, -TUNE.hop);
+    // a hop cancels any fall first (sliding down a wall, or in the air)
+    if (grounded) c.kick(side * TUNE.hopSide, -TUNE.hop - Math.max(0, c.vcy));
     else {
       this.airHops--;
-      // an air hop cancels the fall first
       c.kick(side * TUNE.hopSide, -TUNE.airHop - Math.max(0, c.vcy));
     }
     this.sinceHop = 0;
@@ -178,6 +203,7 @@ export class DropGame {
 
   /** Size multiplier for points (1.0 .. 1.8), to one decimal. */
   get mult(): number {
+    if (this.finalMult > 0) return this.finalMult;
     return Math.round((this.cat.p.radius / this.baseR) * 10) / 10;
   }
 
@@ -223,11 +249,6 @@ export class DropGame {
     };
   }
 
-  storey(): Storey | null {
-    this.cat.computeCentroid();
-    return this.level.storeyAt(this.cat.cy);
-  }
-
   /** Chunks overlapping a world y range. */
   chunksIn(y0: number, y1: number): Chunk[] {
     return this.level.chunks.filter((c) => c.y1 >= y0 && c.y0 <= y1);
@@ -237,6 +258,13 @@ export class DropGame {
 
   step(): void {
     const c = this.cat;
+    if (this.phase === 'over') {
+      // the cat is in the bag: just the scenery idles on
+      this.frame++;
+      this.animateFish();
+      this.animateCushions();
+      return;
+    }
     c.computeCentroid();
     this.syncChunks(c.cy + 2400);
     if (this.phase === 'slurp') this.slurpStep();
@@ -247,6 +275,7 @@ export class DropGame {
     this.prevVy = c.vcy;
     this.world.step();
     this.frame++;
+    if (this.phase === 'slurp') this.world.drainImpacts();
     c.computeCentroid();
     if (this.phase === 'play' || this.phase === 'ready') {
       this.time += this.phase === 'play' ? FRAME_DT : 0;
@@ -274,7 +303,7 @@ export class DropGame {
       this.added.add(ch.id);
       for (const s of ch.shapes) this.world.addStatic(s);
     }
-    const cut = Math.min(this.cat.cy - 1600, this.vacY - 400);
+    const cut = this.cat.cy - 1600;
     for (const ch of this.level.dropAbove(cut)) {
       this.world.removeStaticsOfProp(ch.id);
       this.added.delete(ch.id);
@@ -320,23 +349,33 @@ export class DropGame {
       }
     }
     this.squeeze = best;
+    const tension = BREEDS[this.breed].physics.tension;
     if (!best || this.phase !== 'play') {
       c.settleForce = 0;
       c.shapeMul = 1;
+      this.setTension(tension);
       return;
     }
     const z = best;
     // bigger cats are pulled a little less hard: they squeeze through slower
     const grow = c.p.radius / this.baseR;
     const breedPull = 0.6 + 0.4 * (BREEDS[this.breed].physics.slurp > 0.5 ? 1 : 0.5);
-    // hatches only help a cat that is actually stuck over them (not a quick drop through)
     const tube = z.kind === 'tube';
-    const help = z.kind === 'gap' || z.kind === 'funnel' ? Math.min(1, this.stuckFrames / 50) : 1;
-    c.settleForce = (z.force * help * breedPull) / (grow * Math.sqrt(grow));
+    const narrow = tube || z.kind === 'soft';
+    // hatches and funnels only help a cat that is actually stuck in them (not a
+    // quick drop through); in a tube or between pillows a stuck cat is pulled harder
+    // and harder (a long thin noodle has to beat its own skin's tension)
+    const stuck = this.stuckFrames;
+    const help = narrow ? 1 + Math.max(0, Math.min(1, (stuck - 40) / 120)) : Math.min(1, stuck / 50);
+    // (tubes pull bigger cats less, so they squeeze through slower; a hatch just helps)
+    const pull = z.kind === 'gap' ? z.force * 1.7 : Math.max(z.force * 0.4, (z.force * breedPull) / (grow * Math.sqrt(grow)));
+    c.settleForce = Math.min(3600, pull * help);
     c.settleX0 = z.x0;
     c.settleX1 = z.x1;
     c.settleY = z.y0;
     c.shapeMul = z.kind === 'gap' ? 1 : 0;
+    // in the glass a firm cat goes floppy: less skin tension, an easier noodle
+    this.setTension(narrow && tension > 600 ? tension * 0.7 : tension);
     if (tube && !z.entered && maxY > z.y0 + 12) {
       z.entered = true;
       this.events.push({ t: 'squeeze' });
@@ -347,12 +386,16 @@ export class DropGame {
     }
   }
 
+  private setTension(t: number): void {
+    if (this.cat.p.tension !== t) this.cat.p = { ...this.cat.p, tension: t };
+  }
+
   /** Soft terminal velocity: falls stay readable. */
   private terminal(): void {
     const c = this.cat;
     const over = c.vcy - TUNE.terminal;
     if (over <= 0) return;
-    const dv = over * 0.18;
+    const dv = over * 0.35;
     for (let i = 0; i < c.n; i++) c.vy[i] -= dv;
   }
 
@@ -372,36 +415,25 @@ export class DropGame {
             touch = true;
             break;
           }
-        if (!touch || this.frame - k.hitFrame < 12) continue;
+        if (!touch || this.frame - k.hitFrame < 14) continue;
         // only a cat landing on top (one sliding past an edge just slides off)
         if (c.cy > k.y + 4 || c.cx < k.x + 4 || c.cx > k.x + k.w - 4) continue;
         k.hitFrame = this.frame;
         const vin = Math.max(0, this.prevVy);
-        const out = Math.max(TUNE.boingMin, Math.min(TUNE.boingMax, vin * 0.95 + 160));
-        this.squashCat(Math.min(0.22, 0.08 + vin / 3000));
-        c.kick(0, -out - c.vcy);
-        k.vel += 4 + vin / 120;
-        this.airHops = 1;
+        // the cushion gives (and the cat sinks in with it), then springs back
+        k.vel += 5 + vin / 90;
+        this.boing = { k, vin, at: this.frame + 4 };
         this.sinceBoing = 0;
         this.events.push({ t: 'boing', x: c.cx, y: k.y, speed: vin, cushion: k });
       }
     }
-  }
-
-  /** Squash the cat toward its bottom (it springs back by itself). */
-  private squashCat(a: number): void {
-    const c = this.cat;
-    let bottom = -Infinity;
-    for (let i = 0; i < c.n; i++) if (c.y[i] > bottom) bottom = c.y[i];
-    const sy = 1 - a;
-    const sx = 1 / Math.sqrt(sy);
-    for (let i = 0; i < c.n; i++) {
-      const nx = c.cx + (c.x[i] - c.cx) * sx;
-      const ny = bottom - (bottom - c.y[i]) * sy;
-      c.px[i] += nx - c.x[i];
-      c.py[i] += ny - c.y[i];
-      c.x[i] = nx;
-      c.y[i] = ny;
+    const b = this.boing;
+    if (b && this.frame >= b.at) {
+      this.boing = null;
+      const out = Math.max(TUNE.boingMin, Math.min(TUNE.boingMax, b.vin * 0.95 + 160));
+      c.kick(0, -out - c.vcy);
+      this.airHops = 1;
+      this.sinceBoing = 0;
     }
   }
 
@@ -450,33 +482,110 @@ export class DropGame {
   private trackDepth(): void {
     const c = this.cat;
     if (c.cy > this.deepest) this.deepest = c.cy;
+    // the last resort: a cat that hasn't got any deeper for a long while is popped free
+    if (this.deepest > this.progressMark + 12) {
+      this.progressMark = this.deepest;
+      this.progressFrame = this.frame;
+    } else if (this.frame - this.progressFrame > TUNE.rescueAfter * 60) {
+      this.rescue('stuck');
+      return;
+    }
+    // a skin that has crossed itself (and stays crossed) is made round again
+    if (this.frame % 10 === 0) {
+      this.tangles = tangled(c) ? this.tangles + 1 : 0;
+      if (this.tangles >= 3) {
+        if (c.airborneFrames > 3) this.reround();
+        else this.rescue('tangled');
+        return;
+      }
+    }
     if (c.cy > this.stuckMark + 12) {
       this.stuckMark = c.cy;
       this.stuckFrames = 0;
+      this.nudges = 0;
       return;
     }
     this.stuckFrames++;
+    // mid-squeeze, a hop would only undo it (the squeeze itself pulls harder)
+    const k = this.squeeze?.kind;
+    if (k === 'tube' || k === 'soft') return;
     if (this.stuckFrames < TUNE.stuckAfter * 60) return;
     this.stuckFrames = Math.round(TUNE.stuckAfter * 60 * 0.45);
     this.stuckMark = c.cy;
-    this.nudge();
+    this.nudges++;
+    this.nudge(Math.min(2.2, 1 + (this.nudges - 1) * 0.4));
   }
 
-  /** Hop toward the nearest way down. */
-  nudge(): void {
+  /** The nearest way down from the cat: an opening's centre and the clear space below it. */
+  private wayDown(): { x: number; below: number } | null {
     const c = this.cat;
-    let best: { x: number; d: number } | null = null;
+    let best: { x: number; below: number; d: number } | null = null;
     for (const ch of this.level.chunks) {
       if (ch.y1 < c.cy - 100 || ch.y0 > c.cy + 500) continue;
       for (const g of ch.gaps) {
-        if (g.y < c.cy - c.p.radius * 1.5 || g.y > c.cy + 420) continue;
+        if (g.below < c.cy - c.p.radius * 0.5 || g.y > c.cy + 420) continue;
         const gx = (g.x0 + g.x1) / 2;
         const d = Math.abs(g.y - c.cy) * 0.6 + Math.abs(gx - c.cx);
-        if (!best || d < best.d) best = { x: gx, d };
+        if (!best || d < best.d) best = { x: gx, below: g.below, d };
       }
     }
-    const dx = best ? best.x - c.cx : (c.cx < SHAFT_W / 2 ? 1 : -1) * 120;
-    c.kick(Math.max(-300, Math.min(300, dx * 2.2)), -260);
+    return best;
+  }
+
+  /**
+   * Pop a stuck cat free: poof, it is round again just below the opening it
+   * was stuck at. (A soft ring squeezed hard enough can tangle up in itself.)
+   */
+  rescue(why: 'stuck' | 'tangled' = 'stuck'): void {
+    const c = this.cat;
+    c.computeCentroid();
+    const w = this.wayDown();
+    const r = c.p.radius;
+    const x = Math.max(r + 6, Math.min(SHAFT_W - r - 6, w ? w.x : c.cx));
+    const y = (w ? w.below : c.cy + r * 2) + r + 10;
+    for (let i = 0; i < c.n; i++) {
+      c.x[i] = c.px[i] = x + c.roundX[i];
+      c.y[i] = c.py[i] = y + c.roundY[i];
+      c.vx[i] = 0;
+      c.vy[i] = 120;
+      c.qx[i] = c.roundX[i];
+      c.qy[i] = c.roundY[i];
+    }
+    c.wake();
+    c.computeCentroid();
+    this.stuckFrames = 0;
+    this.stuckMark = c.cy;
+    this.nudges = 0;
+    this.tangles = 0;
+    this.progressFrame = this.frame;
+    this.progressMark = this.deepest;
+    this.events.push({ t: 'rescue', x, y, why });
+  }
+
+  /** Make a tangled cat round again where it is, keeping its motion (it is in the air). */
+  private reround(): void {
+    const c = this.cat;
+    c.computeCentroid();
+    const { cx, cy, vcx, vcy } = c;
+    for (let i = 0; i < c.n; i++) {
+      c.x[i] = c.px[i] = cx + c.roundX[i];
+      c.y[i] = c.py[i] = cy + c.roundY[i];
+      c.vx[i] = vcx;
+      c.vy[i] = vcy;
+      c.qx[i] = c.roundX[i];
+      c.qy[i] = c.roundY[i];
+    }
+    c.computeCentroid();
+    this.tangles = 0;
+    this.events.push({ t: 'rescue', x: cx, y: cy, why: 'tangled' });
+  }
+
+  /** Hop toward the nearest way down (harder each time it didn't help). */
+  nudge(strength = 1): void {
+    const c = this.cat;
+    const w = this.wayDown();
+    const dx = w ? w.x - c.cx : (c.cx < SHAFT_W / 2 ? 1 : -1) * 120;
+    c.kick(Math.max(-300, Math.min(300, dx * 2.2)) * strength, -260 * Math.min(1.5, strength));
     this.events.push({ t: 'nudge' });
   }
 
@@ -484,10 +593,10 @@ export class DropGame {
     if (this.time < TUNE.vacDelay) return;
     const gap = this.vacuumGap;
     const base = TUNE.vacSpeed + TUNE.vacAccel * (this.time - TUNE.vacDelay);
-    const leash = gap > TUNE.vacLeash ? (gap - TUNE.vacLeash) * 1.4 : 0;
+    const leash = gap > TUNE.vacLeash ? (gap - TUNE.vacLeash) * 1.0 : 0;
     this.vacV = base + leash;
     this.vacY += this.vacV * FRAME_DT;
-    if (this.vacuumGap < 6) this.caught();
+    if (this.vacuumGap < TUNE.catchGap) this.caught();
   }
 
   private caught(): void {
@@ -497,39 +606,61 @@ export class DropGame {
     this.steerX = null;
     c.assistAx = 0;
     c.settleForce = 0;
-    c.shapeMul = 1;
+    c.shapeMul = 0;
+    this.finalMult = this.mult;
     c.computeCentroid();
-    c.startGrab(c.cx, this.catTop() + c.p.radius * 0.3, c.mass * 4200, 1);
+    // sucked in under the mouth, never past its ends (the wheels)
+    this.slurpX = Math.max(SHAFT_W / 2 - SLURP_SPAN, Math.min(SHAFT_W / 2 + SLURP_SPAN, c.cx));
+    // it stops dead over the cat, and sucks
+    this.vacV = 0;
+    // nothing stands between a cat and that nozzle
+    let bottom = -Infinity;
+    for (let i = 0; i < c.n; i++) if (c.y[i] > bottom) bottom = c.y[i];
+    for (const ch of this.level.chunks) {
+      if (ch.y1 < this.vacY - 120 || ch.y0 > bottom + 60) continue;
+      this.world.removeStaticsOfProp(ch.id);
+    }
     this.events.push({ t: 'slurp' });
   }
 
-  /** Sucked up into the nozzle: a long stretch, then gone. */
+  /**
+   * Sucked up into the nozzle like spaghetti: the closer a bit of cat is to
+   * the mouth, the harder it is pulled (so the cat stretches), and what has
+   * gone in is drawn to the middle of the mouth; the cat shrinks as it goes.
+   */
   private slurpStep(): void {
     const c = this.cat;
     this.slurpT += FRAME_DT;
-    this.vacV *= 0.9;
-    this.vacY += this.vacV * FRAME_DT;
-    const g = c.grab;
-    if (g) {
-      g.tx += (SHAFT_W / 2 - g.tx) * 0.02;
-      g.ty = this.vacY - 30 - this.slurpT * 260;
-      g.tvy = -400;
-      g.force = c.mass * (4200 + this.slurpT * 9000);
+    // a little shudder as it sucks
+    this.vacY += Math.sin(this.slurpT * 40) * 0.6;
+    const mouth = this.vacY;
+    this.slurpX += (SHAFT_W / 2 - this.slurpX) * 0.02;
+    const pull = 260 + this.slurpT * 1400;
+    for (let i = 0; i < c.n; i++) {
+      // in the vacuum's draught gravity no longer counts; the nearer the mouth, the stronger the pull
+      c.vy[i] -= GRAVITY * FRAME_DT;
+      const d = c.y[i] - mouth;
+      const near = Math.max(0, 1 - d / 170);
+      const k = d <= 0 ? 1.4 : Math.max(0.03, near * near);
+      const want = -pull * k;
+      if (c.vy[i] > want) c.vy[i] += (want - c.vy[i]) * 0.3;
+      // sideways, its own momentum dies in the draught and it is drawn in under
+      // the mouth (hardest for what is already inside)
+      const wantX = (this.slurpX - c.x[i]) * (d <= 0 ? 8 : 3);
+      c.vx[i] += (wantX - c.vx[i]) * (d <= 0 ? 0.35 : 0.12);
     }
-    if (this.slurpT > 0.35) {
+    c.wake();
+    if (this.slurpT > 0.45) {
       const nr = c.p.radius * 0.975;
-      if (nr > 6) c.resize(nr);
+      if (nr > 5) c.resize(nr);
     }
-    const top = this.catTop();
     let bottom = -Infinity;
     for (let i = 0; i < c.n; i++) if (c.y[i] > bottom) bottom = c.y[i];
-    if ((bottom < this.vacY + 4 && this.slurpT > 0.4) || this.slurpT > 1.6) {
+    if ((bottom < mouth - 2 && this.slurpT > 0.5) || this.slurpT > 2) {
       this.phase = 'over';
       this.hidden = true;
-      c.releaseGrab();
       this.events.push({ t: 'over' });
     }
-    void top;
   }
 
   private animateFish(): void {
@@ -539,7 +670,7 @@ export class DropGame {
   private animateCushions(): void {
     for (const ch of this.level.chunks)
       for (const k of ch.cushions) {
-        if (k.squash === 0 && k.vel === 0) continue;
+        if (k.squash === 0 && k.vel === 0 && k.sunk === 0) continue;
         // a springy squash: stiff, lightly damped
         k.vel += (-k.squash * 260 - k.vel * 9) * FRAME_DT;
         k.squash += k.vel * FRAME_DT;
@@ -547,8 +678,52 @@ export class DropGame {
           k.squash = 0;
           k.vel = 0;
         }
+        // the top of the collider follows the squash down (and back up)
+        const sunk = Math.max(0, Math.min(0.45, k.squash)) * k.h * CUSHION_GIVE;
+        if (sunk !== k.sunk) {
+          translateShape(k.shape, 0, sunk - k.sunk);
+          k.sunk = sunk;
+        }
       }
   }
+}
+
+/**
+ * The narrowest tube a cat of radius `r` can be squeezed through: in a tube of
+ * width w its area becomes a noodle whose skin is r/w + w/(2r) times its rest
+ * length, which must stay (with a margin) under the skin's stretch limit.
+ */
+export function minTubeFor(maxStretch: number, r: number): number {
+  const m = maxStretch * 0.88;
+  const u = (m + Math.sqrt(Math.max(0, m * m - 2))) / 2;
+  return Math.ceil(r / u);
+}
+
+/** Has the cat's skin crossed itself (a squeeze gone wrong)? */
+export function tangled(b: SoftBody): boolean {
+  const { n, x, y } = b;
+  for (let i = 0; i < n; i++) {
+    const i2 = i + 1 === n ? 0 : i + 1;
+    const ax = x[i];
+    const ay = y[i];
+    const bx = x[i2];
+    const by = y[i2];
+    for (let j = i + 2; j < n; j++) {
+      const j2 = j + 1 === n ? 0 : j + 1;
+      if (j2 === i) continue;
+      const cx = x[j];
+      const cy = y[j];
+      const dx = x[j2];
+      const dy = y[j2];
+      const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+      if ((d1 > 0) === (d2 > 0)) continue;
+      const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+      const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+      if ((d3 > 0) !== (d4 > 0)) return true;
+    }
+  }
+  return false;
 }
 
 /** Signed distance from a point to a cat's ring (negative inside). */

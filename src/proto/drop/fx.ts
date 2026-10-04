@@ -19,6 +19,8 @@ interface P {
   color: string;
   text?: string;
   spin: number;
+  /** Follows this point (a label riding along with the falling cat). */
+  anchor?: () => { x: number; y: number };
 }
 
 export class Fx {
@@ -53,6 +55,13 @@ export class Fx {
     this.add('label', x, y, { vy: -34, life: 1.1, text, color });
   }
 
+  /** A label that rides along above a moving point (the cat's head), rising off it. */
+  labelOn(anchor: () => { x: number; y: number }, text: string, color: string, lift = 30): void {
+    const a = anchor();
+    this.add('label', a.x, a.y - lift, { life: 1.1, text, color, size: lift });
+    this.list[this.list.length - 1].anchor = anchor;
+  }
+
   hearts(x: number, y: number, n = 2, color = '#E9A6A0'): void {
     for (let k = 0; k < n; k++) this.add('heart', x + (k - (n - 1) / 2) * 12, y, { vx: (k - (n - 1) / 2) * 14, vy: -46 - k * 8, life: 1.1, size: 5.5 + (k % 2), color });
   }
@@ -80,6 +89,13 @@ export class Fx {
     for (const p of this.list) {
       p.t += dt;
       if (p.t >= p.life) continue;
+      if (p.anchor) {
+        const a = p.anchor();
+        p.x = a.x;
+        p.y = a.y - p.size - p.t * 36;
+        keep.push(p);
+        continue;
+      }
       if (p.kind === 'fluff' && vacY !== null) {
         // pulled up harder the closer it gets
         const d = Math.max(10, p.y - vacY);

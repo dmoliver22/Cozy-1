@@ -10,7 +10,8 @@ import type { DecorPlacement } from '../../game/room';
 import { PALETTE, contactShadow, glint, hash01, lightOf, lineOf, mix, paperGrain, rgba, roundRect, shadowOf, softShadow, specular, type Box, type Ctx } from '../../render/paint';
 import { glassSolid, rimLip, sparkle, type GlassPart } from '../../render/propKit';
 import { THEMES, drawDecor, drawShell } from '../../render/roomArt';
-import { castShadow, cylinderShade, inkLine, knob, paintTex, roundShade } from '../../render/roomKit';
+import { bakedFill, castShadow, cylinderShade, inkLine, knob, paintTex, roundShade } from '../../render/roomKit';
+import { CUSHION_GIVE } from './game';
 import { SHAFT_W, SLAB, SLAB_BAND, type Art, type Chunk, type Cushion, type Storey } from './level';
 
 /** Width of the dollhouse's cut side walls, either side of the shaft. */
@@ -24,8 +25,11 @@ const CUT_LINE = '#B9A58E';
 // ---------------------------------------------------------------------------
 // Storeys
 
-/** Paint the room behind a storey: walls, wainscot, floor and wall decor. */
-export function paintRoom(ctx: Ctx, s: Storey): void {
+/**
+ * Paint the room behind a storey: walls, wainscot and floor ('shell'), then
+ * its wall decor and the cornice under the slab above ('decor').
+ */
+export function paintRoom(ctx: Ctx, s: Storey, part: 'shell' | 'decor'): void {
   const theme = THEMES[s.theme];
   const dy = s.floor - FLOOR_Y;
   ctx.save();
@@ -33,9 +37,10 @@ export function paintRoom(ctx: Ctx, s: Storey): void {
   ctx.rect(-SIDE - 2, s.top, SHAFT_W + SIDE * 2 + 4, s.bottom - s.top);
   ctx.clip();
   ctx.translate(0, dy);
-  drawShell(ctx, theme, -SIDE, s.top - dy, SHAFT_W + SIDE, s.bottom - dy + 1, s.seed);
-  for (const d of s.decor) drawDecor(ctx, d as DecorPlacement, theme, s.seed + d.x);
+  if (part === 'shell') drawShell(ctx, theme, -SIDE, s.top - dy, SHAFT_W + SIDE, s.bottom - dy + 1, s.seed);
+  else for (const d of s.decor) drawDecor(ctx, d as DecorPlacement, theme, s.seed + d.x);
   ctx.restore();
+  if (part === 'shell') return;
   // a soft shade under the slab above (the ceiling)
   const g = ctx.createLinearGradient(0, s.top, 0, s.top + 46);
   g.addColorStop(0, rgba(shadowOf(theme.wall, 0.7), 0.4));
@@ -100,18 +105,45 @@ export function paintFrame(ctx: Ctx, y0: number, y1: number): void {
   ctx.restore();
 }
 
-/** Paper grain over a painted storey (as the game bakes into its room layer). */
+let grainTile: HTMLCanvasElement | null = null;
+
+/**
+ * Paper grain over a painted storey (as the game multiplies over its room
+ * layer), baked once into translucent paint so it goes on with a plain
+ * source-over fill: a full-storey multiply is slow on software canvases.
+ */
 export function paintGrain(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, cssPerUnit: number): void {
-  const grain = ctx.createPattern(paperGrain(), 'repeat');
-  if (!grain) return;
+  if (!grainTile) {
+    const src = paperGrain();
+    const d = src.getContext('2d')!.getImageData(0, 0, src.width, src.height).data;
+    const c = document.createElement('canvas');
+    c.width = src.width;
+    c.height = src.height;
+    const g = c.getContext('2d')!;
+    const img = g.createImageData(c.width, c.height);
+    // multiply by v/255 at 20% == laying (1 - v/255) * 20% of a deep warm grey
+    for (let i = 0; i < d.length; i += 4) {
+      img.data[i] = 92;
+      img.data[i + 1] = 76;
+      img.data[i + 2] = 84;
+      img.data[i + 3] = Math.round((255 - d[i]) * 0.2 * 1.6);
+    }
+    g.putImageData(img, 0, 0);
+    grainTile = c;
+  }
   const k = 1 / cssPerUnit;
-  grain.setTransform?.({ a: k, b: 0, c: 0, d: k, e: 0, f: (y0 * 0.37) % 256 });
-  ctx.save();
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = 0.2;
-  ctx.fillStyle = grain;
-  ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-  ctx.restore();
+  bakedFill(
+    ctx,
+    () => {
+      ctx.beginPath();
+      ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    },
+    grainTile,
+    k,
+    k,
+    0,
+    0,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +189,7 @@ export function paintChunkBack(ctx: Ctx, c: Chunk, s: Storey): void {
     const rows = [...new Set(pillows.map((p) => p.y))];
     for (const y of rows) clothesline(ctx, y - 5, pillows.filter((p) => p.y === y), c.id);
   }
-  for (const k of c.cushions) cushionSupport(ctx, k);
+  for (const k of c.cushions) cushionSupport(ctx, k, s.top);
 }
 
 /** Does this chunk paint anything over the cat? */
@@ -336,16 +368,12 @@ function shelfPot(ctx: Ctx, x: number, y: number, seed: number): void {
 }
 
 function rampArt(ctx: Ctx, a: Extract<Art, { k: 'ramp' }>, seed: number): void {
-  // a diagonal strut from the wall under the board
-  const wallX = a.ax;
-  const t = 0.45;
-  const sx = a.ax + (a.bx - a.ax) * t;
-  const sy = a.ay + (a.by - a.ay) * t + 6;
-  const wy = sy + 54;
-  const dir = wallX < SHAFT_W / 2 ? 1 : -1;
-  board(ctx, wallX - dir * 4, wy, sx, sy, 3.2, shadowOf(WOOD, 0.18), seed + 3, true);
+  // a slide: a long sloping board on two wall brackets, bolted to the wall
+  const dir = a.ax < SHAFT_W / 2 ? 1 : -1;
+  const yAt = (x: number): number => a.ay + ((x - a.ax) / (a.bx - a.ax)) * (a.by - a.ay);
+  for (const x of [dir > 0 ? 18 : SHAFT_W - 18, dir > 0 ? 46 : SHAFT_W - 46]) corbel(ctx, x, yAt(x) + 5, dir, seed);
   board(ctx, a.ax, a.ay, a.bx, a.by, 6, mix(WOOD, '#D8B48A', 0.25), seed);
-  // a lip at the low end, so it reads as a slide
+  // a rounded nose at the low end, where cats slide off
   knob(ctx, a.bx - dir * 4, a.by - 1.5, 1, '#A99582');
 }
 
@@ -515,67 +543,45 @@ function slabArt(ctx: Ctx, a: Extract<Art, { k: 'slab' }>, floor: string, wall: 
   ctx.fillStyle = CUT_LINE;
   ctx.fillRect(x0, cy, x1 - x0, 0.9);
   ctx.fillRect(x0, y + SLAB - 1, x1 - x0, 1);
-  // the hatches: dark openings through the floor, a little trap door propped open behind
+  // the hatches: openings right through the floor, their cut edges catching the light
   for (const [h0, h1] of a.holes) {
-    const g = ctx.createLinearGradient(0, y, 0, y + SLAB);
-    g.addColorStop(0, shadowOf(wall, 0.85));
-    g.addColorStop(0.5, shadowOf(wall, 0.72));
-    g.addColorStop(1, shadowOf(wall, 0.55));
+    const g = ctx.createLinearGradient(0, y - 2, 0, y + SLAB);
+    g.addColorStop(0, '#433D57');
+    g.addColorStop(0.45, '#5A536F');
+    g.addColorStop(1, mix('#5A536F', wall, 0.45));
     ctx.fillStyle = g;
     ctx.fillRect(h0, y, h1 - h0, SLAB);
-    // lit edges of the cut boards either side
-    ctx.fillStyle = rgba(lightOf(floor, 0.5), 0.9);
-    ctx.fillRect(h0 - 1.5, y, 1.5, SLAB);
-    ctx.fillStyle = rgba(shadowOf(floor, 0.6), 0.9);
-    ctx.fillRect(h1, y, 1.6, SLAB);
-    ctx.fillStyle = rgba(shadowOf(wall, 0.9), 0.5);
-    ctx.fillRect(h0, y, h1 - h0, 3);
-    hatchLid(ctx, h0, h1, y, seed + Math.round(h0));
+    // light falling in from the room above, onto the far side
+    const lg = ctx.createLinearGradient(h0, 0, h1, 0);
+    lg.addColorStop(0, 'rgba(255,240,214,0)');
+    lg.addColorStop(0.7, 'rgba(255,240,214,0.06)');
+    lg.addColorStop(1, 'rgba(255,240,214,0.2)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(h0, y, h1 - h0, SLAB);
+    // the cut ends of the floor: shaded on the left wall of the hole, lit on the right
+    holeEdge(ctx, h0, y, -1, floor);
+    holeEdge(ctx, h1, y, 1, floor);
   }
 }
 
-function hatchLid(ctx: Ctx, h0: number, h1: number, y: number, seed: number): void {
-  // a wooden trap door hinged at the back edge, standing open against the wall
-  const w = h1 - h0 - 10;
-  const x = h0 + 5;
-  const top = y - 40;
-  const lid = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(x + 3, top);
-    ctx.lineTo(x + w - 3, top);
-    ctx.lineTo(x + w, y);
-    ctx.lineTo(x, y);
-    ctx.closePath();
-  };
-  castShadow(ctx, lid, 4, 2, 5, 0.25);
-  const base = mix(WOOD, '#B88A5E', 0.4);
-  ctx.fillStyle = base;
-  lid();
-  ctx.fill();
-  paintTex(ctx, lid, 'wood', 0.5, 0.42, 0.25, x + hash01(seed, 2) * 80, top);
-  // planks and a ledge
-  ctx.fillStyle = rgba(shadowOf(base, 0.5), 0.5);
-  for (let k = 1; k < 4; k++) ctx.fillRect(x + (w * k) / 4, top + 1, 0.9, y - top - 1);
-  ctx.fillStyle = rgba(shadowOf(base, 0.2), 0.9);
-  ctx.fillRect(x + 4, top + 16, w - 8, 6);
-  ctx.fillStyle = rgba(lightOf(base, 0.6), 0.7);
-  ctx.fillRect(x + 4, top + 16, w - 8, 1.2);
-  ctx.fillStyle = rgba(lightOf(base, 0.6), 0.4);
-  ctx.fillRect(x + 3, top + 0.5, w - 6, 1.2);
-  inkLine(ctx, lid, base, 1, 0.65);
-  // an iron ring pull and two hinges
-  ctx.strokeStyle = '#6E6474';
-  ctx.lineWidth = 1.3;
-  ctx.beginPath();
-  ctx.arc(x + w / 2, top + 9, 3.6, 0.2, Math.PI - 0.2);
-  ctx.stroke();
-  knob(ctx, x + w / 2, top + 6, 1.2, '#8E8A8E');
-  for (const hx of [x + 10, x + w - 16]) {
-    ctx.fillStyle = '#6E6474';
-    roundRect(ctx, hx, y - 5, 6, 5, 1);
-    ctx.fill();
-    knob(ctx, hx + 3, y - 2.5, 0.8, '#A9A2AE');
-  }
+/** The end of a cut floor at a hatch: boards' end grain, the joist, the plaster. */
+function holeEdge(ctx: Ctx, x: number, y: number, side: -1 | 1, floor: string): void {
+  // side -1: the hole's left edge (the floor ends to the left of x), lit by the room light
+  const w = 4;
+  const x0 = side < 0 ? x - w : x;
+  const lit = side > 0;
+  ctx.fillStyle = lit ? mix(floor, '#FFF4DE', 0.35) : shadowOf(floor, 0.35);
+  ctx.fillRect(x0, y, w, SLAB_BAND + 6);
+  ctx.fillStyle = lit ? lightOf(CUT, 0.6) : shadowOf(CUT, 0.25);
+  ctx.fillRect(x0, y + SLAB_BAND + 6, w, SLAB - SLAB_BAND - 6);
+  ctx.fillStyle = rgba(lineOf(floor), 0.6);
+  ctx.fillRect(side < 0 ? x0 : x0 + w - 0.8, y, 0.8, SLAB);
+  // a soft shade cast into the hole under the lip
+  const sg = ctx.createLinearGradient(0, y, 0, y + 14);
+  sg.addColorStop(0, 'rgba(40,34,56,0.45)');
+  sg.addColorStop(1, 'rgba(40,34,56,0)');
+  ctx.fillStyle = sg;
+  ctx.fillRect(side < 0 ? x : x - 18, y, 18, 14);
 }
 
 // --- Pillows on a line ------------------------------------------------------------
@@ -684,7 +690,7 @@ function pillowArt(ctx: Ctx, p: Extract<Art, { k: 'pillow' }>): void {
 
 // --- Cushions (painted live from a cached sprite; their supports are cached) ---
 
-function cushionSupport(ctx: Ctx, k: Cushion): void {
+function cushionSupport(ctx: Ctx, k: Cushion, ceiling: number): void {
   const atWall = k.x <= 0 || k.x + k.w >= SHAFT_W;
   const y = k.y + k.h - 2;
   if (atWall) {
@@ -694,17 +700,19 @@ function cushionSupport(ctx: Ctx, k: Cushion): void {
     corbel(ctx, left ? 18 : SHAFT_W - 18, y + 9, left ? 1 : -1, k.seed);
     board(ctx, x0, y + 4, x1, y + 4, 4.5, WOOD, k.seed);
   } else {
-    // a little hanging board, on two ropes from the ceiling
+    // a little hanging board, on two ropes from hooks in the ceiling
     for (const rx of [k.x + 10, k.x + k.w - 10]) {
+      const tx = rx + (rx < k.x + k.w / 2 ? 10 : -10);
       ctx.strokeStyle = '#C9B48F';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(rx, y + 2);
-      ctx.lineTo(rx + (rx < k.x + k.w / 2 ? 14 : -14), y - 190);
+      ctx.lineTo(tx, ceiling + 6);
       ctx.stroke();
       ctx.strokeStyle = 'rgba(255,248,230,0.5)';
       ctx.lineWidth = 0.5;
       ctx.stroke();
+      knob(ctx, tx, ceiling + 5, 2, BRASS);
     }
     board(ctx, k.x - 4, y + 4, k.x + k.w + 4, y + 4, 4.5, WALNUT, k.seed, true);
   }
@@ -727,9 +735,9 @@ export function drawCushion(ctx: Ctx, k: Cushion, ppu: number): void {
     paintCushion(g, k.w, k.h + 4, k.color, k.seed);
   }
   cushionCache.set(key, c);
-  const s = Math.max(-0.35, Math.min(0.45, k.squash));
-  const sy = 1 - s * 0.55;
-  const sx = 1 + s * 0.22;
+  const s = Math.max(-0.3, Math.min(0.45, k.squash));
+  const sy = 1 - (s * CUSHION_GIVE * k.h) / (k.h + 4);
+  const sx = 1 + s * 0.24;
   const bottom = k.y + k.h + 2;
   ctx.save();
   ctx.translate(k.x + k.w / 2, bottom);
@@ -862,7 +870,9 @@ function rimAt(ctx: Ctx, a: FunnelArt, half: 'near' | 'far'): void {
   ctx.save();
   ctx.translate(mx, my);
   ctx.rotate(ang);
-  rimLip(ctx, { cx: 0, y: 0, rxm, r: 4 }, a.tint, half);
+  // a wide funnel seen from a little above: a flatter ellipse than a cup's
+  ctx.scale(1, 0.6);
+  rimLip(ctx, { cx: 0, y: 0, rxm, r: 4.5 }, a.tint, half);
   ctx.restore();
 }
 

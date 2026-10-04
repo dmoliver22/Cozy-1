@@ -17,46 +17,47 @@ const BAG = '#E9DCC4';
 /** Half width of the nozzle head, and its height. */
 export const VAC_HW = 152;
 const HEAD_H = 58;
-/** How far the sprite reaches above the nozzle. */
+/** How far the cached body sprite reaches above the nozzle (the bag's top). */
+const SPRITE_TOP = 300;
+/** The handle reaches at least this far up (and on to the top of the screen). */
 const REACH = 420;
 
 let sprite: HTMLCanvasElement | null = null;
 let spritePpu = 0;
 
-function body(ctx: Ctx): void {
-  const cx = 0;
-  const top = -HEAD_H;
-  // handle pole and the power cord, going up out of view
-  const pole = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(cx + 8, -REACH);
-    ctx.lineTo(cx + 8, -250);
-  };
+/**
+ * The handle pole and the power cord, painted live (they run from the bag up
+ * to local y `y1`, off the top of the screen) and tucked behind the bag.
+ */
+function handle(ctx: Ctx, y1: number): void {
   ctx.save();
   ctx.lineCap = 'round';
-  ctx.strokeStyle = shadowOf(CHROME, 0.5);
-  ctx.lineWidth = 12;
-  pole();
-  ctx.stroke();
-  ctx.strokeStyle = CHROME;
-  ctx.lineWidth = 9;
-  pole();
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(cx + 5.5, -REACH);
-  ctx.lineTo(cx + 5.5, -252);
-  ctx.stroke();
-  // the cord, loosely coiled
+  const pole = (x: number, w: number, color: string): void => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, -250);
+    ctx.stroke();
+  };
+  pole(8, 12, shadowOf(CHROME, 0.5));
+  pole(8, 9, CHROME);
+  pole(5.5, 2.2, 'rgba(255,255,255,0.8)');
+  // the cord, hanging straight down and then loosely coiled
   ctx.strokeStyle = '#4E4656';
   ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.moveTo(cx - 30, -REACH);
-  ctx.bezierCurveTo(cx - 70, -360, cx - 20, -330, cx - 62, -280);
-  ctx.bezierCurveTo(cx - 90, -250, cx - 40, -220, cx - 36, -190);
+  ctx.moveTo(-30, y1);
+  ctx.lineTo(-30, -REACH + 40);
+  ctx.bezierCurveTo(-30, -350, -20, -330, -62, -280);
+  ctx.bezierCurveTo(-90, -250, -40, -220, -36, -190);
   ctx.stroke();
   ctx.restore();
+}
+
+function body(ctx: Ctx): void {
+  const cx = 0;
+  const top = -HEAD_H;
   // the bag: a tall stuffed cloth sack with a patch and a zip
   const bag = (): void => {
     ctx.beginPath();
@@ -207,14 +208,14 @@ function bodySprite(ppu: number): HTMLCanvasElement {
   if (sprite && spritePpu === ppu) return sprite;
   const pad = 24;
   const w = VAC_HW * 2 + pad * 2;
-  const h = REACH + pad;
+  const h = SPRITE_TOP + pad;
   const c = sprite ?? document.createElement('canvas');
   c.width = Math.ceil(w * ppu);
   c.height = Math.ceil(h * ppu);
   const g = c.getContext('2d')!;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, c.width, c.height);
-  g.setTransform(ppu, 0, 0, ppu, (w / 2) * ppu, REACH * ppu);
+  g.setTransform(ppu, 0, 0, ppu, (w / 2) * ppu, SPRITE_TOP * ppu);
   body(g);
   sprite = c;
   spritePpu = ppu;
@@ -224,8 +225,9 @@ function bodySprite(ppu: number): HTMLCanvasElement {
 /**
  * Paint the vacuum with its nozzle's bottom edge at world y. `t` is the clock,
  * `danger` 0..1 how close it is to the cat, `chomp` 0..1 a slurp in progress.
+ * `top` is the world y of the top of the screen, which the handle reaches up past.
  */
-export function drawVacuum(ctx: Ctx, y: number, t: number, danger: number, chomp: number, ppu: number): void {
+export function drawVacuum(ctx: Ctx, y: number, t: number, danger: number, chomp: number, ppu: number, top = y - REACH): void {
   const cx = SHAFT_W / 2;
   const shake = danger > 0.5 ? Math.sin(t * 61) * (danger - 0.5) * 1.6 : 0;
   ctx.save();
@@ -262,10 +264,11 @@ export function drawVacuum(ctx: Ctx, y: number, t: number, danger: number, chomp
     ctx.lineTo(x + wob, -6 + open + 3.5);
   }
   ctx.stroke();
-  // the body sprite
+  // the handle, then the body sprite over its foot
+  handle(ctx, Math.min(-REACH, top - y));
   const s = bodySprite(ppu);
   const pad = 24;
-  ctx.drawImage(s, -VAC_HW - pad, -REACH, s.width / ppu, s.height / ppu);
+  ctx.drawImage(s, -VAC_HW - pad, -SPRITE_TOP, s.width / ppu, s.height / ppu);
   // headlight eyes under grumpy lids, glowing as it gets close
   const eyeY = -HEAD_H + 30 - 9;
   for (const side of [-1, 1]) {
@@ -280,7 +283,7 @@ export function drawVacuum(ctx: Ctx, y: number, t: number, danger: number, chomp
     ctx.lineWidth = 1;
     ctx.stroke();
     // lens
-    const glow = 0.45 + danger * 0.55 + Math.sin(t * 9) * 0.08 * danger;
+    const glow = Math.max(0, Math.min(1, 0.4 + danger * 0.52 + Math.sin(t * 9) * 0.08 * danger));
     const lg = ctx.createRadialGradient(ex - 3, eyeY - 3, 1, ex, eyeY, r);
     lg.addColorStop(0, mix('#FFF7D6', '#FFFDF2', glow));
     lg.addColorStop(0.6, mix('#E9C46A', '#FFD86B', glow));
