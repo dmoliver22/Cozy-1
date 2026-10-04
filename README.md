@@ -108,6 +108,26 @@ is generated and solved in a Web Worker on the player's device and cached.
 Changing the generator bumps `GENERATOR_VERSION`; re-run the precompute (a test
 checks the index still matches).
 
+## Prototypes: Cat Jar and Cat Drop
+
+Two quick game prototypes built on the same cats, physics and paint, each its
+own page (the game above is untouched):
+
+- **Cat Jar** (`jar.html`, `src/proto/jar/`): drag to aim, let go to drop
+  cats into a glass jar. Two of the same kind touching melt into the next
+  (kitten, sphynx, tabby, Persian, Maine Coon, chonk, the Void). Tap a cat in
+  the jar to boop it (a few per game). The game ends when the pile stays above
+  the dashed line. Free play and a daily jar.
+- **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
+  cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on
+  cushions, eat fish to get chonkier (more points, slower squeezing), and stay
+  ahead of the vacuum. Six breeds, plus a daily drop.
+
+They share `src/proto/kit.ts` (canvas, fixed-step loop with interpolation,
+tap/drag input, a cat painter) and run on the dev server at `/jar.html` and
+`/drop.html`. `npm run build:protos` makes one self-contained HTML file per
+prototype in `dist-proto/`.
+
 ## Scripts
 
 ```bash
@@ -117,6 +137,7 @@ npm run e2e           # Playwright smoke tests (builds + previews first)
 npm run typecheck
 npm run build         # static site in dist/
 npm run build:single  # one self-contained HTML file in dist-single/ (portals, itch.io)
+npm run build:protos  # the two prototypes, one HTML file each, in dist-proto/
 npm run precompute    # re-solve the next 200 mornings into src/game/daily-index.json
 ```
 
