@@ -286,6 +286,12 @@ export function prepareFoam(ppu: number): void {
     return Array.from({ length: TURNS }, (_, k) => turned(film, shell, (k / TURNS) * TAU));
   });
   blob = makeSprite(32, 1 / BODY_RES, paintBlob);
+  // canvases paint lazily: have it all done now, not on the frame the foam first shows
+  const one = document.createElement('canvas');
+  one.width = one.height = 1;
+  const g = one.getContext('2d')!;
+  for (const turns of bubbles) for (const sp of turns) g.drawImage(sp.c, 0, 0, 1, 1);
+  g.drawImage(blob.c, 0, 0, 1, 1);
 }
 
 function bucket(r: number): number {
@@ -431,12 +437,27 @@ export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number
     }
     ctx.fill();
   }
+  // popped bubbles: a quick flash, and the film snapping back as a ring
   for (let k = 0; k < s.rn; k++) {
     const u = s.ra[k] / 0.2;
-    ctx.strokeStyle = `rgba(255,255,255,${0.75 * (1 - u)})`;
-    ctx.lineWidth = Math.max(0.5, 1.4 * (1 - u));
+    const x = s.rx[k];
+    const y = s.ry[k];
+    const R = s.rr[k] * (0.85 + u * 0.75);
+    if (u < 0.35) {
+      ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - u / 0.35)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, s.rr[k] * 0.8, 0, TAU);
+      ctx.fill();
+    }
+    ctx.strokeStyle = `rgba(150,130,210,${0.45 * (1 - u)})`;
+    ctx.lineWidth = Math.max(0.6, 2.4 * (1 - u));
     ctx.beginPath();
-    ctx.arc(s.rx[k], s.ry[k], s.rr[k] * (0.9 + u * 0.7), 0, TAU);
+    ctx.arc(x, y, R + 0.8, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${0.95 * (1 - u)})`;
+    ctx.lineWidth = Math.max(0.5, 1.8 * (1 - u));
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, TAU);
     ctx.stroke();
   }
 }

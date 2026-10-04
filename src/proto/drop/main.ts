@@ -12,6 +12,7 @@ import { BREEDS, type BreedId } from '../../physics/breeds';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
 import { DropGame, type DropState, type GameEvent } from './game';
 import { DropSfx } from './sfx';
+import { Suds } from './suds';
 import { BREED_CHOICES, DropUi } from './ui';
 import { DropView } from './view';
 
@@ -317,6 +318,31 @@ const loop = new Loop(
   },
 );
 loop.start();
+
+/**
+ * While the start card is up, run the bubble simulation through a throwaway
+ * bath (a few steps at a time), so the first real foam and the first catch
+ * don't stutter while the browser compiles it.
+ */
+function warmFoam(): void {
+  const g = new DropGame(4242, prefs.breed);
+  const s = new Suds();
+  s.reset(g);
+  g.start();
+  let f = 0;
+  const chunk = (): void => {
+    if (game.phase !== 'ready') return;
+    for (let k = 0; k < 8 && f < 240 && g.phase !== 'over'; k++, f++) {
+      if (f === 30) g.foamY = g.catTop() - 60;
+      g.step();
+      g.events.length = 0;
+      s.step(g, g.cat.cy - 300, 860);
+    }
+    if (f < 240 && g.phase !== 'over') window.setTimeout(chunk, 30);
+  };
+  window.setTimeout(chunk, 500);
+}
+warmFoam();
 
 function finish(s: DropState): void {
   const key = bestKey();

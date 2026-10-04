@@ -208,6 +208,7 @@ export class Suds {
         this.fill(top, F);
       }
       this.forces(game, top, near);
+      if (phase === 'soak') this.letGo(cat, game.soakT);
       this.solve(cat, phase === 'soak' ? game.soakT : -1);
       this.settle(phase);
       this.replenish(top, F);
@@ -425,10 +426,48 @@ export class Suds {
     return false;
   }
 
+  /** The moment the foam lets go of the cat, most of what is still on it fizzes away. */
+  private letGo(cat: SoftBody, soakT: number): void {
+    const release = SOAK.hold + 0.05;
+    if (!(soakT > release && soakT - DT <= release)) return;
+    const { x, y } = this;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let k = 0; k < cat.n; k++) {
+      x0 = Math.min(x0, cat.x[k]);
+      x1 = Math.max(x1, cat.x[k]);
+      y0 = Math.min(y0, cat.y[k]);
+      y1 = Math.max(y1, cat.y[k]);
+    }
+    for (let i = 0; i < this.n; i++) {
+      if (x[i] < x0 || x[i] > x1 || y[i] < y0 || y[i] > y1) continue;
+      const c = ringContact(cat, x[i], y[i], 0);
+      if (c && c.inside && this.rnd() < 0.85) {
+        this.pops.release++;
+        this.pop(i--);
+      }
+    }
+  }
+
   /** Keep bubbles apart (and clinging), out of the geometry and the cat, behind the front. */
   private solve(cat: SoftBody, soakT: number): void {
-    const n = this.n;
     const { x, y, r, w } = this;
+    // the cat: an obstacle (except while the foam swallows it whole)
+    const release = SOAK.hold + 0.05;
+    const catSolid = soakT < 0.16 || soakT > release;
+    let cx0 = Infinity;
+    let cy0 = Infinity;
+    let cx1 = -Infinity;
+    let cy1 = -Infinity;
+    for (let k = 0; k < cat.n; k++) {
+      if (cat.x[k] < cx0) cx0 = cat.x[k];
+      if (cat.x[k] > cx1) cx1 = cat.x[k];
+      if (cat.y[k] < cy0) cy0 = cat.y[k];
+      if (cat.y[k] > cy1) cy1 = cat.y[k];
+    }
+    const n = this.n;
     // neighbour pairs, once per step
     let minY = Infinity;
     for (let i = 0; i < n; i++) if (y[i] < minY) minY = y[i];
@@ -471,31 +510,6 @@ export class Suds {
     this.held.fill(0, 0, n);
     this.glass.fill(0, 0, n);
     this.nb.fill(0, 0, n);
-    // the cat: an obstacle (except while the foam swallows it whole)
-    const release = SOAK.hold + 0.05;
-    const catSolid = soakT < 0.16 || soakT > release;
-    let cx0 = Infinity;
-    let cy0 = Infinity;
-    let cx1 = -Infinity;
-    let cy1 = -Infinity;
-    for (let k = 0; k < cat.n; k++) {
-      if (cat.x[k] < cx0) cx0 = cat.x[k];
-      if (cat.x[k] > cx1) cx1 = cat.x[k];
-      if (cat.y[k] < cy0) cy0 = cat.y[k];
-      if (cat.y[k] > cy1) cy1 = cat.y[k];
-    }
-    // the moment the foam lets go of the cat, most of what is still on it fizzes away
-    if (soakT > release && soakT - DT <= release) {
-      for (let i = 0; i < this.n; i++) {
-        if (x[i] < cx0 || x[i] > cx1 || y[i] < cy0 || y[i] > cy1) continue;
-        const c = ringContact(cat, x[i], y[i], 0);
-        if (c && c.inside && this.rnd() < 0.85) {
-          this.pops.release++;
-          this.pop(i--);
-        }
-      }
-      return this.solve(cat, soakT + 1);
-    }
     for (let it = 0; it < ITER; it++) {
       const last = it === ITER - 1;
       for (let k = 0; k < this.np; k++) {
@@ -767,6 +781,8 @@ export class Suds {
     }
   }
 
+  private readonly hitAt = { x: 0, y: 0, nx: 0, ny: 0 };
+
   private dropHits(x0: number, y0: number, x1: number, y1: number, rad: number): { x: number; y: number; nx: number; ny: number } | null {
     const steps = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 6));
     for (let s = 1; s <= steps; s++) {
@@ -778,7 +794,14 @@ export class Suds {
       for (const sh of row) {
         if (x < sh.minX - rad || x > sh.maxX + rad || y < sh.minY - rad || y > sh.maxY + rad) continue;
         const ct = contact(sh, x, y, rad);
-        if (ct) return { x: x + ct.nx * ct.depth, y: y + ct.ny * ct.depth, nx: ct.nx, ny: ct.ny };
+        if (ct) {
+          const h = this.hitAt;
+          h.x = x + ct.nx * ct.depth;
+          h.y = y + ct.ny * ct.depth;
+          h.nx = ct.nx;
+          h.ny = ct.ny;
+          return h;
+        }
       }
     }
     return null;
@@ -973,6 +996,8 @@ export function ringContact(b: SoftBody, px: number, py: number, rad: number): (
 }
 
 /** A point on the cat's underside, `u` 0..1 from left to right. */
+const UNDER = { x: 0, y: 0 };
+
 function underside(b: SoftBody, u: number): { x: number; y: number } {
   let x0 = Infinity;
   let x1 = -Infinity;
@@ -989,5 +1014,7 @@ function underside(b: SoftBody, u: number): { x: number; y: number } {
     const yy = b.y[j] + ((b.y[i] - b.y[j]) * (x - xa)) / (xb - xa);
     if (yy > y) y = yy;
   }
-  return { x, y: (y === -Infinity ? b.y[0] : y) + SKIN };
+  UNDER.x = x;
+  UNDER.y = (y === -Infinity ? b.y[0] : y) + SKIN;
+  return UNDER;
 }
