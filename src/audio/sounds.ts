@@ -10,6 +10,7 @@ import {
   addNoise,
   Biquad,
   clamp,
+  control,
   curve,
   finish,
   midiHz,
@@ -305,20 +306,25 @@ export function renderGlorp(sr: number, pitch: number, size: number, visc: numbe
   const dur = 0.17 + 0.42 * vi + 0.1 * sz;
   const att = 0.02 + 0.05 * vi;
   const wob = 5 + 4 * (1 - vi);
-  const out = new Float32Array(Math.ceil((dur + 0.1) * sr));
+  const n = Math.ceil((dur + 0.1) * sr);
+  const out = new Float32Array(n);
+  const dph = control(n, sr, (t) => (TAU * f0 * curve(GLORP_PITCH, t / dur) * (1 + 0.025 * Math.sin(TAU * wob * t) * smooth(0.15, 0.4, t / dur))) / sr);
+  // soft onset, a little dip between "gl" and "orp", then the release
+  const env = control(n, sr, (t) => smooth(0, att, t) * (1 - 0.3 * Math.exp(-(((t / dur - 0.17) / 0.06) ** 2))) * (1 - smooth(0.5, 1, t / dur)) ** 1.3);
   const mouth = new Biquad(sr);
   const slosh = new Biquad(sr).set('bp', f0 * 2.6, 2);
   const gSlosh = 0.1 * noiseGain(sr, 'bp', f0 * 2.6, 2);
   let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / sr;
-    const u = t / dur;
-    if ((i & 31) === 0) mouth.set('lp', f0 * curve(GLORP_MOUTH, u), 3.2);
-    ph += (TAU * f0 * curve(GLORP_PITCH, u) * (1 + 0.025 * Math.sin(TAU * wob * t) * smooth(0.15, 0.4, u))) / sr;
-    // soft onset, a little dip between "gl" and "orp", then the release
-    const env = smooth(0, att, t) * (1 - 0.3 * Math.exp(-(((u - 0.17) / 0.06) ** 2))) * (1 - smooth(0.5, 1, u)) ** 1.3;
-    const src = Math.sin(ph) + 0.4 * Math.sin(2 * ph) + 0.18 * Math.sin(3 * ph) + 0.08 * Math.sin(4 * ph);
-    out[i] = (mouth.run(src) + slosh.run(r() * 2 - 1) * gSlosh) * env;
+  for (let i = 0; i < n; i++) {
+    if ((i & 31) === 0) mouth.set('lp', f0 * curve(GLORP_MOUTH, i / sr / dur), 3.2);
+    ph += dph[i];
+    // harmonics 1-4 from one sin/cos pair
+    const s1 = Math.sin(ph);
+    const c1 = Math.cos(ph);
+    const s2 = 2 * s1 * c1;
+    const c2 = 1 - 2 * s1 * s1;
+    const src = s1 + 0.4 * s2 + 0.18 * s1 * (3 - 4 * s1 * s1) + 0.08 * 2 * s2 * c2;
+    out[i] = (mouth.run(src) + slosh.run(r() * 2 - 1) * gSlosh) * env[i];
   }
   if (vi < 0.7) {
     for (let k = vi < 0.3 ? 2 : 1; k > 0; k--) {
@@ -411,16 +417,28 @@ export function renderMew(sr: number, pitch: number, kind: 'boop' | 'mrrow', see
   const b1 = new Biquad(sr);
   const b2 = new Biquad(sr);
   const lp = new Biquad(sr).set('lp', f0 * 1.6, 0.7);
-  const out = new Float32Array(Math.ceil((dur + 0.02) * sr));
+  const n = Math.ceil((dur + 0.02) * sr);
+  const out = new Float32Array(n);
+  const dph = control(n, sr, (t) => (TAU * f0 * curve(m.pitch, t / dur) * (1 + m.vib * Math.sin(TAU * vibHz * t) * smooth(0.3, 0.6, t / dur))) / sr);
+  // envelope with the "rr" flutter
+  const env = control(
+    n,
+    sr,
+    (t) => {
+      const u = t / dur;
+      const trill = 1 - depth * smooth(ta, ta + 0.08, u) * (1 - smooth(tb - 0.08, tb, u)) * (0.5 + 0.5 * Math.cos(TAU * tHz * t));
+      return smooth(0, 0.014 / dur, u) * (1 - smooth(0.8, 1, u)) * trill;
+    },
+    8,
+  );
   let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / sr;
-    const u = t / dur;
+  for (let i = 0; i < n; i++) {
     if ((i & 31) === 0) {
+      const u = i / sr / dur;
       b1.set('bp', fF1 * curve(m.f1, u), 4);
       b2.set('bp', fF2 * curve(m.f2, u), 6);
     }
-    ph += (TAU * f0 * curve(m.pitch, u) * (1 + m.vib * Math.sin(TAU * vibHz * t) * smooth(0.3, 0.6, u))) / sr;
+    ph += dph[i];
     if (ph > TAU) ph -= TAU;
     // sin(k ph) = 2 cos(ph) sin((k-1) ph) - sin((k-2) ph)
     const c2 = 2 * Math.cos(ph);
@@ -433,9 +451,7 @@ export function renderMew(sr: number, pitch: number, kind: 'boop' | 'mrrow', see
       s1 = s2;
       src += s2 * wts[k];
     }
-    const trill = 1 - depth * smooth(ta, ta + 0.08, u) * (1 - smooth(tb - 0.08, tb, u)) * (0.5 + 0.5 * Math.cos(TAU * tHz * t));
-    const env = smooth(0, 0.014 / dur, u) * (1 - smooth(0.8, 1, u)) * trill;
-    out[i] = (0.65 * b1.run(src) + 0.3 * b2.run(src) + 0.2 * lp.run(src)) * env;
+    out[i] = (0.65 * b1.run(src) + 0.3 * b2.run(src) + 0.2 * lp.run(src)) * env[i];
   }
   return finish(out, sr);
 }
@@ -444,7 +460,10 @@ export function renderMew(sr: number, pitch: number, kind: 'boop' | 'mrrow', see
 export function renderSigh(sr: number, pitch: number, seed: number): Float32Array {
   const r = rng(seed);
   const pt = clamp(pitch, 0.5, 1.8);
-  const out = new Float32Array(Math.ceil(0.95 * sr));
+  const n = Math.ceil(0.95 * sr);
+  const out = new Float32Array(n);
+  const env = control(n, sr, (t) => smooth(0, 0.16, t / 0.95) * (1 - smooth(0.35, 1, t / 0.95)) ** 1.2);
+  const hum = control(n, sr, (t) => 0.12 * smooth(0.05, 0.2, t / 0.95) * (1 - smooth(0.3, 0.8, t / 0.95)));
   const f1 = new Biquad(sr);
   const f2 = new Biquad(sr);
   const air = new Biquad(sr);
@@ -452,8 +471,8 @@ export function renderSigh(sr: number, pitch: number, seed: number): Float32Arra
   let g2 = 1;
   let ga = 1;
   let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const u = i / out.length;
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
     if ((i & 31) === 0) {
       const a = 1150 * (480 / 1150) ** u * pt ** 0.4;
       const b = 2400 * (1450 / 2400) ** u * pt ** 0.3;
@@ -466,10 +485,8 @@ export function renderSigh(sr: number, pitch: number, seed: number): Float32Arra
       ga = noiseGain(sr, 'lp', c, 0.7);
     }
     const w = r() * 2 - 1;
-    const env = smooth(0, 0.16, u) * (1 - smooth(0.35, 1, u)) ** 1.2;
     ph += (TAU * 165 * pt * (1 - 0.1 * u)) / sr;
-    const hum = 0.12 * Math.sin(ph) * smooth(0.05, 0.2, u) * (1 - smooth(0.3, 0.8, u));
-    out[i] = (0.55 * f1.run(w) * g1 + 0.25 * f2.run(w) * g2 + 0.3 * air.run(w) * ga) * env + hum;
+    out[i] = (0.55 * f1.run(w) * g1 + 0.25 * f2.run(w) * g2 + 0.3 * air.run(w) * ga) * env[i] + hum[i] * Math.sin(ph);
   }
   return finish(out, sr);
 }
@@ -480,14 +497,17 @@ export function renderSigh(sr: number, pitch: number, seed: number): Float32Arra
 /** Undo: a reverse whoosh. Noise through a rising bandpass with a swelling envelope that stops softly. */
 export function renderWhoosh(sr: number, seed: number): Float32Array {
   const r = rng(seed);
-  const out = new Float32Array(Math.ceil(0.4 * sr));
+  const n = Math.ceil(0.4 * sr);
+  const out = new Float32Array(n);
+  const env = control(n, sr, (t) => (t / 0.4) ** 2.4 * (1 - smooth(0.86, 1, t / 0.4)));
+  const dph = control(n, sr, (t) => (TAU * 320 * (760 / 320) ** (t / 0.4)) / sr); // faint "rewind" whistle
   const b1 = new Biquad(sr);
   const b2 = new Biquad(sr);
   let g1 = 1;
   let g2 = 1;
   let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const u = i / out.length;
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
     if ((i & 31) === 0) {
       const f = 450 * (1900 / 450) ** u;
       b1.set('bp', f, 1.2);
@@ -495,10 +515,9 @@ export function renderWhoosh(sr: number, seed: number): Float32Array {
       g1 = noiseGain(sr, 'bp', f, 1.2);
       g2 = noiseGain(sr, 'bp', f * 1.7, 2);
     }
-    const env = u ** 2.4 * (1 - smooth(0.86, 1, u));
-    ph += (TAU * 320 * (760 / 320) ** u) / sr; // faint "rewind" whistle underneath
+    ph += dph[i];
     const w = r() * 2 - 1;
-    out[i] = (0.7 * b1.run(w) * g1 + 0.35 * b2.run(w) * g2 + 0.18 * Math.sin(ph)) * env;
+    out[i] = (0.7 * b1.run(w) * g1 + 0.35 * b2.run(w) * g2 + 0.18 * Math.sin(ph)) * env[i];
   }
   return finish(out, sr);
 }

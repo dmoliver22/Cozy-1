@@ -42,14 +42,32 @@ export function hash(s: string): number {
 export function curve(pts: Curve, x: number): number {
   if (x <= pts[0][0]) return pts[0][1];
   for (let i = 1; i < pts.length; i++) {
-    const [x1, y1] = pts[i];
-    if (x < x1) {
-      const [x0, y0] = pts[i - 1];
-      const t = (x - x0) / (x1 - x0);
-      return y0 + (y1 - y0) * t * t * (3 - 2 * t);
+    const b = pts[i];
+    if (x < b[0]) {
+      const a = pts[i - 1];
+      const t = (x - a[0]) / (b[0] - a[0]);
+      return a[1] + (b[1] - a[1]) * t * t * (3 - 2 * t);
     }
   }
   return pts[pts.length - 1][1];
+}
+
+/**
+ * A control signal (pitch contour, envelope...) evaluated every `step` samples and linearly
+ * interpolated in between: smooth to the ear, and far cheaper than evaluating per sample.
+ * `fn` receives the time in seconds.
+ */
+export function control(n: number, sr: number, fn: (t: number) => number, step = 16): Float32Array {
+  const out = new Float32Array(n);
+  let a = fn(0);
+  for (let i = 0; i < n; i += step) {
+    const j = Math.min(n, i + step);
+    const b = fn(j / sr);
+    const d = (b - a) / (j - i);
+    for (let k = i; k < j; k++) out[k] = a + d * (k - i);
+    a = b;
+  }
+  return out;
 }
 
 /** sin² fade-in over `a` seconds, then exponential decay with time constant `tau`. */

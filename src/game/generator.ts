@@ -12,7 +12,7 @@ import { CONTAINERS, FLOOR_Y, WORLD_W, type ContainerPlacement, type ContainerTy
 import type { CatPlacement, DecorPlacement, RoomDef, ThemeId } from './room';
 import { solveRoom } from './solver';
 
-export const GENERATOR_VERSION = 3;
+export const GENERATOR_VERSION = 5;
 
 interface Span {
   x0: number;
@@ -413,9 +413,10 @@ export function composeRoom(seed: string, dateKey: string, variant: number): Roo
   if (roomy.length && rng.chance(0.7)) {
     const f = roomy[0];
     const avail = f.x1 - f.x0 - 8;
+    const present = new Set(containers.map((c) => c.type));
     const options = pool.filter((t) => {
       const e = cExt(t, 1);
-      return e.left + e.right <= avail && e.height < 150 && t !== 'sink';
+      return e.left + e.right <= avail && e.height < 150 && t !== 'sink' && !present.has(t);
     });
     if (options.length) {
       const t = rng.pick(options);
@@ -445,33 +446,68 @@ function decorate(
   windowCount: number,
   furniture: FurniturePlacement[],
 ): void {
+  // Everything on the wall gets a rectangle; nothing may overlap.
+  type R = { x0: number; y0: number; x1: number; y1: number };
+  const taken: R[] = [];
+  const hits = (a: R): boolean => taken.some((b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0);
+  for (const d of decor) {
+    if (d.type === 'window') taken.push({ x0: d.x - (d.w ?? 100) / 2 - 30, x1: d.x + (d.w ?? 100) / 2 + 30, y0: d.y - 20, y1: d.y + (d.h ?? 120) + 20 });
+    if (d.type === 'backsplash') taken.push({ x0: d.x, x1: d.x + (d.w ?? 0), y0: d.y, y1: d.y + (d.h ?? 0) });
+  }
+  for (const f of furniture) {
+    if (f.type === 'shelf' || f.type === 'sill') taken.push({ x0: f.x0, x1: f.x1, y0: f.y - 90, y1: f.y + 30 });
+    else taken.push({ x0: f.x0, x1: f.x1, y0: f.y - 90, y1: FLOOR_Y });
+  }
   const highest = Math.min(...furniture.map((f) => f.y), FLOOR_Y);
   if (windowCount === 0) {
     // A window somewhere high on the wall for the afternoon sun.
-    const spots = wallFree.filter((w) => w.x1 - w.x0 > 90 && w.y1 - w.y0 > 120);
-    if (spots.length) {
-      const s = rng.pick(spots);
-      const w = Math.min(104, s.x1 - s.x0 - 20);
-      decor.push({ type: 'window', x: (s.x0 + s.x1) / 2, y: Math.max(36, s.y0), w, h: Math.min(130, s.y1 - s.y0 - 10), variant: rng.int(0, 3) });
-      wallFree.splice(wallFree.indexOf(s), 1);
-    } else if (highest > 200) {
-      decor.push({ type: 'window', x: rng.range(110, 250), y: 40, w: 96, h: Math.min(120, highest - 90), variant: rng.int(0, 3) });
+    const candidates: R[] = [];
+    for (let x = 70; x <= WORLD_W - 70; x += 20) {
+      const w = 96;
+      const h = Math.min(126, highest - 110);
+      if (h < 80) break;
+      candidates.push({ x0: x - w / 2 - 30, x1: x + w / 2 + 30, y0: 36, y1: 36 + h + 20 });
+    }
+    const free = candidates.filter((c) => !hits(c));
+    if (free.length) {
+      const c = rng.pick(free);
+      const w = 96;
+      decor.push({ type: 'window', x: (c.x0 + c.x1) / 2, y: 40, w, h: c.y1 - c.y0 - 24, variant: rng.int(0, 2) });
+      taken.push(c);
     }
   }
   for (const w of wallFree) {
     if (w.x1 - w.x0 < 50 || w.y1 - w.y0 < 50) continue;
     const kind = rng.weighted(['picture', 'clock', 'mirror', 'none'] as const, [3, 1.5, theme === 'bathroom' ? 2 : 0.4, 1.2]);
     const cx = (w.x0 + w.x1) / 2;
-    if (kind === 'picture') decor.push({ type: 'picture', x: cx, y: w.y0 + 16, w: Math.min(56, w.x1 - w.x0 - 16), h: 42, variant: rng.int(0, 2) });
-    else if (kind === 'clock') decor.push({ type: 'clock', x: cx, y: w.y0 + 30, w: 16 });
-    else if (kind === 'mirror' && w.y1 - w.y0 > 110) decor.push({ type: 'mirror', x: cx, y: w.y0 + 8, w: 56, h: 84 });
+    let d: DecorPlacement | null = null;
+    let r: R | null = null;
+    if (kind === 'picture') {
+      const pw = Math.min(56, w.x1 - w.x0 - 16);
+      d = { type: 'picture', x: cx, y: w.y0 + 16, w: pw, h: 42, variant: rng.int(0, 2) };
+      r = { x0: cx - pw / 2 - 6, x1: cx + pw / 2 + 6, y0: w.y0, y1: w.y0 + 64 };
+    } else if (kind === 'clock') {
+      d = { type: 'clock', x: cx, y: w.y0 + 30, w: 16 };
+      r = { x0: cx - 24, x1: cx + 24, y0: w.y0 + 6, y1: w.y0 + 54 };
+    } else if (kind === 'mirror' && w.y1 - w.y0 > 110) {
+      d = { type: 'mirror', x: cx, y: w.y0 + 8, w: 56, h: 84 };
+      r = { x0: cx - 34, x1: cx + 34, y0: w.y0, y1: w.y0 + 100 };
+    }
+    if (d && r && !hits(r)) {
+      decor.push(d);
+      taken.push(r);
+    }
   }
   for (const f of floorFree) {
     if (f.x1 - f.x0 > 40) decor.push({ type: 'plant', x: (f.x0 + f.x1) / 2, y: FLOOR_Y, w: 34 });
   }
-  if (rng.chance(0.55)) decor.push({ type: 'rug', x: rng.range(120, 240), y: FLOOR_Y, w: rng.range(120, 170) });
-  if (rng.chance(0.35)) decor.push({ type: 'garland', x: 180, y: 10, w: 300 });
-  if (theme === 'bathroom' && rng.chance(0.6)) decor.push({ type: 'towel', x: rng.range(60, 300), y: 120 });
+  if (rng.chance(0.55)) decor.push({ type: 'rug', x: rng.range(120, 260), y: FLOOR_Y, w: rng.range(120, 170) });
+  if (rng.chance(0.35) && !taken.some((t) => t.y0 < 40)) decor.push({ type: 'garland', x: WORLD_W / 2, y: 10, w: 320 });
+  if (theme === 'bathroom' && rng.chance(0.6)) {
+    const x = rng.range(60, 320);
+    const r = { x0: x - 32, x1: x + 32, y0: 110, y1: 180 };
+    if (!hits(r)) decor.push({ type: 'towel', x, y: 120 });
+  }
 }
 
 /** Deterministic daily room: composed, solver-checked, with par and plan. */

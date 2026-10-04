@@ -7,6 +7,7 @@ import { HANDMADE } from './game/rooms';
 import type { RoomDef } from './game/room';
 import { collectedCount, loadSave, recordDaily, recordSeats, writeSave, type SaveData } from './game/save';
 import { Session, type Cat, type GameEvent, type RoomResult } from './game/session';
+import { gesturesFor, runGesture } from './game/solver';
 import { shareOrCopy, shareText } from './game/share';
 import { BASE_BREEDS, BREED_ORDER, BREEDS, type BreedId } from './physics/breeds';
 import { FRAME_DT } from './physics/world';
@@ -75,6 +76,8 @@ export class App {
     this.bindButtons();
     this.audio.setSfxEnabled(this.save.settings.sfx);
     this.audio.setMusicEnabled(this.save.settings.music);
+    // Music begins on the first tap (browsers need a gesture before audio).
+    this.audio.startMusic();
     document.addEventListener('visibilitychange', () => {
       this.paused = document.hidden;
       this.last = 0;
@@ -193,6 +196,30 @@ export class App {
     this.sandbox = null;
     if (this.returnTo.kind === 'daily') void this.loadDaily();
     else this.loadHandmade(this.returnTo.index);
+  }
+
+  /** Test hook: replay the room's solver plan (synchronously, frame-exact). */
+  autoplay(): number {
+    let seated = 0;
+    for (const step of this.session.def.plan ?? []) {
+      const cat = this.session.cats[step.cat];
+      if (!cat || cat.seat) continue;
+      cat.body.computeCentroid();
+      runGesture(
+        this.session,
+        step.cat,
+        { kind: step.kind, gx: cat.body.cx + step.gx, gy: cat.body.cy + step.gy, tx: step.tx, ty: step.ty, move: 24, hold: step.hold, tol: 0.3, wx: step.wx, wy: step.wy },
+        step.container,
+      );
+      // Physics is chaotic: if the replay missed, play it like the solver would.
+      for (const g of cat.seat ? [] : gesturesFor(this.session, step.cat, step.container)) {
+        if (cat.seat) break;
+        this.session.undo();
+        runGesture(this.session, step.cat, g, step.container);
+      }
+      if (cat.seat) seated++;
+    }
+    return seated;
   }
 
   // ---------------------------------------------------------------------------

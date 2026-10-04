@@ -41,13 +41,13 @@ export interface PurrParams {
 }
 
 // ---- Levels (linear gain). Recipes are peak-normalised; loudness lives here.
-const MASTER = 0.75;
+const MASTER = 1;
 const MUSIC_LEVEL = 0.1; // the music bus sits 20 dB under the sfx bus
 const MUSIC_VERB = 0.6; // music -> reverb send
 const CHIME_VERB = 0.3; // chimes / flourish -> reverb send
-const PURR_GAIN = 0.25;
-const PIANO_GAIN = 0.55; // background piano (before the music bus)
-const FLOURISH_GAIN = 0.55; // reveal flourish (on the sfx bus)
+const PURR_GAIN = 0.3;
+const PIANO_GAIN = 0.9; // background piano (before the music bus)
+const FLOURISH_GAIN = 0.4; // reveal flourish (on the sfx bus)
 const MATERIAL_GAIN: Record<ImpactMaterial, number> = {
   ceramic: 0.8,
   glass: 0.65,
@@ -60,7 +60,7 @@ const MATERIAL_GAIN: Record<ImpactMaterial, number> = {
   fabric: 0.75,
   wall: 0.9,
 };
-const DRUM_GAIN: Record<DrumKind, number> = { kick: 0.55, slap: 0.4, sweep: 0.32, tick: 0.2 };
+const DRUM_GAIN: Record<DrumKind, number> = { kick: 0.7, slap: 0.45, sweep: 0.5, tick: 0.25 };
 
 // ---- Timing
 const LOOKAHEAD = 0.2; // seconds of music scheduled ahead
@@ -84,6 +84,7 @@ interface Graph {
   duck: GainNode;
   piano: AudioNode;
   drums: GainNode;
+  verb: ConvolverNode;
 }
 
 interface PurrVoice {
@@ -146,7 +147,8 @@ export class AudioEngine {
   private warmTimer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly purrJobs = new Map<string, Generator<void, Float32Array, void>>(); // purr buffers being rendered in slices
-  private purrSliceAt = -1e9; // Date.now() of the last slice, so renders cost at most one slice per frame
+  private purrFrameAt = -1e9; // performance.now() when the current frame's render budget began
+  private purrBudget = 0; // ms of purr rendering left this frame
   private readonly purrs = new Map<number, PurrVoice>();
   private purrTimer: ReturnType<typeof setInterval> | undefined;
   private purrCount = -1;
@@ -224,12 +226,8 @@ export class AudioEngine {
     try {
       const g = this.live();
       if (!g || !this.gate(g, 'glorp', 0.05)) return;
-      const p = quant(pitch, 0.04, 1);
       const s = quant(clamp(size, 0, 1), 0.1, 0.5);
-      const v = quant(clamp(viscosity, 0, 1), 0.1, 0.5);
-      const key = `glorp:${p}:${s}:${v}`;
-      const buf = this.cached(g, key, loRate(g), (sr) => renderGlorp(sr, p, s, v, hash(key)));
-      this.play(g, buf, 0.26 * (0.78 + 0.35 * s), { rate: jitter(0.04), pan: (Math.random() - 0.5) * 0.3 });
+      this.play(g, this.glorpBuffer(g, pitch, s, viscosity), 0.26 * (0.78 + 0.35 * s), { rate: jitter(0.04), pan: (Math.random() - 0.5) * 0.3 });
     } catch (e) {
       this.oops(e);
     }
@@ -244,11 +242,12 @@ export class AudioEngine {
       const now = g.ctx.currentTime;
       while (this.hits.length && now - this.hits[0] >= 0.1) this.hits.shift();
       if (this.hits.length >= 8 || !this.gate(g, `hit:${material}`, 0.06)) return;
+      const crowd = 1 / (1 + 0.3 * this.hits.length); // later hits in a pile-up are softer
       this.hits.push(now);
       const v = clamp((speed - 150) / 1250, 0, 1);
       const sz = clamp(Number.isFinite(size) ? size : 0.5, 0, 1);
       const buf = this.impactBuffer(g, material, Math.floor(Math.random() * IMPACT_VARIANTS));
-      const gain = (MATERIAL_GAIN[material] ?? 0.8) * (0.05 + 0.3 * v ** 0.9) * (0.8 + 0.35 * sz);
+      const gain = crowd * (MATERIAL_GAIN[material] ?? 0.8) * (0.05 + 0.3 * v ** 0.9) * (0.8 + 0.35 * sz);
       // Harder hits are brighter; bigger cats a touch lower.
       this.play(g, buf, gain, { lp: 1800 + 9000 * v ** 1.2, rate: (1 - 0.06 * sz) * jitter(0.06), pan: (Math.random() - 0.5) * 0.4 });
     } catch (e) {
@@ -261,8 +260,7 @@ export class AudioEngine {
     try {
       const g = this.live();
       if (!g || !this.gate(g, 'boop', 0.04)) return;
-      const p = quant(pitch, 0.04, 1);
-      this.play(g, this.cached(g, `boop:${p}`, loRate(g), (sr) => renderMew(sr, p, 'boop', 11)), 0.2, { rate: jitter(0.03) });
+      this.play(g, this.voiceBuffer(g, 'boop', pitch), 0.2, { rate: jitter(0.03) });
     } catch (e) {
       this.oops(e);
     }
@@ -273,11 +271,7 @@ export class AudioEngine {
     try {
       const g = this.live();
       if (!g || !this.gate(g, 'grab', 0.08)) return;
-      const p = quant(pitch, 0.04, 1);
-      const buf = sleepy
-        ? this.cached(g, `sigh:${p}`, loRate(g), (sr) => renderSigh(sr, p, 5))
-        : this.cached(g, `mrrow:${p}`, loRate(g), (sr) => renderMew(sr, p, 'mrrow', 3));
-      this.play(g, buf, sleepy ? 0.15 : 0.14, { rate: jitter(0.03) });
+      this.play(g, this.voiceBuffer(g, sleepy ? 'sigh' : 'mrrow', pitch), sleepy ? 0.15 : 0.14, { rate: jitter(0.03) });
     } catch (e) {
       this.oops(e);
     }
@@ -297,8 +291,7 @@ export class AudioEngine {
       this.seatAt = t + 0.24;
       notes.forEach((m, i) => {
         const sparkle = i === 2;
-        const buf = this.cached(g, `bell:${m}:${sparkle}`, g.ctx.sampleRate, (sr) => renderBell(sr, m, sparkle, m));
-        this.play(g, buf, sparkle ? 0.13 : 0.16, { at: t + i * 0.11, verb: CHIME_VERB, pan: (i - 0.5) * 0.15 });
+        this.play(g, this.bellBuffer(g, m, sparkle), sparkle ? 0.13 : 0.16, { at: t + i * 0.11, verb: CHIME_VERB, pan: (i - 0.5) * 0.15 });
       });
     } catch (e) {
       this.oops(e);
@@ -310,8 +303,7 @@ export class AudioEngine {
     try {
       const g = this.live();
       if (!g || !this.gate(g, 'undo', 0.1)) return;
-      const v = Math.floor(Math.random() * 2);
-      this.play(g, this.cached(g, `undo:${v}`, loRate(g), (sr) => renderWhoosh(sr, 21 + v)), 0.15);
+      this.play(g, this.uiBuffer(g, 'undo', Math.floor(Math.random() * 2)), 0.15);
     } catch (e) {
       this.oops(e);
     }
@@ -322,8 +314,7 @@ export class AudioEngine {
     try {
       const g = this.live();
       if (!g || !this.gate(g, 'click', 0.03)) return;
-      const v = Math.floor(Math.random() * 3);
-      this.play(g, this.cached(g, `click:${v}`, g.ctx.sampleRate, (sr) => renderClick(sr, 31 + v)), 0.11, { rate: jitter(0.06) });
+      this.play(g, this.uiBuffer(g, 'click', Math.floor(Math.random() * 3)), 0.11, { rate: jitter(0.06) });
     } catch (e) {
       this.oops(e);
     }
@@ -340,7 +331,7 @@ export class AudioEngine {
       let v = this.purrs.get(id);
       if (!v) {
         if (!want) return;
-        const buf = this.purrBuffer(g, params, false);
+        const buf = this.purrBuffer(g, params);
         if (!buf) return; // still rendering (a slice per frame); the voice starts in a few frames
         v = this.makePurr(g, id, buf);
       }
@@ -447,18 +438,13 @@ export class AudioEngine {
     comp.threshold.value = -14;
     comp.knee.value = 12;
     comp.ratio.value = 3;
-    comp.attack.value = 0.006;
+    comp.attack.value = 0.003;
     comp.release.value = 0.3;
     comp.connect(ctx.destination);
     const master = gain(MASTER, comp);
 
-    // Room reverb from a generated noise impulse response.
+    // Room reverb; its noise impulse response is rendered by the warm-up (silent until then).
     const verb = ctx.createConvolver();
-    const [irL, irR] = renderIR(ctx.sampleRate, 2.4, 0x5eed);
-    const ir = ctx.createBuffer(2, irL.length, ctx.sampleRate);
-    ir.getChannelData(0).set(irL);
-    ir.getChannelData(1).set(irR);
-    verb.buffer = ir;
     verb.connect(master);
 
     const sfx = gain(this.sfxOn ? 1 : 0, master);
@@ -484,7 +470,7 @@ export class AudioEngine {
     blip.connect(ctx.destination);
     blip.onended = () => blip.disconnect();
     blip.start(0);
-    return { ctx, sfx, sfxVerb, purrBus, purrSwell, music, duck, piano, drums };
+    return { ctx, sfx, sfxVerb, purrBus, purrSwell, music, duck, piano, drums, verb };
   }
 
   private teardown(): void {
@@ -575,6 +561,39 @@ export class AudioEngine {
     return b;
   }
 
+  private glorpBuffer(g: Graph, pitch: number, size: number, viscosity: number): AudioBuffer {
+    const p = quant(pitch, 0.04, 1);
+    const s = quant(clamp(size, 0, 1), 0.1, 0.5);
+    const v = quant(clamp(viscosity, 0, 1), 0.1, 0.5);
+    const key = `glorp:${p}:${s}:${v}`;
+    return this.cached(g, key, loRate(g), (sr) => renderGlorp(sr, p, s, v, hash(key)));
+  }
+
+  private voiceBuffer(g: Graph, kind: 'boop' | 'mrrow' | 'sigh', pitch: number): AudioBuffer {
+    const p = quant(pitch, 0.04, 1);
+    return this.cached(g, `${kind}:${p}`, loRate(g), (sr) => (kind === 'sigh' ? renderSigh(sr, p, 5) : renderMew(sr, p, kind, kind === 'boop' ? 11 : 3)));
+  }
+
+  private bellBuffer(g: Graph, midi: number, sparkle: boolean): AudioBuffer {
+    return this.cached(g, `bell:${midi}:${sparkle}`, g.ctx.sampleRate, (sr) => renderBell(sr, midi, sparkle, midi));
+  }
+
+  private uiBuffer(g: Graph, kind: 'undo' | 'click', variant: number): AudioBuffer {
+    return kind === 'undo'
+      ? this.cached(g, `undo:${variant}`, loRate(g), (sr) => renderWhoosh(sr, 21 + variant))
+      : this.cached(g, `click:${variant}`, g.ctx.sampleRate, (sr) => renderClick(sr, 31 + variant));
+  }
+
+  private reverb(g: Graph): void {
+    if (g.verb.buffer) return;
+    const sr = g.ctx.sampleRate;
+    const [l, r] = renderIR(sr, 2.4, 0x5eed);
+    const ir = g.ctx.createBuffer(2, l.length, sr);
+    ir.getChannelData(0).set(l);
+    ir.getChannelData(1).set(r);
+    g.verb.buffer = ir;
+  }
+
   private impactBuffer(g: Graph, m: ImpactMaterial, variant: number): AudioBuffer {
     return this.cached(g, `hit:${m}:${variant}`, g.ctx.sampleRate, (sr) => renderImpact(sr, m, hash(m) + variant * 977));
   }
@@ -596,48 +615,74 @@ export class AudioEngine {
   }
 
   /**
-   * Purr loop for these params: cached, or rendered a slice at a time (at most one slice per
-   * frame unless `force`). Returns null while the render is still in progress.
+   * Purr loop for these params: cached, or rendered in slices within a ~2 ms budget per frame
+   * (shared by all purr renders), so a new breed's purr costs a few frames of spare time
+   * instead of one long hitch. Returns null while the render is still in progress.
    */
-  private purrBuffer(g: Graph, p: PurrParams, force: boolean): AudioBuffer | null {
+  private purrBuffer(g: Graph, p: PurrParams): AudioBuffer | null {
     const pp: PurrParams = { pitch: quant(p?.pitch, 0.05, 1), rate: quant(p?.rate, 0.05, 1), rough: quant(clamp(p?.rough, 0, 1), 0.25, 0.5) };
     const key = `purr:${pp.pitch}:${pp.rate}:${pp.rough}`;
     const hit = this.bufs.get(key);
     if (hit) return hit;
-    if (!force && Date.now() - this.purrSliceAt < 12) return null;
-    this.purrSliceAt = Date.now();
+    const now = performance.now();
+    if (now - this.purrFrameAt > 12) {
+      this.purrFrameAt = now; // a new frame: refill the budget
+      this.purrBudget = 2;
+    }
+    if (this.purrBudget <= 0) return null;
     let job = this.purrJobs.get(key);
-    if (!job) this.purrJobs.set(key, (job = purrSlices(loRate(g), pp, hash(key), 4096)));
-    const step = job.next();
+    if (!job) this.purrJobs.set(key, (job = purrSlices(loRate(g), pp, hash(key), 2048)));
+    let step = job.next();
+    while (!step.done && performance.now() - now < this.purrBudget) step = job.next();
+    this.purrBudget -= performance.now() - now;
     if (!step.done) return null;
     this.purrJobs.delete(key);
-    return this.cached(g, key, loRate(g), () => step.value);
+    const data = step.value;
+    return this.cached(g, key, loRate(g), () => data);
   }
 
-  /** Pre-render piano zones, impacts, drums and a neutral purr in small slices after unlock, so first uses never hitch. */
+  /**
+   * After unlock, pre-render in small time slices (most urgent first): the reverb, the first
+   * chord, UI ticks, impacts, the rest of the piano, drums and chimes. One render of each
+   * voice recipe and a neutral purr also warm up the JIT, so a breed's first glorp, boop or
+   * purr renders quickly. Nothing here runs inside the unlocking gesture.
+   */
   private startWarmup(): void {
     const jobs: ((g: Graph) => boolean)[] = [];
-    for (const z of new Set(PIANO_NOTES.map(zoneOf))) jobs.push((g) => !!this.zone(g, z));
-    for (const m of MATERIALS) for (let v = 0; v < IMPACT_VARIANTS; v++) jobs.push((g) => !!this.impactBuffer(g, m, v));
-    for (const k of ['kick', 'slap', 'sweep', 'tick'] as const) for (let v = 0; v < 2; v++) jobs.push((g) => !!this.drumBuffer(g, k, v));
-    jobs.push((g) => !!this.purrBuffer(g, { pitch: 1, rate: 1, rough: 0.5 }, true)); // also warms up the JIT for purrs
+    const add = (fn: (g: Graph) => unknown): void => void jobs.push((g) => (fn(g), true));
+    add((g) => this.reverb(g));
+    const zones = new Set([42, 51, 57, 60, ...PIANO_NOTES.map(zoneOf)]); // first chord (Fmaj7) first
+    for (let v = 0; v < 3; v++) add((g) => this.uiBuffer(g, 'click', v));
+    for (const m of MATERIALS) for (let v = 0; v < IMPACT_VARIANTS; v++) add((g) => this.impactBuffer(g, m, v));
+    for (const z of zones) add((g) => this.zone(g, z));
+    for (const k of ['kick', 'slap', 'sweep', 'tick'] as const) for (let v = 0; v < 2; v++) add((g) => this.drumBuffer(g, k, v));
+    for (const m of [65, 69, 72, 77]) add((g) => this.bellBuffer(g, m, false));
+    add((g) => this.bellBuffer(g, 81, true));
+    for (let v = 0; v < 2; v++) add((g) => this.uiBuffer(g, 'undo', v));
+    add((g) => this.glorpBuffer(g, 1, 0.5, 0.5));
+    for (const k of ['boop', 'mrrow', 'sigh'] as const) add((g) => this.voiceBuffer(g, k, 1));
+    jobs.push((g) => !!this.purrBuffer(g, { pitch: 1, rate: 1, rough: 0.5 }));
     this.warmJobs = jobs;
     clearTimeout(this.warmTimer);
-    this.warmTimer = setTimeout(this.warm, 60);
+    this.warmTimer = setTimeout(this.warm, 50);
   }
 
+  /** Runs warm-up jobs for ~4 ms, then yields to the page for 30 ms. */
   private readonly warm = (): void => {
     this.warmTimer = undefined;
+    const g = this.g;
+    if (!g) return;
+    const t0 = performance.now();
     try {
-      const g = this.g;
-      const job = this.warmJobs[0];
-      if (!g || !job) return;
-      if (job(g)) this.warmJobs.shift();
-      this.warmTimer = setTimeout(this.warm, 30);
+      while (this.warmJobs.length && performance.now() - t0 < 4) {
+        if (!this.warmJobs[0](g)) break; // a sliced job wants another turn later
+        this.warmJobs.shift();
+      }
     } catch (e) {
       this.warmJobs.shift();
       this.oops(e);
     }
+    if (this.warmJobs.length) this.warmTimer = setTimeout(this.warm, 30);
   };
 
   // ---------------------------------------------------------------- internals: voices
