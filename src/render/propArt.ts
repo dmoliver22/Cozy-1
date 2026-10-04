@@ -131,7 +131,7 @@ export function drawContainerBack(ctx: Ctx, p: Prop): void {
       vesselBack(ctx, 30, -65, c.inner, c.rim);
       break;
     case 'boot':
-      vesselBack(ctx, 20.5, -67, shade(c.body, 0.45), tint(c.body, 0.2), 4.5);
+      vesselBack(ctx, 23, -69, shade(c.body, 0.45), tint(c.body, 0.2), 5);
       break;
     case 'box':
       boxBack(ctx, c);
@@ -462,13 +462,13 @@ function bootFront(ctx: Ctx, c: Colors): void {
   const out = shade(c.body, 0.35);
   const path = (): void => {
     ctx.beginPath();
-    ctx.moveTo(-21.5, -67);
-    ctx.ellipse(0, -67, 21.5, 4.5, 0, Math.PI, 0, true);
-    ctx.lineTo(21.5, -34);
-    ctx.quadraticCurveTo(24, -30, 34, -27);
-    ctx.quadraticCurveTo(45, -24, 44, -10);
-    ctx.lineTo(44, -6);
-    ctx.lineTo(-21.5, -6);
+    ctx.moveTo(-23.5, -69);
+    ctx.ellipse(0, -69, 23.5, 5, 0, Math.PI, 0, true);
+    ctx.lineTo(23.5, -36);
+    ctx.quadraticCurveTo(26, -31, 36, -28);
+    ctx.quadraticCurveTo(48, -25, 47, -10);
+    ctx.lineTo(47, -6);
+    ctx.lineTo(-23.5, -6);
     ctx.closePath();
   };
   path();
@@ -479,22 +479,22 @@ function bootFront(ctx: Ctx, c: Colors): void {
   ctx.stroke();
   // sole
   ctx.fillStyle = shade(c.body, 0.45);
-  roundRect(ctx, -23, -8, 69, 8, 3);
+  roundRect(ctx, -25, -8, 73, 8, 3);
   ctx.fill();
   // rim band and toe cap
   ctx.strokeStyle = tint(c.body, 0.3);
   ctx.lineWidth = 3.2;
   ctx.beginPath();
-  ctx.ellipse(0, -67, 19.8, 3.6, 0, 0, Math.PI);
+  ctx.ellipse(0, -69, 21.8, 4, 0, 0, Math.PI);
   ctx.stroke();
   ctx.fillStyle = shade(c.body, 0.12);
   ctx.beginPath();
-  ctx.moveTo(30, -26);
-  ctx.quadraticCurveTo(45, -24, 44, -8);
-  ctx.lineTo(28, -8);
+  ctx.moveTo(31, -27);
+  ctx.quadraticCurveTo(48, -25, 47, -8);
+  ctx.lineTo(29, -8);
   ctx.closePath();
   ctx.fill();
-  glaze(ctx, -14, -60, 8, 36, 0.45);
+  glaze(ctx, -15, -62, 8, 38, 0.45);
 }
 
 function sinkBack(ctx: Ctx, c: Colors): void {

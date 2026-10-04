@@ -16,6 +16,7 @@ export interface ImpactEvent {
 }
 
 export class World {
+  static iterations = 2;
   readonly bodies: SoftBody[] = [];
   readonly statics: StaticShape[] = [];
   frame = 0;
@@ -60,14 +61,19 @@ export class World {
     }
     for (let s = 0; s < SUBSTEPS; s++) {
       for (const b of bodies) b.integrate(h, GRAVITY);
-      for (const b of bodies) {
-        b.solveInternal(h);
-        b.applyAssist(h);
+      // Two passes so pressure and walls agree before velocities are derived
+      // (one pass lets them fight, which shows up as chatter in tight cups).
+      for (let it = 0; it < World.iterations; it++) {
+        const first = it === 0;
+        for (const b of bodies) {
+          b.solveInternal(h, first);
+          if (first) b.applyAssist(h);
+        }
+        for (let i = 0; i < bodies.length; i++) {
+          for (let j = i + 1; j < bodies.length; j++) collideBodies(bodies[i], bodies[j]);
+        }
+        for (const b of bodies) this.collideStatics(b, h, s === 0 && first, first);
       }
-      for (let i = 0; i < bodies.length; i++) {
-        for (let j = i + 1; j < bodies.length; j++) collideBodies(bodies[i], bodies[j]);
-      }
-      for (const b of bodies) this.collideStatics(b, h, s === 0);
       for (const b of bodies) b.finishSubstep(h);
     }
     for (const b of bodies) {
@@ -94,7 +100,7 @@ export class World {
     return out;
   }
 
-  private collideStatics(b: SoftBody, h: number, firstSubstep: boolean): void {
+  private collideStatics(b: SoftBody, h: number, firstSubstep: boolean, resetContacts: boolean): void {
     const { n, x, y, px, py } = b;
     const statics = this.statics;
     const rN = NODE_RADIUS;
@@ -110,7 +116,7 @@ export class World {
       if (x[i] > bmaxX) bmaxX = x[i];
       if (y[i] < bminY) bminY = y[i];
       if (y[i] > bmaxY) bmaxY = y[i];
-      b.contactShape[i] = -1;
+      if (resetContacts) b.contactShape[i] = -1;
     }
     for (let si = 0; si < statics.length; si++) {
       const s = statics[si];

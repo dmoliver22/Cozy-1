@@ -32,6 +32,8 @@ export interface BreedPhysics {
   hop: number;
   /** Finger strength as a multiple of the cat's weight (sluggish chonk ~1). */
   pull: number;
+  /** How willingly it pours into narrow openings (jelly resists). */
+  slurp: number;
   /** Rest-shape creep per second while sitting (keeps the container's shape). */
   plasticity: number;
   /** Width/height of the settled loaf. */
@@ -95,6 +97,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.03,
       hop: 430,
       pull: 2.3,
+      slurp: 1,
       plasticity: 1.2,
       loafAspect: 1.25,
     },
@@ -138,6 +141,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.02,
       hop: 260,
       pull: 1.35,
+      slurp: 1,
       plasticity: 0.8,
       loafAspect: 1.4,
     },
@@ -181,6 +185,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.03,
       hop: 220,
       pull: 1.05,
+      slurp: 1,
       plasticity: 0.7,
       loafAspect: 1.45,
     },
@@ -224,6 +229,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.05,
       hop: 380,
       pull: 1.6,
+      slurp: 0.25,
       plasticity: 0.35,
       loafAspect: 1.2,
     },
@@ -267,6 +273,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.04,
       hop: 330,
       pull: 1.6,
+      slurp: 1,
       plasticity: 0.9,
       loafAspect: 1.3,
     },
@@ -310,6 +317,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.03,
       hop: 300,
       pull: 1.7,
+      slurp: 1,
       plasticity: 0.8,
       loafAspect: 1.35,
     },
@@ -354,6 +362,7 @@ export const BREEDS: Record<BreedId, Breed> = {
       upright: 0.03,
       hop: 360,
       pull: 1.8,
+      slurp: 1.2,
       plasticity: 1.4,
       loafAspect: 1.3,
     },

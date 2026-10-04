@@ -12,9 +12,12 @@ import { buildRoom, type RoomDef } from './room';
 
 /** Fraction of the finger's force that may point upward (cats are lazy). */
 export const LIFT = 0.55;
-const SETTLE_ENERGY = 90;
+const SETTLE_ENERGY = 400;
+const SETTLE_SPEED2 = 14 * 14;
 const SETTLE_FRAMES = 16;
 const COMPLETE_FRAMES = 40;
+/** Downward pull on the part of a cat inside a container opening (units/s^2). */
+const SLURP = 2600;
 
 export interface SeatInfo {
   container: number;
@@ -39,6 +42,17 @@ export interface Cat {
   grabbed: boolean;
   /** Frames since last boop/grab, for face animation. */
   sinceTouch: number;
+  /** Committed settling decision for the container being touched. */
+  intent: Intent | null;
+}
+
+interface Intent {
+  k: number;
+  mode: 'in' | 'out' | 'perch';
+  dir: number;
+  since: number;
+  lastTouch: number;
+  bestInside: number;
 }
 
 export type GameEvent =
@@ -131,6 +145,7 @@ export class Session {
       lastPour: -999,
       grabbed: false,
       sinceTouch: 999,
+      intent: null,
     }));
     this.paws = 0;
     this.hints = 0;
@@ -217,7 +232,7 @@ export class Session {
       const k = best >= 0 ? best : touchK;
       cat.near = k;
       // Settled?
-      const atRest = !cat.grabbed && b.energy < SETTLE_ENERGY && b.airborneFrames < 3;
+      const atRest = !cat.grabbed && b.emaVx * b.emaVx + b.emaVy * b.emaVy < SETTLE_SPEED2 && b.emaEnergy < SETTLE_ENERGY && b.airborneFrames < 3;
       cat.settled = atRest ? cat.settled + 1 : 0;
       this.applyAssist(cat, k, onFurniture, touchK, rimSupportN > 0 ? rimSupportX / rimSupportN : NaN);
       // Loaf when resting, round when moving
@@ -225,6 +240,7 @@ export class Session {
       if (cat.settled > 8) b.loafiness = Math.min(1, b.loafiness + dt * 1.4);
       else if (cat.grabbed || b.energy > 900) b.loafiness = Math.max(0, b.loafiness - dt * 3);
       b.plastic = cat.seat ? Math.min(1, b.plastic + dt * 1.2) : Math.max(0, b.plastic - dt * 5);
+      b.sitting = !!cat.seat && !cat.grabbed;
       this.updateSeat(cat, best);
     }
     this.resolveClaims();
@@ -232,40 +248,77 @@ export class Session {
   }
 
   /**
-   * "If it fits, I sits": a cat touching a container gently settles into it.
-   * A cat left balancing on a rim slides off to whichever side it leans, so
-   * nobody ever stays awkwardly draped over the edge of a teacup.
+   * "If it fits, I sits": a cat touching a container commits to a decision.
+   * 'in'  - a damped, whole-body pull toward the opening and a gentle press
+   *         down so it pours in;
+   * 'out' - it was only balanced on a rim, so it slides off the way it leans;
+   * 'perch' - it tried and it really doesn't fit: it just sits on top.
+   * Decisions are sticky, which keeps cats calm instead of jittery.
    */
   private applyAssist(cat: Cat, k: number, onFurniture: boolean, touchK: number, rimX: number): void {
     const b = cat.body;
-    b.assistAccel = 0;
+    b.assistAx = 0;
     b.settleForce = 0;
     b.shapeMul = 1;
-    if (cat.grabbed || k < 0 || this.complete || onFurniture) return;
-    const c = this.containers[k];
-    const op = c.opening!;
-    const ov = cat.overlaps[k];
-    let inCol = 0;
-    for (let i = 0; i < b.n; i++) if (b.x[i] > op.x0 && b.x[i] < op.x1) inCol++;
-    const frac = inCol / b.n;
-    const mid = (op.x0 + op.x1) / 2;
-    const taken = this.cats.some((o) => o !== cat && o.seat && o.seat.container === k);
-    if (!taken && (frac >= 0.3 || ov.inside > 0.08)) {
-      b.assistX = mid;
-      b.assistAccel = 650;
-      b.assistMinY = -Infinity;
-      b.settleForce = ov.inside > 0.04 ? 420 : 0;
-      b.shapeMul = 0.35;
-    } else if (touchK >= 0 && ov.inside < 0.15) {
-      // Balanced on a rim (or on an occupied container): slide off the way it leans.
-      const r = b.p.radius;
+    b.pouring = false;
+    const it = cat.intent;
+    if (cat.grabbed) {
+      cat.intent = null;
+      return;
+    }
+    const touching = k >= 0 && (touchK === k || cat.overlaps[k].covered > 0);
+    if (it) {
+      if (touching && k === it.k) it.lastTouch = this.frame;
+      else if (this.frame - it.lastTouch > 24) cat.intent = null;
+    }
+    if (!cat.intent) {
+      if (!touching || onFurniture) return;
+      const c = this.containers[k];
+      const op = c.opening!;
+      const ov = cat.overlaps[k];
+      let inCol = 0;
+      for (let i = 0; i < b.n; i++) if (b.x[i] > op.x0 && b.x[i] < op.x1) inCol++;
+      const frac = inCol / b.n;
+      const taken = this.cats.some((o) => o !== cat && o.seat && o.seat.container === k);
+      const mid = (op.x0 + op.x1) / 2;
+      let mode: Intent['mode'] = !taken && (frac >= 0.3 || ov.inside > 0.08) ? 'in' : 'out';
       const pivot = Number.isFinite(rimX) ? rimX : mid;
-      let dir = Math.sign(b.cx - pivot);
-      if (dir === 0) dir = b.cx < mid ? -1 : 1;
-      const tc = this.containers[touchK];
-      b.assistX = dir < 0 ? Math.min(tc.x0, b.cx) - r * 1.2 : Math.max(tc.x1, b.cx) + r * 1.2;
-      b.assistAccel = 560;
-      b.assistMinY = -Infinity;
+      let dir = Math.sign(b.cx - pivot) || (b.cx < mid ? -1 : 1);
+      if (mode === 'out' && !(touchK === k && ov.inside < 0.15)) mode = 'perch';
+      if (mode === 'out' && b.cx < c.x0) dir = -1;
+      if (mode === 'out' && b.cx > c.x1) dir = 1;
+      cat.intent = { k, mode, dir, since: this.frame, lastTouch: this.frame, bestInside: ov.inside };
+    }
+    const intent = cat.intent!;
+    const c = this.containers[intent.k];
+    const op = c.opening!;
+    const ov = cat.overlaps[intent.k];
+    if (ov.inside > intent.bestInside + 0.02) {
+      intent.bestInside = ov.inside;
+      intent.since = this.frame;
+    }
+    if (intent.mode === 'in') {
+      if (this.frame - intent.since > 150 && ov.inside < 0.15) {
+        // Tried for a while and it really doesn't fit: just perch.
+        intent.mode = 'perch';
+        return;
+      }
+      const mid = (op.x0 + op.x1) / 2;
+      b.assistAx = clamp(42 * (mid - b.cx) - 11 * b.vcx, -700, 700);
+      // Draw the part that's already in down into the container; once the
+      // cat is mostly in, let it just be liquid.
+      b.settleForce = SLURP * b.p.slurp * clamp((ov.inside + 0.06) / 0.1, 0, 1) * clamp((0.95 - ov.inside) / 0.2, 0, 1) * clamp((0.97 - ov.fill) / 0.15, 0, 1);
+      b.settleX0 = op.x0;
+      b.settleX1 = op.x1;
+      b.settleY = op.y + 2;
+      b.shapeMul = 0;
+      b.pouring = b.settleForce > 0 && this.frame - intent.since < 240;
+    } else if (intent.mode === 'out') {
+      if (onFurniture) {
+        cat.intent = null;
+        return;
+      }
+      b.assistAx = clamp(intent.dir * 560 - 6 * b.vcx, -700, 700);
     }
   }
 
@@ -378,6 +431,7 @@ export class Session {
       c.seat = s.seats[i];
       c.settled = c.seat ? SETTLE_FRAMES : 0;
       c.grabbed = false;
+      c.intent = null;
     });
     this.paws = s.paws;
     this.allSeatedFrames = 0;
@@ -398,6 +452,7 @@ export class Session {
     cat.body.startGrab(wx, wy, this.fingerForce(cat), this.mode === 'sandbox' ? 0.8 : LIFT);
     cat.grabbed = true;
     cat.sinceTouch = 0;
+    cat.intent = null;
     this.grabbing = cat;
     if (cat.seat) {
       cat.seat = null;
@@ -439,6 +494,7 @@ export class Session {
     const side = clamp((b.cx - wx) / b.p.radius, -1, 1);
     b.kick(side * b.p.hop * 0.38, -b.p.hop);
     cat.sinceTouch = 0;
+    cat.intent = null;
     if (cat.seat) {
       cat.seat = null;
       this.events.push({ t: 'unseat', cat });

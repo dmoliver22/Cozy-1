@@ -9,6 +9,11 @@ import { dcos, dsin, polygonArea, TAU } from '../util/math';
 export const NODE_RADIUS = 2.5;
 /** Angular damping per second while touching something. */
 const ROLL_DAMP = 4;
+/** Rest damping (see finishSubstep). */
+const REST_SPEED2 = 10 * 10;
+const REST_VISC = 30;
+const REST_LINEAR = 6;
+const REST_SPIN = 20;
 
 export interface Grab {
   /** Pointer target in world space. */
@@ -38,6 +43,8 @@ const BODY_SHARE = 0.65;
 let nextBodyId = 1;
 
 export class SoftBody {
+  /** How much of a collision push-out may turn into bounce (0 = all, 1 = none). */
+  static contactBounceKill = 0.85;
   readonly id: number;
   readonly breed: Breed;
   readonly p: BreedPhysics;
@@ -82,10 +89,23 @@ export class SoftBody {
   plastic = 0;
   /** Multiplier on shape stiffness (game layer can relax a cat into a cup). */
   shapeMul = 1;
-  /** Extra downward acceleration (units/s^2) used to "wiggle in". */
+  /** Extra downward acceleration (units/s^2) for nodes inside a container opening. */
   settleForce = 0;
-  /** Kinetic energy per unit mass, smoothed; used for "settled" detection. */
+  settleX0 = 0;
+  settleX1 = 0;
+  settleY = 0;
+  /** Set while the cat is pouring into something: no rest damping. */
+  pouring = false;
+  /** Set while the cat is seated: it loafs (always calm). */
+  sitting = false;
+  /** Kinetic energy per unit mass; used for "settled" detection. */
   energy = 0;
+  /** Smoothed centroid velocity and whether the body is resting. */
+  emaVx = 0;
+  emaVy = 0;
+  /** Energy smoothed over ~10 frames (what a viewer perceives as motion). */
+  emaEnergy = 0;
+  calm = false;
   /** Frames since the body last had any contact with anything. */
   airborneFrames = 0;
   /** Largest impact speed against a static shape this frame, and which. */
@@ -306,9 +326,15 @@ export class SoftBody {
 
   integrate(h: number, g: number): void {
     const n = this.n;
-    const gy = g + this.settleForce;
+    const sf = this.settleForce;
+    const sx0 = this.settleX0;
+    const sx1 = this.settleX1;
+    const sy = this.settleY;
     for (let i = 0; i < n; i++) {
-      this.vy[i] += gy * h;
+      // The part already inside a container is gently drawn down ("glorp"):
+      // a ring body has no hydrostatic pressure, so we add it where it counts.
+      const extra = sf > 0 && this.y[i] > sy && this.x[i] > sx0 && this.x[i] < sx1 ? sf : 0;
+      this.vy[i] += (g + extra) * h;
       this.px[i] = this.x[i];
       this.py[i] = this.y[i];
       this.x[i] += this.vx[i] * h;
@@ -316,11 +342,11 @@ export class SoftBody {
     }
   }
 
-  solveInternal(h: number): void {
+  solveInternal(h: number, first = true): void {
     this.solveEdges(h);
     this.solveArea();
     this.solveShape();
-    if (this.grab) this.solveGrab(h);
+    if (this.grab && first) this.solveGrab(h);
   }
 
   /**
@@ -510,24 +536,14 @@ export class SoftBody {
     }
   }
 
-  /** Horizontal pull (units/s^2) toward a container opening; set by the game. */
-  assistX = 0;
-  assistAccel = 0;
-  /** Only nodes below this y feel the horizontal assist (the part near the rim). */
-  assistMinY = -Infinity;
+  /** Uniform horizontal acceleration (units/s^2) set by the game ("if it fits, I sits"). */
+  assistAx = 0;
 
   applyAssist(h: number): void {
-    if (this.assistAccel <= 0) return;
-    const { n, x, y } = this;
-    const step = this.assistAccel * h * h;
-    const ax = this.assistX;
-    for (let i = 0; i < n; i++) {
-      if (y[i] < this.assistMinY) continue;
-      const dx = ax - x[i];
-      // gentle: saturates within ~20 units of the target
-      const s = dx > 20 ? 1 : dx < -20 ? -1 : dx / 20;
-      x[i] += step * s;
-    }
+    if (this.assistAx === 0) return;
+    const step = this.assistAx * h * h;
+    const { n, x } = this;
+    for (let i = 0; i < n; i++) x[i] += step;
   }
 
   /** After constraints: derive velocities and apply viscosity. */
@@ -546,8 +562,28 @@ export class SoftBody {
       mvx += vx[i];
       mvy += vy[i];
     }
+    const kill = SoftBody.contactBounceKill * (1 - this.p.shape * 20);
+    for (let i = 0; i < n; i++) {
+      if (this.contactShape[i] !== -1) {
+        // The push-out from a collision shouldn't become a bounce (chatter).
+        const nx = this.contactNx[i];
+        const ny = this.contactNy[i];
+        const vn = vx[i] * nx + vy[i] * ny;
+        if (vn > 0) {
+          vx[i] -= nx * vn * kill;
+          vy[i] -= ny * vn * kill;
+        }
+      }
+    }
     cx /= n;
     cy /= n;
+    // Recompute the mean after smoothing / contact damping changed velocities.
+    mvx = 0;
+    mvy = 0;
+    for (let i = 0; i < n; i++) {
+      mvx += vx[i];
+      mvy += vy[i];
+    }
     mvx /= n;
     mvy /= n;
     // Angular velocity of the best-fit rigid motion
@@ -559,13 +595,25 @@ export class SoftBody {
       L += rx * (vy[i] - mvy) - ry * (vx[i] - mvx);
       I += rx * rx + ry * ry;
     }
-    let w = I > 1e-9 ? L / I : 0;
+    const w = I > 1e-9 ? L / I : 0;
     // Rolling resistance: cats don't roll like balls, they scoot.
     let contacts = 0;
     for (let i = 0; i < n; i++) if (this.contactShape[i] !== -1) contacts++;
     const roll = contacts > 0 ? Math.min(1, ROLL_DAMP * h) : Math.min(1, 0.6 * h);
     const wKeep = w * (1 - roll);
-    const visc = this.p.viscosity * h;
+    // Rest damping: once a cat's averaged motion is ~zero while touching
+    // something, it loafs instead of wobbling forever.
+    const a = h / 0.2;
+    this.emaVx += (mvx - this.emaVx) * a;
+    this.emaVy += (mvy - this.emaVy) * a;
+    const calm = contacts > 0 && !this.grab && (this.sitting || (!this.pouring && this.emaVx * this.emaVx + this.emaVy * this.emaVy < REST_SPEED2));
+    this.calm = calm;
+    const lin = calm ? 1 - Math.min(1, REST_LINEAR * h) : 1;
+    // Resting cats don't slowly churn in place either.
+    const wRest = calm ? wKeep * (1 - Math.min(1, REST_SPIN * h)) : wKeep;
+    const nmx = mvx * lin;
+    const nmy = mvy * lin;
+    const visc = (this.p.viscosity + (calm ? REST_VISC : 0)) * h;
     const keep = visc >= 1 ? 0 : 1 - visc;
     const air = 1 - 0.08 * h;
     let e = 0;
@@ -575,8 +623,8 @@ export class SoftBody {
       const rvx = mvx - w * ry;
       const rvy = mvy + w * rx;
       // deformation part damped by viscosity; rigid rotation by rolling resistance
-      let nvx = (mvx - wKeep * ry + (vx[i] - rvx) * keep) * air;
-      let nvy = (mvy + wKeep * rx + (vy[i] - rvy) * keep) * air;
+      let nvx = (nmx - wRest * ry + (vx[i] - rvx) * keep) * air * lin;
+      let nvy = (nmy + wRest * rx + (vy[i] - rvy) * keep) * air * lin;
       // Speed limit keeps everything gentle (and stable).
       const sp2 = nvx * nvx + nvy * nvy;
       if (sp2 > 1400 * 1400) {
@@ -590,13 +638,14 @@ export class SoftBody {
     }
     this.cx = cx;
     this.cy = cy;
-    this.vcx = mvx;
-    this.vcy = mvy;
+    this.vcx = nmx;
+    this.vcy = nmy;
     this.energy = e / n;
   }
 
   /** Called once per frame by the world (not per substep). */
   frameUpdate(dt: number): void {
+    this.emaEnergy += (this.energy - this.emaEnergy) * 0.15;
     // Rest shape: blend round <-> loaf, plus plastic creep toward current shape.
     const n = this.n;
     const lf = this.loafiness;
@@ -635,6 +684,10 @@ export class SoftBody {
       qy: this.qy.slice(),
       loafiness: this.loafiness,
       plastic: this.plastic,
+      contactShape: this.contactShape.slice(),
+      contactNx: this.contactNx.slice(),
+      contactNy: this.contactNy.slice(),
+      ema: [this.emaVx, this.emaVy, this.emaEnergy, this.energy, this.airborneFrames],
     };
   }
 
@@ -649,7 +702,13 @@ export class SoftBody {
     this.qy.set(s.qy);
     this.loafiness = s.loafiness;
     this.plastic = s.plastic;
+    this.contactShape.set(s.contactShape);
+    this.contactNx.set(s.contactNx);
+    this.contactNy.set(s.contactNy);
+    [this.emaVx, this.emaVy, this.emaEnergy, this.energy, this.airborneFrames] = s.ema;
     this.grab = null;
+    this.assistAx = 0;
+    this.settleForce = 0;
     this.computeCentroid();
   }
 }
@@ -663,6 +722,10 @@ export interface BodySnapshot {
   qy: Float64Array;
   loafiness: number;
   plastic: number;
+  contactShape: Int32Array;
+  contactNx: Float32Array;
+  contactNy: Float32Array;
+  ema: [number, number, number, number, number];
 }
 
 /** Centre a shape on its centroid and scale it to the given area. */

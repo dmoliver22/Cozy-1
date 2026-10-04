@@ -65,6 +65,9 @@ export interface PlanStep {
   ty: number;
   /** Frames to drag before letting go. */
   hold: number;
+  /** Optional waypoint (world): slide off an edge first, then go to the target. */
+  wx?: number;
+  wy?: number;
   /** 'drag' or 'boop' (tap). */
   kind: 'drag' | 'boop';
 }

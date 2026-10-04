@@ -75,15 +75,15 @@ export const CONTAINERS: Record<ContainerType, ContainerSpec> = {
     name: 'rain boot',
     material: 'rubber',
     parts: [
-      box(-21, -7, 43, 0, 3.5),
-      cap(-17, -66, -17, -5, 4),
-      cap(17, -66, 17, -30, 4),
-      cap(17, -30, 36, -24, 4.5),
-      cap(38, -21, 38, -6, 5),
+      box(-23, -7, 45, 0, 3.5),
+      cap(-19, -68, -19, -5, 4),
+      cap(19, -68, 19, -30, 4),
+      // the toe is stuffed with a sock: solid, so the cavity is just the shaft
+      box(15, -30, 45, -4, 6),
     ],
-    interior: [P(-13, -66), P(13, -66), P(13, -26), P(33, -20), P(33, -8), P(-13, -8)],
-    opening: [-13, 13, -70],
-    bounds: [-22, -71, 44, 0],
+    interior: [P(-15, -68), P(15, -68), P(15, -7), P(-15, -7)],
+    opening: [-15, 15, -72],
+    bounds: [-24, -73, 46, 0],
   },
   box: {
     name: 'cardboard box',
@@ -189,9 +189,9 @@ export const CONTAINERS: Record<ContainerType, ContainerSpec> = {
   slipper: {
     name: 'slipper',
     material: 'fabric',
-    parts: [box(-38, -6, 40, 0, 3), cap(-35, -24, -35, -5, 4), cap(2, -25, 34, -17, 5), cap(38, -15, 38, -5, 4)],
-    interior: [P(-31, -24), P(0, -24), P(31, -14), P(32, -6), P(-31, -6)],
-    opening: [-31, 0, -28],
+    parts: [box(-38, -6, 40, 0, 3), cap(-35, -24, -35, -5, 4), cap(2, -25, 34, -17, 5), box(2, -22, 40, -4, 5)],
+    interior: [P(-31, -24), P(-2, -24), P(-2, -6), P(-31, -6)],
+    opening: [-31, -2, -28],
     bounds: [-39, -30, 43, 0],
   },
   mixingbowl: {
