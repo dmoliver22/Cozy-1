@@ -54,7 +54,9 @@ Handy URLs while developing: `?room=1|2|3` (hand-made rooms), `?daily=2026-10-05
 surface (constant tension, evened-out spacing), an area constraint keeps the
 volume, weak shape matching gives each breed its loaf, and viscosity damps only
 deformation, so a honey Persian falls as fast as a water kitten but oozes much
-more slowly. Seated cats get rest damping so they loaf calmly, and a cat that
+more slowly. The skin is solid between nodes and can't pass through itself, so
+a cat dragged over a rim drapes over it like a sack instead of letting the
+wall slice through. Seated cats get rest damping so they loaf calmly, and a cat that
 has rested truly still for a moment falls asleep: it is frozen (no solver
 chatter at all) until a finger, a boop, a game nudge, a cat bumping into it or
 a moved prop wakes it. The face always floats to the top of the blob, so a cat

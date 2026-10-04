@@ -223,9 +223,93 @@ export class World {
         b.contactNx[i] = nX;
         b.contactNy[i] = nY;
       }
+      this.skinVsCorners(b, s, s.radius + rN * CORNER_SKIN, bminX, bminY, bmaxX, bmaxY);
+    }
+  }
+
+  /**
+   * The skin between two nodes is solid too (a chain of capsules). Nodes alone
+   * would let a thin rim slip between two of them like a cheese wire, leaving
+   * a glass wall running through a cat. For a convex shape the skin can only
+   * come too close at one of the shape's corners, so each corner pushes the
+   * stretch of skin nearest to it back out, or, if the corner has just slipped
+   * inside the cat, back out over the corner. Skin wrapped snugly round a rim
+   * is left alone (the edges stay a little inside the nodes' reach there, and
+   * fighting the skin's tension over that made cats quiver), and corners are
+   * frictionless: skin slides over a rim like syrup over a spoon.
+   */
+  private skinVsCorners(b: SoftBody, s: StaticShape, reach: number, bminX: number, bminY: number, bmaxX: number, bmaxY: number): void {
+    const { n, x, y } = b;
+    for (let k = 0; k < s.n; k++) {
+      const vx = s.xs[k];
+      const vy = s.ys[k];
+      if (vx < bminX - reach || vx > bmaxX + reach || vy < bminY - reach || vy > bmaxY + reach) continue;
+      let bestD2 = reach * reach;
+      let bi = -1;
+      let bt = 0;
+      let inside = false;
+      for (let i = 0; i < n; i++) {
+        const j = i + 1 === n ? 0 : i + 1;
+        const yi = y[i];
+        const yj = y[j];
+        if (yi > vy !== yj > vy && vx < x[i] + ((vy - yi) * (x[j] - x[i])) / (yj - yi)) inside = !inside;
+        const ex = x[j] - x[i];
+        const ey = yj - yi;
+        const l2 = ex * ex + ey * ey;
+        let t = l2 > 1e-12 ? ((vx - x[i]) * ex + (vy - yi) * ey) / l2 : 0;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        const qx = x[i] + ex * t - vx;
+        const qy = yi + ey * t - vy;
+        const d2 = qx * qx + qy * qy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          bi = i;
+          bt = t;
+        }
+      }
+      // Nearest to a node (or nothing in reach): the node pass handles it.
+      if (bi < 0 || bt <= 0 || bt >= 1) continue;
+      const i = bi;
+      const j = i + 1 === n ? 0 : i + 1;
+      const t = bt;
+      // Direction to move the skin: away from the corner, or across it.
+      let ux = x[i] + (x[j] - x[i]) * t - vx;
+      let uy = y[i] + (y[j] - y[i]) * t - vy;
+      const d = Math.sqrt(ux * ux + uy * uy);
+      if (d < 1e-6) continue;
+      ux /= d;
+      uy /= d;
+      let corr = reach - d;
+      if (inside) {
+        ux = -ux;
+        uy = -uy;
+        corr = reach + d;
+      }
+      const wa = 1 - t;
+      const wb = t;
+      const inv = 1 / (wa * wa + wb * wb);
+      const m = corr * inv;
+      x[i] += ux * m * wa;
+      y[i] += uy * m * wa;
+      x[j] += ux * m * wb;
+      y[j] += uy * m * wb;
+      if (b.contactShape[i] === -1) {
+        b.contactShape[i] = s.id;
+        b.contactNx[i] = ux;
+        b.contactNy[i] = uy;
+      }
+      if (b.contactShape[j] === -1) {
+        b.contactShape[j] = s.id;
+        b.contactNx[j] = ux;
+        b.contactNy[j] = uy;
+      }
     }
   }
 }
+
+/** How much of a node's radius the skin between nodes keeps from a corner. */
+const CORNER_SKIN = 0.5;
 
 const skinBB = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 const skinBB2 = { minX: 0, minY: 0, maxX: 0, maxY: 0 };

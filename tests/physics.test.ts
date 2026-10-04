@@ -5,6 +5,7 @@ import { GRAVITY, World } from '../src/physics/world';
 import { buildContainer, roomShell } from '../src/game/props';
 import { LIFT, Session } from '../src/game/session';
 import { polygonArea, dsin, dcos } from '../src/util/math';
+import type { StaticShape } from '../src/physics/shapes';
 
 function dropInto(breed: BreedId, container?: 'teacup' | 'box'): { body: SoftBody; world: World } {
   const world = new World();
@@ -93,6 +94,59 @@ describe('soft-body cats', () => {
     expect(Array.from(b.y)).toEqual(y);
   });
 
+  it('a cat dragged hard against a thin wall never folds through itself or the wall', () => {
+    // Pulling a cat into a shoebox through its wall used to pinch the neck over
+    // the rim until the ring twisted into a figure 8 with the wall inside it;
+    // pressing one into the crevice under a teacup knotted the skin.
+    const cases = [
+      ['shoebox', 'tabby'],
+      ['shoebox', 'void'],
+      ['saucepan', 'void'],
+      ['teacup', 'void'],
+    ] as const;
+    for (const [type, breed] of cases) {
+      const s = new Session(
+        {
+          id: 'drag',
+          name: 'drag',
+          theme: 'kitchen',
+          furniture: [],
+          decor: [],
+          containers: [{ type, x: 220, y: 560 }],
+          cats: [{ breed, x: 70, y: 560, name: 'c' }],
+        },
+        { settleFrames: 0 },
+      );
+      const cat = s.cats[0];
+      const b = cat.body;
+      const walls = s.world.statics.filter((st) => st.propId !== -1);
+      for (let f = 0; f < 300; f++) {
+        if (f === 60) {
+          b.computeCentroid();
+          s.beginGrab(cat, b.cx, b.cy);
+        }
+        if (f >= 60 && f < 240) {
+          const t = Math.min(1, (f - 60) / 30);
+          s.moveGrab(70 + 150 * t, 545, t < 1 ? 300 : 0, 0);
+        }
+        if (f === 240) s.endGrab();
+        s.step();
+        expect(ringCrossings(b), `${type}/${breed} frame ${f}`).toBe(0);
+        let deepest = 0;
+        for (const st of walls) {
+          for (let i = 0; i < b.n; i++) {
+            const j = (i + 1) % b.n;
+            for (let q = 0; q <= 4; q++) {
+              const u = q / 4;
+              deepest = Math.max(deepest, -shapeDistance(st, b.x[i] + (b.x[j] - b.x[i]) * u, b.y[i] + (b.y[j] - b.y[i]) * u));
+            }
+          }
+        }
+        expect(deepest, `${type}/${breed} frame ${f}`).toBeLessThan(0.5);
+      }
+    }
+  });
+
   it('a cat that lands with a spin settles where it lands instead of rolling away', () => {
     for (const breed of ['tabby', 'mainecoon', 'chonk'] as const) {
       const world = new World();
@@ -120,3 +174,45 @@ describe('soft-body cats', () => {
     }
   });
 });
+
+/** Number of pairs of non-adjacent ring edges that cross each other. */
+function ringCrossings(b: SoftBody): number {
+  const n = b.n;
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    const i2 = (i + 1) % n;
+    for (let j = i + 2; j < n; j++) {
+      const j2 = (j + 1) % n;
+      if (j2 === i) continue;
+      const d1 = cross(b.x[j], b.y[j], b.x[j2], b.y[j2], b.x[i], b.y[i]);
+      const d2 = cross(b.x[j], b.y[j], b.x[j2], b.y[j2], b.x[i2], b.y[i2]);
+      const d3 = cross(b.x[i], b.y[i], b.x[i2], b.y[i2], b.x[j], b.y[j]);
+      const d4 = cross(b.x[i], b.y[i], b.x[i2], b.y[i2], b.x[j2], b.y[j2]);
+      if (d1 * d2 < 0 && d3 * d4 < 0) count++;
+    }
+  }
+  return count;
+}
+
+function cross(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {
+  return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+}
+
+/** Signed distance from a point to a static's rounded surface (negative inside). */
+function shapeDistance(s: StaticShape, px: number, py: number): number {
+  let maxD = -Infinity;
+  for (let k = 0; k < s.n; k++) maxD = Math.max(maxD, s.nx[k] * px + s.ny[k] * py - s.d[k]);
+  if (maxD <= 0) return maxD - s.radius;
+  let best = Infinity;
+  for (let k = 0; k < s.n; k++) {
+    const k2 = (k + 1) % s.n;
+    const ax = s.xs[k];
+    const ay = s.ys[k];
+    const ex = s.xs[k2] - ax;
+    const ey = s.ys[k2] - ay;
+    const l2 = ex * ex + ey * ey;
+    const t = l2 > 1e-12 ? Math.max(0, Math.min(1, ((px - ax) * ex + (py - ay) * ey) / l2)) : 0;
+    best = Math.min(best, Math.hypot(px - (ax + ex * t), py - (ay + ey * t)));
+  }
+  return best - s.radius;
+}

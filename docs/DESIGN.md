@@ -70,6 +70,28 @@ doesn't fit slides off on a slippery rim with a push that builds over 1/3 s,
 instead of teetering. The tabby and the Maine Coon have no shape matching (it
 made them slowly "unroll" across the floor after a tumble).
 
+## Skin contact
+
+Collision used to be node-only, which looked fine behind opaque containers but
+not through glass: a cat pulled hard over a thin wall could let the rim slip
+between two nodes (a cheese wire) and then fold through itself into a figure 8
+with the wall inside it. The skin is now solid between nodes too:
+
+- **Corners vs skin.** For a convex shape the skin can only come too close at
+  one of the shape's corners, so each corner pushes the stretch of skin nearest
+  to it back out (or, if the corner has slipped inside the cat, decided by the
+  whole outline, back out over it). It only engages when the skin cuts into a
+  corner (keeps `radius + 0.5 * NODE_RADIUS`), not when skin is merely wrapped
+  snugly round a rim (fighting the tension there made cats quiver), and it is
+  frictionless, so skin slides over a rim like syrup over a spoon.
+- **Self-contact.** Every node keeps a skin's width (`2 * NODE_RADIUS`) from the
+  ring two or more nodes away, once per substep. That stops pinched necks from
+  passing through each other and creases from folding into hairpins.
+
+`tests/physics.test.ts` drags cats hard into a shoebox, a saucepan and the
+crevice under a teacup and checks every frame for crossed edges and skin inside
+a wall.
+
 ## Seating and cozy points
 
 - A cat touching a container commits to an intent: **in** (damped pull toward the

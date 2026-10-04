@@ -51,7 +51,7 @@ export const HANDMADE: RoomDef[] = [
     par: 3,
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
-      { cat: 0, container: 0, gx: 13, gy: -4, tx: 153, ty: 319, hold: 40, kind: 'drag' },
+      { cat: 0, container: 0, gx: 13, gy: -4, tx: 153, ty: 319, hold: 60, kind: 'drag' },
       { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 391, hold: 40, kind: 'drag', wx: 263, wy: 218 },
       { cat: 1, container: 1, gx: -8, gy: -2, tx: 172, ty: 110, hold: 40, kind: 'drag' },
     ],

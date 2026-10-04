@@ -386,7 +386,72 @@ export class SoftBody {
     this.solveArea();
     this.solveShape();
     if (this.grab && first) this.solveGrab(h);
+    // Once a substep is plenty: folding through takes many substeps.
+    if (first) this.solveSelf();
   }
+
+  /**
+   * The skin can't pass through itself. Squeezed hard (a neck pinched over a
+   * rim while a finger pulls, a cat pressed into a wall) the ring could
+   * otherwise fold through itself into a figure 8, with a wall running
+   * through the middle of the cat, or crease into a hairpin. Every node keeps
+   * a skin's width from the stretches of ring two or more nodes away.
+   */
+  private solveSelf(): void {
+    const { n, x, y } = this;
+    const skin = NODE_RADIUS * 2;
+    const skin2 = skin * skin;
+    // Each edge's box, grown by a skin, rules out almost every pair cheaply.
+    const x0 = scratchA(n);
+    const x1 = scratchB(n);
+    const y0 = scratchC(n);
+    const y1 = scratchD(n);
+    for (let j = 0; j < n; j++) {
+      const k = j + 1 === n ? 0 : j + 1;
+      const ax = x[j];
+      const bx = x[k];
+      const ay = y[j];
+      const by = y[k];
+      x0[j] = (ax < bx ? ax : bx) - skin;
+      x1[j] = (ax < bx ? bx : ax) + skin;
+      y0[j] = (ay < by ? ay : by) - skin;
+      y1[j] = (ay < by ? by : ay) + skin;
+    }
+    for (let i = 0; i < n; i++) {
+      for (let s = 2; s <= n - 3; s++) {
+        const j = i + s >= n ? i + s - n : i + s;
+        const xi = x[i];
+        const yi = y[i];
+        if (xi < x0[j] || xi > x1[j] || yi < y0[j] || yi > y1[j]) continue;
+        const k = j + 1 === n ? 0 : j + 1;
+        const ax = x[j];
+        const ay = y[j];
+        const dx = xi - ax;
+        const dy = yi - ay;
+        const ex = x[k] - ax;
+        const ey = y[k] - ay;
+        const l2 = ex * ex + ey * ey;
+        let t = l2 > 1e-12 ? (dx * ex + dy * ey) / l2 : 0;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        const qx = dx - ex * t;
+        const qy = dy - ey * t;
+        const d2 = qx * qx + qy * qy;
+        if (d2 >= skin2 || d2 < 1e-12) continue;
+        const d = Math.sqrt(d2);
+        const wa = 1 - t;
+        const wb = t;
+        const lam = (skin - d) / (d * (1 + wa * wa + wb * wb));
+        x[i] += qx * lam;
+        y[i] += qy * lam;
+        x[j] -= qx * lam * wa;
+        y[j] -= qy * lam * wa;
+        x[k] -= qx * lam * wb;
+        y[k] -= qy * lam * wb;
+      }
+    }
+  }
+
 
   /**
    * The skin behaves like a liquid surface: a constant tension pulls every edge
@@ -892,4 +957,14 @@ function scratchA(n: number): Float64Array {
 function scratchB(n: number): Float64Array {
   if (scratchBufB.length < n) scratchBufB = new Float64Array(n * 2);
   return scratchBufB;
+}
+let scratchBufC = new Float64Array(64);
+let scratchBufD = new Float64Array(64);
+function scratchC(n: number): Float64Array {
+  if (scratchBufC.length < n) scratchBufC = new Float64Array(n * 2);
+  return scratchBufC;
+}
+function scratchD(n: number): Float64Array {
+  if (scratchBufD.length < n) scratchBufD = new Float64Array(n * 2);
+  return scratchBufD;
 }
