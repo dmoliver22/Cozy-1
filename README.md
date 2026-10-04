@@ -16,9 +16,10 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-- **Drag** a cat to nudge it. It stretches toward your finger, but most cats
-  are far too lazy to be lifted (the zippy kitten is the exception).
-- Let it **ooze off a shelf** and pour into whatever's below. If it fits, it sits.
+- **Drag** a cat to pick it up and carry it. Every cat can be lifted; heavier
+  cats lag behind your finger and stretch on the way.
+- Let go over a container (or let a cat **ooze off a shelf**) and it pours in.
+  If it fits, it sits.
 - **Tap** a cat to boop it: a little hop.
 - **Undo** is always free; there's no way to fail.
 - Snug fits earn **cozy points**; every nudge is a **paw**; **par** is what the
@@ -57,6 +58,19 @@ more slowly. Seated cats get rest damping so they loaf calmly. The face always
 floats to the top of the blob, so a cat poured into a teacup still reads as a
 loaf with two ears and a tail draped over the rim.
 
+**Painting.** Everything is painted in code with one shared kit
+(`src/render/paint.ts`): a single warm light from the upper left, painterly
+shadow and light colours (shifted toward violet and toward warm yellow rather
+than mixed with grey), shading that hugs any outline, and tileable procedural
+textures (fur, wood grain, plaster, brush strokes, cardboard, weave) laid over
+the flat gouache colour. Cats are repainted every frame from the physics ring:
+locks of fur are worked into the silhouette, then coat markings, fur texture,
+form shading, occlusion underneath and a rim of light; ears with pink insides,
+dot eyes with highlights, whisker pads, little paws. A cat in a container is
+painted in two passes, its body under the container's front and its tail and
+front paws over it, so the tail drapes over the rim instead of poking through
+the cup. The room and the props are painted once into cached layers.
+
 **Fitting.** Containers have a cavity polygon. A cat touching a container makes
 a sticky decision: pour in (a damped pull toward the opening plus a gentle
 "slurp" on the part already inside), slide off a rim it's balancing on, or, if
@@ -64,8 +78,11 @@ it really doesn't fit, just perch. Cozy points come from how full the cavity is
 and how much of the cat is in it; a loaf poking out is perfect.
 
 **The finger.** A drag pulls the whole cat (65%) and stretches the touched part
-toward your finger (35%), with a fixed strength relative to the cat's weight and
-a lazy cap on lifting. Undo snapshots everything.
+toward your finger (35%). Its strength is a multiple of the cat's weight (3.2x
+for the kitten down to 2.5x for the chonk, 80% of it allowed upward), so every
+cat can be carried and the heavy ones simply lag, sag and slide further. A
+strongly damped spring eases the cat up to the finger without bobbing. Undo
+snapshots everything.
 
 **Mornings.** The date seeds an integer RNG. The generator composes the room
 from tested vignettes (a shelf over a cup, a counter beside a stool, a cabinet

@@ -14,7 +14,7 @@ export const HANDMADE: RoomDef[] = [
     plan: [
       { cat: 0, container: 0, gx: 15, gy: -4, tx: 166, ty: 323, hold: 40, kind: 'drag' },
       { cat: 2, container: 2, gx: -11, gy: -3, tx: 306, ty: 349, hold: 40, kind: 'drag', wx: 243, wy: 221 },
-      { cat: 1, container: 1, gx: 8, gy: -2, tx: 250, ty: 184, hold: 60, kind: 'drag' },
+      { cat: 1, container: 1, gx: 8, gy: -2, tx: 250, ty: 184, hold: 40, kind: 'drag' },
     ],
     tutorial: true,
     furniture: [
@@ -52,7 +52,7 @@ export const HANDMADE: RoomDef[] = [
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
       { cat: 0, container: 0, gx: 13, gy: -4, tx: 153, ty: 319, hold: 40, kind: 'drag' },
-      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 391, hold: 60, kind: 'drag', wx: 263, wy: 218 },
+      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 391, hold: 40, kind: 'drag', wx: 263, wy: 218 },
       { cat: 1, container: 1, gx: -8, gy: -2, tx: 172, ty: 110, hold: 40, kind: 'drag' },
     ],
     furniture: [
@@ -87,9 +87,9 @@ export const HANDMADE: RoomDef[] = [
     par: 3,
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
-      { cat: 0, container: 0, gx: 15, gy: -4, tx: 190, ty: 285, hold: 60, kind: 'drag' },
+      { cat: 0, container: 0, gx: 15, gy: -4, tx: 190, ty: 285, hold: 40, kind: 'drag' },
       { cat: 2, container: 2, gx: -11, gy: -3, tx: 312, ty: 354, hold: 40, kind: 'drag', wx: 255, wy: 233 },
-      { cat: 1, container: 1, gx: -10, gy: -3, tx: 195, ty: 93, hold: 60, kind: 'drag' },
+      { cat: 1, container: 1, gx: -10, gy: -3, tx: 195, ty: 93, hold: 40, kind: 'drag' },
     ],
     furniture: [
       { type: 'bookcase', x0: 0, x1: 118, y: 322 },

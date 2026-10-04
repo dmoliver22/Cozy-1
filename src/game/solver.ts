@@ -4,7 +4,7 @@
 // the number of nudges it needed becomes the room's par.
 
 import { breedArea } from '../physics/breeds';
-import { LIFT, Session } from './session';
+import { Session } from './session';
 import type { PlanStep, RoomDef } from './room';
 
 export interface SolveResult {
@@ -46,7 +46,7 @@ interface Gesture {
   wy?: number;
 }
 
-/** Estimate a pleasant cat->container assignment by volume, preferring drops. */
+/** Estimate a pleasant cat->container assignment by volume, slightly preferring drops. */
 export function proposeAssignment(session: Session): number[] {
   const cats = session.cats;
   const cont = session.containers;
@@ -60,9 +60,8 @@ export function proposeAssignment(session: Session): number[] {
     const c = cont[k];
     const ratio = breedArea(cat.breed) / c.capacity;
     let s = -Math.abs(Math.log(ratio / 1.5));
-    const below = c.opening!.y > cat.body.cy + cat.body.p.radius * 0.5;
-    const liftable = cat.body.p.pull * LIFT > 1.05;
-    if (!below && !liftable) s -= 5;
+    // Every cat can be carried, but a drop is still the natural move.
+    if (c.opening!.y < cat.body.cy + cat.body.p.radius * 0.5) s -= 0.15;
     // narrow necks don't take big stiff cats
     const openW = c.opening!.x1 - c.opening!.x0;
     if (openW < cat.body.p.radius * 1.2 && cat.body.p.shape > 0.005) s -= 3;

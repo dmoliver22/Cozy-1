@@ -45,6 +45,9 @@ let nextBodyId = 1;
 export class SoftBody {
   /** How much of a collision push-out may turn into bounce (0 = all, 1 = none). */
   static contactBounceKill = 0.85;
+  /** Damping of the finger's whole-body spring: high, so a lifted cat eases
+   *  up to the finger instead of bobbing like a yo-yo. */
+  static grabDamp = 0.6;
   readonly id: number;
   readonly breed: Breed;
   readonly p: BreedPhysics;
@@ -493,8 +496,9 @@ export class SoftBody {
     vx *= inv / n;
     vy *= inv / n;
     const bodyMax = (g.force * BODY_SHARE * h2) / this.mass;
-    let bx = (g.tx - g.ax - cx) * 0.012 + (g.tvx - vx) * h * 0.08;
-    let by = (g.ty - g.ay - cy) * 0.012 + (g.tvy - vy) * h * 0.08;
+    const kd = SoftBody.grabDamp;
+    let bx = (g.tx - g.ax - cx) * 0.012 + (g.tvx - vx) * h * kd;
+    let by = (g.ty - g.ay - cy) * 0.012 + (g.tvy - vy) * h * kd;
     if (by < 0 && -by > bodyMax * g.lift) by = -bodyMax * g.lift;
     const bl = Math.sqrt(bx * bx + by * by);
     if (bl > bodyMax) {

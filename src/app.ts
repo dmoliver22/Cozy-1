@@ -46,6 +46,8 @@ interface Reveal {
 }
 
 const REVEAL_PER_CAT = 1.25;
+/** Highest a carried cat's grab point may go (world y), so it stays in view. */
+const CARRY_TOP = 40;
 
 export class App {
   readonly canvas = $<HTMLCanvasElement>('game');
@@ -437,9 +439,15 @@ export class App {
     if (!c) return;
     c.t += dt;
     const s = this.session;
+    if (s.complete) {
+      // the reveal and its toasts take over
+      this.setCoach(null);
+      this.coach = null;
+      return;
+    }
     if (c.step === 0) {
       const chonk = s.cats[0];
-      this.setCoach(`Drag ${chonk.name} toward the teacup`);
+      this.setCoach(`Pick up ${chonk.name} and carry them to the teacup`);
       if (!this.renderer.hint && !chonk.grabbed && !chonk.seat && c.t > 0.8) {
         const v = this.renderer.view(chonk);
         const cup = s.containers[0];
@@ -646,8 +654,8 @@ export class App {
         <h2>How to play</h2>
         <p class="sub">Cats are liquid. Prove it.</p>
         <div class="howto">
-          <div><span class="hi">👆</span><span><b>Drag</b> a cat to nudge it. It stretches toward your finger, but most cats are far too lazy to be lifted.</span></div>
-          <div><span class="hi">🫖</span><span>Let it <b>ooze off a shelf</b> and pour into a teacup, boot, box or sink below. If it fits, it sits.</span></div>
+          <div><span class="hi">👆</span><span><b>Drag</b> a cat to pick it up. Every cat can be carried; the big ones are just heavier and stretch on the way.</span></div>
+          <div><span class="hi">🫖</span><span>Let go over a teacup, boot, box or sink and it <b>pours in</b>. If it fits, it sits.</span></div>
           <div><span class="hi">💛</span><span>Snug fits earn <b>cozy points</b>. Every breed pours differently: water, honey, pudding, jelly…</span></div>
           <div><span class="hi">🐾</span><span>Each nudge is a paw. <b>Par</b> is what our cat-solver needed. Undo is always free. There's no way to fail.</span></div>
           <div><span class="hi">☀️</span><span>A <b>new room every morning</b>, the same for everyone. Share your cat faces, not the answer.</span></div>
@@ -846,7 +854,8 @@ export class App {
         g.lx = w.x;
         g.ly = w.y;
         g.lt = now;
-        this.session.moveGrab(w.x, w.y, g.vx, g.vy);
+        // cats can be carried anywhere in the room, but not up under the top bar
+        this.session.moveGrab(w.x, Math.max(w.y, CARRY_TOP), g.vx, w.y > CARRY_TOP ? g.vy : 0);
       }
     });
     const end = (e: PointerEvent): void => {

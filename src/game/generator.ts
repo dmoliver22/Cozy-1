@@ -12,7 +12,8 @@ import { CONTAINERS, FLOOR_Y, WORLD_W, type ContainerPlacement, type ContainerTy
 import type { CatPlacement, DecorPlacement, RoomDef, ThemeId } from './room';
 import { solveRoom } from './solver';
 
-export const GENERATOR_VERSION = 6;
+/** Bump whenever the generator or the physics changes what a morning solves to. */
+export const GENERATOR_VERSION = 7;
 
 interface Span {
   x0: number;

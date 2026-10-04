@@ -11,8 +11,8 @@ import { buildContainer, FLOOR_Y, WORLD_W, type ContainerPlacement, type Prop } 
 import { SoftBody as Body } from '../physics/softbody';
 import { buildRoom, type RoomDef } from './room';
 
-/** Fraction of the finger's force that may point upward (cats are lazy). */
-export const LIFT = 0.55;
+/** Upward share of the finger's strength: enough to lift every cat, with some sag. */
+export const LIFT = 0.8;
 const SETTLE_ENERGY = 400;
 const SETTLE_SPEED2 = 14 * 14;
 const SETTLE_FRAMES = 16;
@@ -441,8 +441,7 @@ export class Session {
   }
 
   fingerForce(cat: Cat): number {
-    const pull = this.mode === 'sandbox' ? Math.max(3, cat.body.p.pull) : cat.body.p.pull;
-    return pull * cat.body.mass * GRAVITY;
+    return cat.body.p.pull * cat.body.mass * GRAVITY;
   }
 
   beginGrab(cat: Cat, wx: number, wy: number): void {
@@ -450,7 +449,7 @@ export class Session {
     if (this.grabbing) this.endGrab();
     this.pushUndo();
     if (this.mode === 'puzzle') this.paws++;
-    cat.body.startGrab(wx, wy, this.fingerForce(cat), this.mode === 'sandbox' ? 0.8 : LIFT);
+    cat.body.startGrab(wx, wy, this.fingerForce(cat), LIFT);
     cat.grabbed = true;
     cat.sinceTouch = 0;
     cat.intent = null;

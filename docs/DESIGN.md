@@ -18,16 +18,36 @@ Tension is the skin's constant line tension; viscosity damps deformation only.
 
 | Breed | Radius | Flow | Tension | Viscosity | Shape | Pull (x weight) | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Kitten | 22 | water | 360 | 3 | 0 | 2.3 | the only cat light enough to carry |
-| Persian | 32 | honey | 680 | 26 | 0 | 1.35 | slow ooze, overflows bowls |
-| Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 1.05 | the hero; sleepy z's when idle |
-| Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 1.6 | holds its shape; resists narrow necks (`slurp` 0.25) |
-| Tabby | 29 | custard | 700 | 8 | 0.0004 | 1.6 | the polite reference cat |
-| Maine Coon | 37 | cloud | 700 | 9 | 0.0003 | 1.7 | compresses to 78% of its area |
-| The Void | 28 | ink | 420 | 5 | 0 | 2.05 | secret; pours into anything |
+| Kitten | 22 | water | 360 | 3 | 0 | 3.2 | zippy; follows the finger closely |
+| Persian | 32 | honey | 680 | 26 | 0 | 2.6 | slow ooze, overflows bowls |
+| Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 2.5 | the hero; heaviest to carry; sleepy z's when idle |
+| Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 2.8 | holds its shape; resists narrow necks (`slurp` 0.25) |
+| Tabby | 29 | custard | 700 | 8 | 0.0004 | 2.8 | the polite reference cat |
+| Maine Coon | 37 | cloud | 700 | 9 | 0.0003 | 2.7 | compresses to 78% of its area |
+| The Void | 28 | ink | 420 | 5 | 0 | 3.0 | secret; pours into anything |
 
-Lift is capped at 55% of the finger's force, so only cats with `pull * 0.55 > 1`
-can be lifted off a surface.
+Every cat can be picked up, in puzzles and in the photo room alike: 80% of the
+finger's force may point upward and every breed has `pull * 0.8 >= 2`. Weight
+shows as lag instead: the chonk takes about 0.9 s to lift 180 units, the kitten
+0.55 s, and heavier cats slide further when you stop. The finger's whole-body
+spring is strongly damped (`SoftBody.grabDamp`) so a lifted cat eases up to the
+finger rather than bobbing.
+
+## Painting and layering
+
+Draw order each frame: cached back layer (room, furniture, decor, container
+insides, paper grain) → cat shadows → bodies of cats that are in a container
+→ container fronts (cached) → those cats' tails and rim paws → free cats (the
+one in your hand last) → effects. A cat counts as "in" a container once 2% of
+it is inside the cavity (or it is seated). Its tail then either drapes over the
+nearer rim (when the body reaches the rim) or curls up out of a roomy container,
+clipped so nothing shows inside the container below the rim line. Tail control
+points are eased relative to the head, so pose changes never pop.
+
+All paint shares one light (`LIGHT`, upper left). Shadows use `shadowOf` (darker,
+nudged toward violet), lights use `lightOf` (lighter, nudged toward yellow),
+lines use `lineOf`. Textures are mid-grey tiles blended with `overlay` /
+`soft-light`, so they modulate any colour without shifting its hue.
 
 ## Seating and cozy points
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BREED_ORDER, type BreedId } from '../src/physics/breeds';
 import { SoftBody } from '../src/physics/softbody';
-import { World } from '../src/physics/world';
+import { GRAVITY, World } from '../src/physics/world';
 import { buildContainer, roomShell } from '../src/game/props';
+import { LIFT } from '../src/game/session';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 
 function dropInto(breed: BreedId, container?: 'teacup' | 'box'): { body: SoftBody; world: World } {
@@ -41,25 +42,30 @@ describe('soft-body cats', () => {
     expect(Array.from(a.y)).toEqual(Array.from(b.y));
   });
 
-  it('a finger cannot lift a sleepy chonk, but can lift a kitten', () => {
-    for (const [breed, liftable] of [
-      ['chonk', false],
-      ['kitten', true],
-    ] as const) {
+  it('every cat can be picked up, heavy cats just rise more slowly', () => {
+    const early: Record<string, number> = {};
+    for (const breed of BREED_ORDER) {
       const world = new World();
       for (const s of roomShell()) world.addStatic(s);
       const body = world.addBody(new SoftBody(breed, 180, 520));
       for (let f = 0; f < 60; f++) world.step();
       body.computeCentroid();
       const startY = body.cy;
-      body.startGrab(body.cx, body.cy - 5, body.p.pull * body.mass * 1100, 0.55);
-      for (let f = 0; f < 120; f++) {
+      body.startGrab(body.cx, body.cy - 5, body.p.pull * body.mass * GRAVITY, LIFT);
+      for (let f = 1; f <= 120; f++) {
         body.grab!.tx = 180;
         body.grab!.ty = startY - 200;
         world.step();
+        if (f === 24) {
+          body.computeCentroid();
+          early[breed] = startY - body.cy;
+        }
       }
       body.computeCentroid();
-      expect(startY - body.cy > 30).toBe(liftable);
+      // carried up to the finger, without bobbing past it
+      expect(startY - body.cy).toBeGreaterThan(185);
+      expect(startY - body.cy).toBeLessThan(215);
     }
+    expect(early.kitten).toBeGreaterThan(early.chonk + 10);
   });
 });

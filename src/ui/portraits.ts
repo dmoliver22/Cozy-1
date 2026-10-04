@@ -5,6 +5,7 @@ import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
 import { roundedBox } from '../physics/shapes';
 import { CatView, drawCat } from '../render/catArt';
+import { contactShadow } from '../render/paint';
 
 const cache = new Map<string, HTMLCanvasElement>();
 
@@ -32,14 +33,19 @@ export function catPortrait(breed: BreedId, w: number, h: number, opts: { silhou
   const s = Math.min((w * 0.62) / (r * 2.6), (h * 0.72) / (r * 2.2));
   ctx.setTransform(dpr * s, 0, 0, dpr * s, (dpr * w) / 2, dpr * (h - 6));
   // soft floor shadow
-  ctx.fillStyle = 'rgba(62,58,79,0.12)';
-  ctx.beginPath();
-  ctx.ellipse(0, 2, r * 1.4, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
+  if (!opts.silhouette) contactShadow(ctx, 0, 0, r * 1.15, 0.3, 0.8);
+  else {
+    ctx.fillStyle = 'rgba(62,58,79,0.12)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, r * 1.4, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   drawCat(ctx, body, view, {
     expression: opts.happy ? 'happy' : BREEDS[breed].look.persona === 'sleepy' ? 'sleepy' : 'open',
     look: 0,
-    rimY: null,
+    rim: null,
+    seated: false,
+    resting: true,
     purr: 0,
     grabbed: false,
     glow: 0,
