@@ -167,6 +167,40 @@ export interface Cavity {
   floorY: number;
   minX: number;
   maxX: number;
+  /** The hollow's outline (rim row, right face, floor, left face) as a simplified clockwise polygon, x/y pairs. */
+  outline: Float32Array;
+}
+
+/** Indices of an open polyline worth keeping (Ramer-Douglas-Peucker), both ends included. */
+function simplifyLine(xs: readonly number[], ys: readonly number[], tol: number): number[] {
+  const n = xs.length;
+  if (n <= 2) return xs.map((_, i) => i);
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const stack = [0, n - 1];
+  while (stack.length) {
+    const b = stack.pop()!;
+    const a = stack.pop()!;
+    const dx = xs[b] - xs[a];
+    const dy = ys[b] - ys[a];
+    const len = Math.hypot(dx, dy) || 1e-9;
+    let md = tol;
+    let mi = -1;
+    for (let k = a + 1; k < b; k++) {
+      const d = Math.abs((xs[k] - xs[a]) * dy - (ys[k] - ys[a]) * dx) / len;
+      if (d > md) {
+        md = d;
+        mi = k;
+      }
+    }
+    if (mi >= 0) {
+      keep[mi] = 1;
+      stack.push(a, mi, mi, b);
+    }
+  }
+  const out: number[] = [];
+  for (let k = 0; k < n; k++) if (keep[k]) out.push(k);
+  return out;
 }
 
 /** Scan the inner faces of the walls from the parts, starting at (cx, yTop) inside the hollow. */
@@ -203,7 +237,19 @@ export function scanCavity(parts: readonly Part[], cx: number, yTop: number): Ca
     if (d(cx, m) > 0) a = m;
     else b = m;
   }
-  return { y0: yTop, step, n: xl.length, xl: Float32Array.from(xl), xr: Float32Array.from(xr), floorY: (a + b) / 2, minX: Math.min(...xl), maxX: Math.max(...xr) };
+  const floorY = (a + b) / 2;
+  const n = xl.length;
+  const outline: number[] = [];
+  if (n > 0) {
+    // the right face down to the floor, then the left face back up, each simplified
+    const rx = [...xr, xr[n - 1]];
+    const ry = [...xr.map((_, i) => yTop + i * step), floorY];
+    const lx = [xl[n - 1], ...xl.slice().reverse()];
+    const ly = [floorY, ...xl.map((_, i) => yTop + (n - 1 - i) * step)];
+    for (const k of simplifyLine(rx, ry, 0.03)) outline.push(rx[k], ry[k]);
+    for (const k of simplifyLine(lx, ly, 0.03)) outline.push(lx[k], ly[k]);
+  }
+  return { y0: yTop, step, n, xl: Float32Array.from(xl), xr: Float32Array.from(xr), floorY, minX: Math.min(...xl), maxX: Math.max(...xr), outline: Float32Array.from(outline) };
 }
 
 /** Centre and half width of the hollow at height y. */
@@ -214,11 +260,10 @@ export function cavityAt(c: Cavity, y: number): { cx: number; hw: number } {
 
 /** Add the hollow (rim row down to the floor) to the current path, clockwise. */
 export function cavityPath(ctx: Ctx, c: Cavity): void {
-  ctx.moveTo(c.xr[0], c.y0);
-  for (let i = 1; i < c.n; i++) ctx.lineTo(c.xr[i], c.y0 + i * c.step);
-  ctx.lineTo(c.xr[c.n - 1], c.floorY);
-  ctx.lineTo(c.xl[c.n - 1], c.floorY);
-  for (let i = c.n - 1; i >= 0; i--) ctx.lineTo(c.xl[i], c.y0 + i * c.step);
+  const o = c.outline;
+  if (o.length < 6) return;
+  ctx.moveTo(o[0], o[1]);
+  for (let i = 2; i < o.length; i += 2) ctx.lineTo(o[i], o[i + 1]);
   ctx.closePath();
 }
 
@@ -388,7 +433,6 @@ const outlineCache = new WeakMap<readonly GlassPart[], Path2D>();
 export function unionOutline(parts: readonly GlassPart[]): Path2D {
   const hit = outlineCache.get(parts);
   if (hit) return hit;
-  const __t0 = performance.now();
   const EPS = 1e-3;
   const boxes = parts.map((p) => partsBox([p]));
   const pieces: Piece[] = [];
@@ -458,21 +502,13 @@ export function unionOutline(parts: readonly GlassPart[]): Path2D {
           best = k;
         }
       }
-      if (best < 0 || Math.hypot(S[s0][0] - ex, S[s0][1] - ey) <= bd) {
-        const dc = Math.hypot(S[s0][0] - ex, S[s0][1] - ey);
-        const gg = globalThis as any;
-        gg.__olLog = gg.__olLog ?? [];
-        gg.__olLog.push({ n: pieces.length, close: +dc.toFixed(4), nextGap: best < 0 ? null : +bd.toFixed(4) });
-        break;
-      }
-      { const gg = globalThis as any; gg.__olJoin = gg.__olJoin ?? []; gg.__olJoin.push(+bd.toFixed(4)); }
+      if (best < 0 || Math.hypot(S[s0][0] - ex, S[s0][1] - ey) <= bd) break;
       used[best] = 1;
       cur = best;
     }
     path.closePath();
   }
   outlineCache.set(parts, path);
-  (globalThis as any).__olMs = ((globalThis as any).__olMs ?? 0) + performance.now() - __t0;
   return path;
 }
 
@@ -692,8 +728,8 @@ export function bezierPts(x0: number, y0: number, x1: number, y1: number, x2: nu
   return out;
 }
 
-/** A closed outline `w` wide around a polyline of centre points, with round ends. */
-export function ribbonPath(ctx: Ctx, pts: [number, number][], w: number): void {
+/** A closed outline `w` wide around a polyline of centre points, with round ends (a new path unless `begin` is false). */
+export function ribbonPath(ctx: Ctx, pts: [number, number][], w: number, begin = true): void {
   const n = pts.length;
   const nx: number[] = [];
   const ny: number[] = [];
@@ -705,7 +741,7 @@ export function ribbonPath(ctx: Ctx, pts: [number, number][], w: number): void {
     ny.push((bx - ax) / l);
   }
   const h = w / 2;
-  ctx.beginPath();
+  if (begin) ctx.beginPath();
   ctx.moveTo(pts[0][0] + nx[0] * h, pts[0][1] + ny[0] * h);
   for (let i = 1; i < n; i++) ctx.lineTo(pts[i][0] + nx[i] * h, pts[i][1] + ny[i] * h);
   const ae = Math.atan2(ny[n - 1], nx[n - 1]);

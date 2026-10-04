@@ -33,6 +33,7 @@ import {
   sparkle,
   texPaint,
   tube,
+  unionOutline,
   type Cavity,
   type GlassPart,
   type Part,
@@ -333,36 +334,50 @@ function rightFace(c: Cavity, y0: number): [number, number][] {
 // ---------------------------------------------------------------------------
 // Small glass details
 
-/** A glass handle or loop along a centre line: drawn behind the walls it joins. */
-function glassHandle(ctx: Ctx, g: Geo, pts: [number, number][], w: number, tint: string): void {
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]);
-  const b: Box = { x0: Math.min(...xs) - w, y0: Math.min(...ys) - w, x1: Math.max(...xs) + w, y1: Math.max(...ys) + w };
-  const pb = b;
+/** Glass handles or loops along centre lines (one glass shape): drawn behind the walls they join. */
+function glassHandle(ctx: Ctx, g: Geo, lines: [number, number][][], w: number, tint: string): void {
+  const all = lines.flat();
+  const b: Box = {
+    x0: Math.min(...all.map((p) => p[0])) - w,
+    y0: Math.min(...all.map((p) => p[1])) - w,
+    x1: Math.max(...all.map((p) => p[0])) + w,
+    y1: Math.max(...all.map((p) => p[1])) + w,
+  };
   ctx.save();
-  // keep out of the walls, so the handle joins them from behind
-  ctx.beginPath();
-  ctx.moveTo(pb.x0 - 60, pb.y0 - 60);
-  ctx.lineTo(pb.x0 - 60, pb.y1 + 60);
-  ctx.lineTo(pb.x1 + 60, pb.y1 + 60);
-  ctx.lineTo(pb.x1 + 60, pb.y0 - 60);
-  ctx.closePath();
-  for (const p of g.solid) partPath(ctx, p);
-  ctx.clip();
-  glassShape(ctx, () => ribbonPath(ctx, pts, w), b, tint, 0.34);
-  // a highlight running along the lit side of the handle
+  // keep out of the walls, so the handles join them from behind
+  const clip = new Path2D();
+  for (const pts of lines) {
+    const x0 = Math.min(...pts.map((p) => p[0])) - w - 3;
+    const y0 = Math.min(...pts.map((p) => p[1])) - w - 3;
+    clip.rect(x0, y0, Math.max(...pts.map((p) => p[0])) + w + 3 - x0, Math.max(...pts.map((p) => p[1])) + w + 3 - y0);
+  }
+  clip.addPath(unionOutline(g.solid));
+  ctx.clip(clip, 'evenodd');
+  glassShape(
+    ctx,
+    () => {
+      ctx.beginPath();
+      for (const pts of lines) ribbonPath(ctx, pts, w, false);
+    },
+    b,
+    tint,
+    0.34,
+  );
+  // a highlight running along the lit side of each handle
   const d = lightDir(ctx);
   ctx.strokeStyle = 'rgba(255,255,255,0.75)';
   ctx.lineWidth = 0.8;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  const k0 = Math.floor(pts.length * 0.15);
-  const k1 = Math.ceil(pts.length * 0.75);
-  for (let i = k0; i < k1; i++) {
-    const x = pts[i][0] + d.x * w * 0.22;
-    const y = pts[i][1] + d.y * w * 0.22;
-    if (i === k0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  for (const pts of lines) {
+    const k0 = Math.floor(pts.length * 0.15);
+    const k1 = Math.ceil(pts.length * 0.75);
+    for (let i = k0; i < k1; i++) {
+      const x = pts[i][0] + d.x * w * 0.22;
+      const y = pts[i][1] + d.y * w * 0.22;
+      if (i === k0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
   }
   ctx.stroke();
   ctx.restore();
@@ -483,7 +498,7 @@ const teacup: Glass = {
   rim: [0, -56, 35, 4.5],
   gold: true,
   back: (ctx, l) => saucer(ctx, l.base),
-  front: (ctx, l, g) => glassHandle(ctx, g, bezierPts(35, -50.5, 48, -55, 54, -32, 29.5, -25, 20), 6.2, l.base),
+  front: (ctx, l, g) => glassHandle(ctx, g, [bezierPts(35, -50.5, 48, -55, 54, -32, 29.5, -25, 20)], 6.2, l.base),
   frontOver: (ctx, _l, g) => {
     aroundGlass(g, -40, 9, 0.2, (x, y, s, f) => etchedFlower(ctx, x, y, s, f));
   },
@@ -498,7 +513,7 @@ const mug: Glass = {
   skip: [3],
   thick: [0],
   rim: [0, -64, 27, 4],
-  front: (ctx, l, g) => glassHandle(ctx, g, bezierPts(28, -57, 47, -59.5, 50, -23, 28, -20, 20), 7.4, l.base),
+  front: (ctx, l, g) => glassHandle(ctx, g, [bezierPts(28, -57, 47, -59.5, 50, -23, 28, -20, 20)], 7.4, l.base),
   frontOver: (ctx, l) => {
     // an etched paw print, and a few bubbles in the thick base
     ctx.save();
@@ -562,8 +577,10 @@ function bootFoot(c: Cavity): ShapePart {
     [21, -36],
     ...bezierPts(21, -36, 26, -33.5, 33, -31.6, 39, -30.8, 12).slice(1),
     ...bezierPts(39, -30.8, 44, -30, 46.6, -25, 46.6, -17, 12).slice(1),
-    [46.6, -5.5],
-    [face[face.length - 1][0], -5.5],
+    [46.6, -9],
+    // round in to meet the sole's rounded end
+    ...bezierPts(46.6, -9, 46.6, -5.8, 45, -5.6, 45, -3.5, 8).slice(1),
+    [face[face.length - 1][0], -3.5],
   ];
   for (let i = face.length - 1; i >= 0; i--) pts.push([face[i][0], face[i][1]]);
   return shapePart(pts);
@@ -887,9 +904,14 @@ const pot: Glass = {
 const basket: Glass = {
   thick: [0],
   rim: [0, -72, 56, 5],
-  front: (ctx, l, g) => {
-    for (const s of [-1, 1]) glassHandle(ctx, g, bezierPts(s * 59, -63, s * 70, -64, s * 71, -45, s * 58, -44, 14), 4.4, l.base);
-  },
+  front: (ctx, l, g) =>
+    glassHandle(
+      ctx,
+      g,
+      [-1, 1].map((s) => bezierPts(s * 59, -63, s * 70, -64, s * 71, -45, s * 58, -44, 14)),
+      4.4,
+      l.base,
+    ),
   foot: [0, 53, 2],
   ext: [-74, -86, 74, 3],
 };
@@ -1075,8 +1097,9 @@ function slipperVamp(c: Cavity): ShapePart {
   }
   pts.push(...bezierPts(2, -30, 8, -30.5, 15, -29.6, 22, -28.2, 10).slice(1));
   pts.push(...bezierPts(22, -28.2, 31, -26.6, 40.5, -21.5, 42.8, -14, 14).slice(1));
-  pts.push(...bezierPts(42.8, -14, 43.6, -10.5, 43.4, -7.5, 42.4, -4.5, 8).slice(1));
-  pts.push([face[face.length - 1][0], -4.5]);
+  // round the toe in to meet the sole's rounded end
+  pts.push(...bezierPts(42.8, -14, 43.5, -11.7, 40, -5.6, 40, -3, 12).slice(1));
+  pts.push([face[face.length - 1][0], -3]);
   for (let i = face.length - 1; i >= 1; i--) pts.push([face[i][0], face[i][1]]);
   return shapePart(pts);
 }

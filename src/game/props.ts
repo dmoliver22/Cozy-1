@@ -88,13 +88,9 @@ export const CONTAINERS: Record<ContainerType, ContainerSpec> = {
   box: {
     name: 'cardboard box',
     material: 'cardboard',
-    parts: [
-      box(-48, -6, 48, 0, 3),
-      cap(-46, -64, -46, -4, 3.5),
-      cap(46, -64, 46, -4, 3.5),
-      cap(-47, -66, -64, -84, 2.5),
-      cap(47, -66, 64, -84, 2.5),
-    ],
+    // The open side panes are painted behind the cats, so they have no body:
+    // as walls they jutted out over anything beside the box and pinned it.
+    parts: [box(-48, -6, 48, 0, 3), cap(-46, -64, -46, -4, 3.5), cap(46, -64, 46, -4, 3.5)],
     interior: [P(-42.5, -64), P(42.5, -64), P(42.5, -6), P(-42.5, -6)],
     opening: [-42, 42, -68],
     bounds: [-67, -87, 67, 0],

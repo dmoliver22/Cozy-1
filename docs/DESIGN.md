@@ -92,6 +92,12 @@ with the wall inside it. The skin is now solid between nodes too:
 crevice under a teacup and checks every frame for crossed edges and skin inside
 a wall.
 
+Nothing that is painted behind the cats has a body. The glass box's open side
+panes used to be walls jutting out over the floor beside the box; a big cat
+that slumped under one could not be lifted (the finger pulled it straight into
+the overhang). Another test drops every breed beside every container, on both
+sides, and checks it can be lifted straight up.
+
 ## Seating and cozy points
 
 - A cat touching a container commits to an intent: **in** (damped pull toward the

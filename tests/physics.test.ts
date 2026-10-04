@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BREED_ORDER, type BreedId } from '../src/physics/breeds';
+import { BREED_ORDER, BREEDS, type BreedId } from '../src/physics/breeds';
 import { SoftBody } from '../src/physics/softbody';
 import { GRAVITY, World } from '../src/physics/world';
-import { buildContainer, roomShell } from '../src/game/props';
+import { CONTAINER_TYPES, buildContainer, roomShell } from '../src/game/props';
 import { LIFT, Session } from '../src/game/session';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 import type { StaticShape } from '../src/physics/shapes';
@@ -92,6 +92,55 @@ describe('soft-body cats', () => {
     for (let f = 0; f < 30; f++) s.step();
     expect(Array.from(b.x)).toEqual(x);
     expect(Array.from(b.y)).toEqual(y);
+  });
+
+  it('a cat that slumped against any container can still be lifted straight up', () => {
+    // The glass box's open flaps used to jut out over anything beside the box
+    // and pin a big cat underneath when you tried to lift it.
+    const stuck: string[] = [];
+    for (const type of CONTAINER_TYPES) {
+      const shapes = buildContainer({ type, x: 190, y: 560 }).shapes;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      for (const st of shapes) {
+        for (let i = 0; i < st.n; i++) {
+          minX = Math.min(minX, st.xs[i] - st.radius);
+          maxX = Math.max(maxX, st.xs[i] + st.radius);
+        }
+      }
+      for (const breed of BREED_ORDER) {
+        for (const side of [-1, 1]) {
+          const r = BREEDS[breed].physics.radius;
+          const s = new Session(
+            {
+              id: 'lift',
+              name: 'lift',
+              theme: 'kitchen',
+              furniture: [],
+              decor: [],
+              containers: [{ type, x: 190, y: 560 }],
+              cats: [{ breed, x: side < 0 ? minX - r * 0.8 : maxX + r * 0.8, y: 400, name: 'c' }],
+            },
+            { settleFrames: 0 },
+          );
+          const cat = s.cats[0];
+          const b = cat.body;
+          for (let f = 0; f < 150; f++) s.step();
+          b.computeCentroid();
+          const sx = b.cx;
+          const sy = b.cy;
+          const bottom = (): number => Math.max(...Array.from(b.y));
+          const bot0 = bottom();
+          s.beginGrab(cat, sx, sy);
+          for (let f = 0; f < 90; f++) {
+            s.moveGrab(sx, Math.max(sy - 6 * f, sy - 200), 0, f < 33 ? -360 : 0);
+            s.step();
+          }
+          if (bot0 - bottom() < 60) stuck.push(`${breed} beside ${type} (${side < 0 ? 'left' : 'right'})`);
+        }
+      }
+    }
+    expect(stuck).toEqual([]);
   });
 
   it('a cat dragged hard against a thin wall never folds through itself or the wall', () => {
