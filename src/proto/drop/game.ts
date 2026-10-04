@@ -1,8 +1,8 @@
 // Cat Drop: the simulation. One squishy cat falls down the endless house,
 // steered toward a finger's x and hopping on a tap; it eats fish and grows,
-// squeezes through glass tubes, bounces on cushions, and stays ahead of a
-// vacuum cleaner coming down the shaft. Headless (no DOM): the view reads the
-// state and drains `events` for sounds and effects.
+// squeezes through glass tubes, bounces on cushions, and stays ahead of bath
+// time: a wall of soap foam creeping down the shaft. Headless (no DOM): the
+// view reads the state and drains `events` for sounds and effects.
 
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { SoftBody } from '../../physics/softbody';
@@ -34,15 +34,15 @@ export const TUNE = {
   /** Points per fish (times the size multiplier). */
   fishPoints: 10,
   goldenPoints: 50,
-  /** Vacuum: start gap, start speed, speed gained per second, leash, delay. */
-  vacStartGap: 760,
-  vacSpeed: 150,
-  vacAccel: 2.0,
-  vacLeash: 1500,
-  vacDelay: 1.6,
+  /** Bath time (the foam): start gap, start speed, speed gained per second, leash, delay. */
+  bathStartGap: 760,
+  bathSpeed: 150,
+  bathAccel: 2.0,
+  bathLeash: 1500,
+  bathDelay: 1.6,
   /** Seconds without new depth before the cat gets a helping nudge. */
   stuckAfter: 2.4,
-  /** How close the nozzle gets before it has you (it then hovers and sucks). */
+  /** How close the foam's edge gets before it has you (it then billows down over the cat). */
   catchGap: 56,
   /** Seconds without any new depth before a stuck cat is popped free. */
   rescueAfter: 5,
@@ -53,10 +53,10 @@ export const TUNE = {
 /** How much of a cushion's height its squash takes (art and collider agree). */
 export const CUSHION_GIVE = 0.75;
 
-/** How far off the middle a cat can be sucked in (the drawn mouth is 276 wide). */
-const SLURP_SPAN = 96;
+/** The bath, once it has the cat (seconds): the foam billows down over it, holds, and settles back. */
+const SOAK = { cover: 0.32, hold: 0.58, settle: 1.05, sploosh: 0.2, sneeze: 1.3, end: 1.75 };
 
-export type Phase = 'ready' | 'play' | 'slurp' | 'over';
+export type Phase = 'ready' | 'play' | 'soak' | 'over';
 
 export type GameEvent =
   | { t: 'start' }
@@ -69,7 +69,11 @@ export type GameEvent =
   | { t: 'storey'; name: string; index: number }
   | { t: 'nudge' }
   | { t: 'rescue'; x: number; y: number; why: 'stuck' | 'tangled' }
-  | { t: 'slurp' }
+  /** Caught: the foam is coming down over the cat. */
+  | { t: 'soak' }
+  /** The foam swallows the cat: it comes out soaked. */
+  | { t: 'sploosh'; x: number; y: number }
+  | { t: 'sneeze'; x: number; y: number }
   | { t: 'over' };
 
 export interface DropState {
@@ -81,7 +85,10 @@ export interface DropState {
   score: number;
   radius: number;
   mult: number;
-  /** Distance from the vacuum's nozzle down to the cat, in world units and metres. */
+  /** Distance from the foam's edge down to the cat, in world units and metres. */
+  bathGap: number;
+  bathGapM: number;
+  /** The same, by its old name (the chaser used to be a vacuum). */
   vacuumGap: number;
   vacuumGapM: number;
   over: boolean;
@@ -111,18 +118,21 @@ export class DropGame {
   readonly startY: number;
   deepest: number;
   events: GameEvent[] = [];
-  /** The bottom of the vacuum's nozzle (world y), and its speed down the shaft. */
-  vacY: number;
-  vacV = 0;
-  /** Slurp progress (seconds) once caught, and where the cat goes in. */
-  slurpT = 0;
-  slurpX = SHAFT_W / 2;
-  /** The size multiplier when the vacuum got the cat (the cat shrinks as it goes in). */
+  /** The lowest edge of the foam (world y), and its speed down the shaft. */
+  foamY: number;
+  foamV = 0;
+  /** Seconds since the bath got the cat, and whether it is soaked yet. */
+  soakT = 0;
+  soaked = false;
+  /** The foam's edge when it got the cat. */
+  private soakFrom = 0;
+  /** The size multiplier when the bath got the cat. */
   private finalMult = 0;
-  /** Frames since the last hop/bounce/nom (for the face). */
+  /** Frames since the last hop/bounce/nom/sneeze (for the face). */
   sinceHop = 999;
   sinceBoing = 999;
   sinceNom = 999;
+  sinceSneeze = 999;
   /** Storey the cat is in (for "entered the kitchen" toasts). */
   storeyIndex = 0;
   /** The squeeze zone the cat is in, if any. */
@@ -138,7 +148,6 @@ export class DropGame {
   private progressMark = 0;
   private progressFrame = 0;
   private tangles = 0;
-  private hidden = false;
 
   constructor(seed: number, breed: BreedId = 'tabby') {
     this.seed = seed;
@@ -154,7 +163,7 @@ export class DropGame {
     this.deepest = this.cat.cy;
     this.stuckMark = this.cat.cy;
     this.progressMark = this.cat.cy;
-    this.vacY = this.cat.cy - TUNE.vacStartGap;
+    this.foamY = this.cat.cy - TUNE.bathStartGap;
     this.syncChunks(this.cat.cy + 2400);
   }
 
@@ -222,16 +231,21 @@ export class DropGame {
     return y;
   }
 
-  get vacuumGap(): number {
-    return this.catTop() - this.vacY;
+  /** Bottom of the cat (nodes). */
+  catBottom(): number {
+    let y = -Infinity;
+    for (let i = 0; i < this.cat.n; i++) if (this.cat.y[i] > y) y = this.cat.y[i];
+    return y;
   }
 
-  get catHidden(): boolean {
-    return this.hidden;
+  /** How far the foam's edge is above the cat. */
+  get bathGap(): number {
+    return this.catTop() - this.foamY;
   }
 
   state(): DropState {
-    const gap = this.vacuumGap;
+    const gap = Math.round(this.bathGap);
+    const gapM = Math.max(0, Math.round(gap / UNITS_PER_M));
     return {
       phase: this.phase,
       frame: this.frame,
@@ -241,8 +255,10 @@ export class DropGame {
       score: this.score,
       radius: Math.round(this.radius * 100) / 100,
       mult: this.mult,
-      vacuumGap: Math.round(gap),
-      vacuumGapM: Math.max(0, Math.round(gap / UNITS_PER_M)),
+      bathGap: gap,
+      bathGapM: gapM,
+      vacuumGap: gap,
+      vacuumGapM: gapM,
       over: this.phase === 'over',
       breed: this.breed,
       seed: this.seed,
@@ -259,7 +275,7 @@ export class DropGame {
   step(): void {
     const c = this.cat;
     if (this.phase === 'over') {
-      // the cat is in the bag: just the scenery idles on
+      // a soggy cat sits it out: just the scenery idles on
       this.frame++;
       this.animateFish();
       this.animateCushions();
@@ -267,7 +283,7 @@ export class DropGame {
     }
     c.computeCentroid();
     this.syncChunks(c.cy + 2400);
-    if (this.phase === 'slurp') this.slurpStep();
+    if (this.phase === 'soak') this.soakStep();
     else {
       this.applySteer();
       this.applySqueeze();
@@ -275,7 +291,7 @@ export class DropGame {
     this.prevVy = c.vcy;
     this.world.step();
     this.frame++;
-    if (this.phase === 'slurp') this.world.drainImpacts();
+    if (this.phase === 'soak') this.world.drainImpacts();
     c.computeCentroid();
     if (this.phase === 'play' || this.phase === 'ready') {
       this.time += this.phase === 'play' ? FRAME_DT : 0;
@@ -285,7 +301,7 @@ export class DropGame {
       this.trackStorey();
       if (this.phase === 'play') {
         this.trackDepth();
-        this.vacuum();
+        this.bath();
       }
     }
     this.animateFish();
@@ -293,6 +309,7 @@ export class DropGame {
     this.sinceHop++;
     this.sinceBoing++;
     this.sinceNom++;
+    this.sinceSneeze++;
   }
 
   /** Add the statics of newly generated chunks; drop the ones far above. */
@@ -589,76 +606,66 @@ export class DropGame {
     this.events.push({ t: 'nudge' });
   }
 
-  private vacuum(): void {
-    if (this.time < TUNE.vacDelay) return;
-    const gap = this.vacuumGap;
-    const base = TUNE.vacSpeed + TUNE.vacAccel * (this.time - TUNE.vacDelay);
-    const leash = gap > TUNE.vacLeash ? (gap - TUNE.vacLeash) * 1.0 : 0;
-    this.vacV = base + leash;
-    this.vacY += this.vacV * FRAME_DT;
-    if (this.vacuumGap < TUNE.catchGap) this.caught();
+  /** Bath time creeps down the shaft, a little faster all the time, and never far behind. */
+  private bath(): void {
+    if (this.time < TUNE.bathDelay) return;
+    const gap = this.bathGap;
+    const base = TUNE.bathSpeed + TUNE.bathAccel * (this.time - TUNE.bathDelay);
+    const leash = gap > TUNE.bathLeash ? (gap - TUNE.bathLeash) * 1.0 : 0;
+    this.foamV = base + leash;
+    this.foamY += this.foamV * FRAME_DT;
+    if (this.bathGap < TUNE.catchGap) this.caught();
   }
 
   private caught(): void {
     const c = this.cat;
-    this.phase = 'slurp';
-    this.slurpT = 0;
+    this.phase = 'soak';
+    this.soakT = 0;
+    this.soakFrom = this.foamY;
+    this.foamV = 0;
     this.steerX = null;
     c.assistAx = 0;
     c.settleForce = 0;
-    c.shapeMul = 0;
+    c.shapeMul = 1;
+    this.setTension(BREEDS[this.breed].physics.tension);
     this.finalMult = this.mult;
-    c.computeCentroid();
-    // sucked in under the mouth, never past its ends (the wheels)
-    this.slurpX = Math.max(SHAFT_W / 2 - SLURP_SPAN, Math.min(SHAFT_W / 2 + SLURP_SPAN, c.cx));
-    // it stops dead over the cat, and sucks
-    this.vacV = 0;
-    // nothing stands between a cat and that nozzle
-    let bottom = -Infinity;
-    for (let i = 0; i < c.n; i++) if (c.y[i] > bottom) bottom = c.y[i];
-    for (const ch of this.level.chunks) {
-      if (ch.y1 < this.vacY - 120 || ch.y0 > bottom + 60) continue;
-      this.world.removeStaticsOfProp(ch.id);
-    }
-    this.events.push({ t: 'slurp' });
+    this.events.push({ t: 'soak' });
   }
 
   /**
-   * Sucked up into the nozzle like spaghetti: the closer a bit of cat is to
-   * the mouth, the harder it is pulled (so the cat stretches), and what has
-   * gone in is drawn to the middle of the mouth; the cat shrinks as it goes.
+   * Bath time has the cat: the foam billows down over it, holds a moment and
+   * settles back up, leaving a soaked cat. Foam is thick: the cat hangs in it,
+   * barely sinking, and every motion soon dies away. Then a little sneeze.
    */
-  private slurpStep(): void {
+  private soakStep(): void {
     const c = this.cat;
-    this.slurpT += FRAME_DT;
-    // a little shudder as it sucks
-    this.vacY += Math.sin(this.slurpT * 40) * 0.6;
-    const mouth = this.vacY;
-    this.slurpX += (SHAFT_W / 2 - this.slurpX) * 0.02;
-    const pull = 260 + this.slurpT * 1400;
+    const t = (this.soakT += FRAME_DT);
+    // where the foam's edge goes: over the cat, then back up just above it
+    const cover = this.catBottom() + 34;
+    const rest = this.catTop() - 70;
+    if (t < SOAK.cover) this.foamY = this.soakFrom + (cover - this.soakFrom) * easeOut(t / SOAK.cover);
+    else if (t < SOAK.hold) this.foamY = cover;
+    else if (t < SOAK.settle) this.foamY = cover + (rest - cover) * easeInOut((t - SOAK.hold) / (SOAK.settle - SOAK.hold));
+    else this.foamY = rest;
     for (let i = 0; i < c.n; i++) {
-      // in the vacuum's draught gravity no longer counts; the nearer the mouth, the stronger the pull
-      c.vy[i] -= GRAVITY * FRAME_DT;
-      const d = c.y[i] - mouth;
-      const near = Math.max(0, 1 - d / 170);
-      const k = d <= 0 ? 1.4 : Math.max(0.03, near * near);
-      const want = -pull * k;
-      if (c.vy[i] > want) c.vy[i] += (want - c.vy[i]) * 0.3;
-      // sideways, its own momentum dies in the draught and it is drawn in under
-      // the mouth (hardest for what is already inside)
-      const wantX = (this.slurpX - c.x[i]) * (d <= 0 ? 8 : 3);
-      c.vx[i] += (wantX - c.vx[i]) * (d <= 0 ? 0.35 : 0.12);
+      c.vy[i] -= GRAVITY * FRAME_DT * 0.82;
+      c.vx[i] *= 0.86;
+      c.vy[i] *= 0.86;
     }
     c.wake();
-    if (this.slurpT > 0.45) {
-      const nr = c.p.radius * 0.975;
-      if (nr > 5) c.resize(nr);
+    if (!this.soaked && t >= SOAK.sploosh) {
+      this.soaked = true;
+      c.computeCentroid();
+      this.events.push({ t: 'sploosh', x: c.cx, y: c.cy });
     }
-    let bottom = -Infinity;
-    for (let i = 0; i < c.n; i++) if (c.y[i] > bottom) bottom = c.y[i];
-    if ((bottom < mouth - 2 && this.slurpT > 0.5) || this.slurpT > 2) {
+    if (t >= SOAK.sneeze && t - FRAME_DT < SOAK.sneeze) {
+      c.computeCentroid();
+      c.kick(0, -70);
+      this.sinceSneeze = 0;
+      this.events.push({ t: 'sneeze', x: c.cx, y: this.catTop() });
+    }
+    if (t >= SOAK.end) {
       this.phase = 'over';
-      this.hidden = true;
       this.events.push({ t: 'over' });
     }
   }
@@ -750,3 +757,6 @@ export function distToRing(b: SoftBody, px: number, py: number): number {
   const d = Math.sqrt(best) - 2.5;
   return inside ? -d : d;
 }
+
+const easeOut = (u: number): number => 1 - (1 - u) ** 3;
+const easeInOut = (u: number): number => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);

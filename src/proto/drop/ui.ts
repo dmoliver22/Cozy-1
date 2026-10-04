@@ -1,4 +1,4 @@
-// Cat Drop: the HUD (depth, fish and size, score, how far above the vacuum
+// Cat Drop: the HUD (depth, fish and size, score, how far above bath time
 // is), a toast naming each room as the cat drops into it, and the start and
 // end cards.
 
@@ -18,7 +18,24 @@ const BLURB: Partial<Record<BreedId, string>> = {
 };
 
 const FISH_ICON = `<svg viewBox="0 0 24 16" width="22" height="15" aria-hidden="true"><path d="M3 8c3-5 10-6 15-2l4-3-1 5 1 5-4-3c-5 4-12 3-15-2Z" fill="#8FB3D9" stroke="#55739A" stroke-width="1.2" stroke-linejoin="round"/><circle cx="15.5" cy="7" r="1.2" fill="#3E3A4F"/></svg>`;
-const VAC_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 2v8" stroke="#8E9AA9" stroke-width="2.4" stroke-linecap="round"/><rect x="7" y="8" width="10" height="7" rx="3" fill="#E9DCC4" stroke="#B9A58E"/><rect x="2.5" y="14.5" width="19" height="6.5" rx="3" fill="#D8695F" stroke="#A9493F"/><circle cx="8" cy="17.6" r="1.6" fill="#FFE6A0"/><circle cx="16" cy="17.6" r="1.6" fill="#FFE6A0"/></svg>`;
+/** Soap bubbles, white with a rainbow sheen (a pile of suds). */
+const SUDS = `<defs><radialGradient id="dSud" cx="36%" cy="32%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#F5F1FC"/><stop offset="1" stop-color="#D6CCEE"/></radialGradient><linearGradient id="dSheen" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#F6A8C4"/><stop offset=".35" stop-color="#FADE8C"/><stop offset=".65" stop-color="#96E2BE"/><stop offset="1" stop-color="#8CBEF6"/></linearGradient></defs>`;
+function sud(x: number, y: number, r: number): string {
+  return `<circle cx="${x}" cy="${y}" r="${r}" fill="url(#dSud)" stroke="#B8ACDA" stroke-width="${Math.max(0.35, r * 0.09)}"/><path d="M${x - r * 0.72} ${y + r * 0.1}A${r * 0.74} ${r * 0.74} 0 0 1 ${x + r * 0.05} ${y - r * 0.72}" stroke="url(#dSheen)" stroke-width="${r * 0.16}" fill="none" stroke-linecap="round" opacity=".75"/><ellipse cx="${x - r * 0.36}" cy="${y - r * 0.38}" rx="${r * 0.2}" ry="${r * 0.12}" transform="rotate(-40 ${x - r * 0.36} ${y - r * 0.38})" fill="#fff"/>`;
+}
+const BATH_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${SUDS}${sud(8.6, 14.2, 6)}${sud(16.6, 15.6, 4.6)}${sud(14.4, 7.4, 3.6)}${sud(20.4, 7.8, 1.8)}</svg>`;
+
+/** A cat's face just out of the bath: damp and droopy, suds on its head, drips under its chin. */
+function soakedFace(breed: BreedId, size: number): string {
+  const drip = (x: number, y: number, s: number): string => `<path d="M${x} ${y}q${s * 0.9} ${s * 1.5} 0 ${s * 2.1}q-${s * 0.9} -${s * 0.6} 0 -${s * 2.1}Z" fill="#A6CCF0"/>`;
+  const overlay = `<svg class="suds" width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true">${SUDS}
+    <path d="M6.2 12.4q.4-2.4 2.2-3.6M5.6 16.8q-.3-1.2 0-2.2" stroke="#fff" stroke-width=".9" fill="none" stroke-linecap="round" opacity=".7"/>
+    ${drip(9.6, 24.6, 1.1)}${drip(18.6, 24.9, 0.9)}${drip(14, 25.4, 0.7)}
+    ${sud(10.6, 6.6, 2.9)}${sud(17.4, 6.8, 2.6)}${sud(14, 5.1, 3.5)}${sud(12.2, 2.4, 2)}${sud(15.9, 2.6, 1.7)}
+    ${sud(24.4, 20.6, 2.1)}${sud(25.6, 17.9, 1.3)}${sud(3.6, 21.2, 1.6)}
+  </svg>`;
+  return `<div class="soaked" style="width:${size}px;height:${size}px">${faceSVG(breed, { mood: 'sleepy', size })}${overlay}</div>`;
+}
 
 export interface UiHandlers {
   play(breed: BreedId, daily: boolean): void;
@@ -35,8 +52,8 @@ export class DropUi {
   private mult!: HTMLElement;
   private score!: HTMLElement;
   private best!: HTMLElement;
-  private vac!: HTMLElement;
-  private vacText!: HTMLElement;
+  private bath!: HTMLElement;
+  private bathText!: HTMLElement;
   private toast!: HTMLElement;
   private startCard!: HTMLElement;
   private overCard!: HTMLElement;
@@ -60,7 +77,7 @@ export class DropUi {
         <div class="spacer"></div>
         <div class="pill" id="dScore" aria-label="Score"><small>score</small><span class="num">0</span></div>
       </div>
-      <div class="drop-vac" id="dVac" aria-live="polite">${VAC_ICON}<span id="dVacText">–</span></div>
+      <div class="drop-bath" id="dBath">${BATH_ICON}<span class="sr">Bath time is </span><span id="dBathText">–</span><span class="sr"> above</span></div>
       <div class="drop-best" id="dBest"></div>
       <div class="drop-toast" id="dToast"></div>
       <div class="drop-btns">
@@ -69,7 +86,7 @@ export class DropUi {
       </div>
       <div class="card drop-card" id="dStart" role="dialog" aria-label="Cat Drop">
         <h2>Cat Drop</h2>
-        <p>Drag to steer, tap to bounce. Eat fish to get chonkier. Stay ahead of the vacuum!</p>
+        <p>Drag to steer, tap to bounce. Eat fish to get chonkier. Stay ahead of bath time!</p>
         <div class="breeds" role="radiogroup" aria-label="Pick a cat">${BREED_CHOICES.map((b) => breedButton(b, b === breed)).join('')}</div>
         <div class="flow" id="dFlow"></div>
         <div class="row">
@@ -78,8 +95,8 @@ export class DropUi {
         </div>
         <div class="bestline" id="dStartBest"></div>
       </div>
-      <div class="card drop-card" id="dOver" role="dialog" aria-label="Slurped">
-        <h2>Slurped!</h2>
+      <div class="card drop-card" id="dOver" role="dialog" aria-label="Bath time">
+        <h2>Bath time!</h2>
         <div class="face" id="dOverFace"></div>
         <div class="stats">
           <div><b id="dOverDepth">0</b><small>metres</small></div>
@@ -98,8 +115,8 @@ export class DropUi {
     this.mult = $('dMult');
     this.score = $('dScore').querySelector('.num') as HTMLElement;
     this.best = $('dBest');
-    this.vac = $('dVac');
-    this.vacText = $('dVacText');
+    this.bath = $('dBath');
+    this.bathText = $('dBathText');
     this.toast = $('dToast');
     this.startCard = $('dStart');
     this.overCard = $('dOver');
@@ -156,7 +173,7 @@ export class DropUi {
     $('dOverScore').textContent = String(s.score);
     $('dOverBest').textContent = newBest ? 'New best!' : `Best ${best}`;
     $('dOverBest').classList.toggle('new', newBest);
-    $('dOverFace').innerHTML = faceSVG(s.breed, { mood: 'sleepy', size: 54 });
+    $('dOverFace').innerHTML = soakedFace(s.breed, 64);
     this.overCard.classList.add('show');
     this.root.classList.add('menu');
   }
@@ -165,8 +182,8 @@ export class DropUi {
     this.best.textContent = best > 0 ? `${daily ? 'daily best' : 'best'} ${best}` : '';
   }
 
-  update(s: DropState, vacOnScreen: boolean): void {
-    const key = `${s.depth}|${s.fish}|${s.mult}|${s.score}|${s.vacuumGapM}|${vacOnScreen}|${s.phase}`;
+  update(s: DropState, foamOnScreen: boolean): void {
+    const key = `${s.depth}|${s.fish}|${s.mult}|${s.score}|${s.bathGapM}|${foamOnScreen}|${s.phase}`;
     if (key === this.last) return;
     this.last = key;
     this.depth.textContent = String(s.depth);
@@ -175,11 +192,11 @@ export class DropUi {
     this.mult.classList.toggle('big', s.mult >= 1.4);
     this.score.textContent = String(s.score);
     const playing = s.phase === 'play';
-    this.vac.classList.toggle('show', playing && !vacOnScreen);
-    this.vacText.textContent = `${s.vacuumGapM} m`;
-    const close = s.vacuumGapM < 9;
-    this.vac.classList.toggle('close', close);
-    this.vac.classList.toggle('near', !close && s.vacuumGapM < 16);
+    this.bath.classList.toggle('show', playing && !foamOnScreen);
+    this.bathText.textContent = `${s.bathGapM} m`;
+    const close = s.bathGapM < 9;
+    this.bath.classList.toggle('close', close);
+    this.bath.classList.toggle('near', !close && s.bathGapM < 16);
   }
 
   room(name: string): void {

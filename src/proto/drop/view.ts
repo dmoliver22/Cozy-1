@@ -2,7 +2,7 @@
 // the way down the screen, leading a little when it falls fast), the house
 // painted storey by storey into cached canvases a few frames ahead of the
 // camera (blitted 1:1 on device pixels), and the live layers in between:
-// cushions, fish, the cat, glass fronts, the vacuum and effects.
+// cushions, fish, the cat, glass fronts, the bath foam, drizzle and effects.
 
 import { glint, softShadow, type Ctx } from '../../render/paint';
 import type { Expression } from '../../render/catArt';
@@ -10,8 +10,9 @@ import { CatPainter, Lerp, type Stage } from '../kit';
 import { FISH_LEN, SIDE, drawCushion, fishSprite, frontRect, hasFront, paintChunkBack, paintChunkFront, paintFrame, paintGrain, paintRoom } from './art';
 import { Fx } from './fx';
 import type { DropGame } from './game';
+import { drawFoam } from './foam';
 import { SHAFT_W, type Chunk, type Storey } from './level';
-import { drawSuction, drawVacuum } from './vacuum';
+import { drawSoaked, soakedBottom, wetBreed, withBreed } from './soaked';
 
 /** Visible world height we aim for (the shaft fills the width on phones). */
 const MIN_VIEW_H = 700;
@@ -77,9 +78,11 @@ export class DropView {
   private camRow = 0;
   /** Shake (world units) from bumps, decaying. */
   shake = 0;
-  /** Smoothed vacuum y for drawing between physics steps. */
-  private vacDraw = 0;
-  private prevVac = 0;
+  /** The foam's edge between physics steps. */
+  private foamDraw = 0;
+  private prevFoam = 0;
+  /** Drizzle drops, loose bubbles and drips owed (spawned at fractional rates). */
+  private owe = { rain: 0, bubble: 0, drip: 0 };
 
   constructor(readonly stage: Stage) {
     this.ctx = stage.ctx;
@@ -108,7 +111,7 @@ export class DropView {
     this.fx.clear();
     this.camInit = false;
     this.lerp.forget(game.cat);
-    this.vacDraw = this.prevVac = game.vacY;
+    this.foamDraw = this.prevFoam = game.foamY;
   }
 
   screenToWorldX(px: number): number {
@@ -122,7 +125,7 @@ export class DropView {
   /** Remember positions before a physics step (for drawing between steps). */
   beforeStep(game: DropGame): void {
     this.lerp.remember([game.cat]);
-    this.prevVac = game.vacY;
+    this.prevFoam = game.foamY;
   }
 
   // --- Camera ------------------------------------------------------------------
@@ -138,8 +141,8 @@ export class DropView {
       this.camInit = true;
       return;
     }
-    // hold still for the slurp: the vacuum and the cat both in view
-    if (this.camInit && (game.phase === 'slurp' || game.phase === 'over')) {
+    // hold still for the bath: the foam and the cat both in view
+    if (this.camInit && (game.phase === 'soak' || game.phase === 'over')) {
       this.camV *= 0.8;
       this.camY += this.camV * dt;
       return;
@@ -275,7 +278,7 @@ export class DropView {
     cat.computeCentroid();
     const catY = cat.cy;
     const catX = cat.cx;
-    this.vacDraw = this.prevVac + (game.vacY - this.prevVac) * alpha;
+    this.foamDraw = this.prevFoam + (game.foamY - this.prevFoam) * alpha;
     this.follow(game, catY, dt);
     this.shake = Math.max(0, this.shake - dt * 6);
     // pixel-aligned origin for the cached layers
@@ -318,51 +321,69 @@ export class DropView {
     // cushions and fish
     for (const c of chunks) for (const k of c.cushions) drawCushion(ctx, k, this.ppu);
     for (const c of chunks) for (const f of c.fish) if (!f.eaten) this.drawFish(ctx, f.x, f.y, f.golden, f.dir, f.phase);
-    // the cat, with its soft shadow on the wall behind
-    if (!game.catHidden) {
-      const r = cat.p.radius;
-      const slurp = game.phase === 'slurp';
-      if (!slurp) softShadow(ctx, catX + 10, catY + 13, r * 1.05, r * 0.92, 0.12);
-      this.painter.tick(dt);
-      if (slurp) {
-        // being sucked in: whatever is past the mouth is inside the vacuum
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(-SIDE, this.vacDraw + 1, SHAFT_W + SIDE * 2, this.viewH + 400);
-        ctx.clip();
-      }
-      this.painter.draw(ctx, cat, this.pose(game));
-      if (slurp) ctx.restore();
-    }
+    // the cat, with its soft shadow on the wall behind (soaked after bath time)
+    const r = cat.p.radius;
+    softShadow(ctx, catX + 10, catY + 13, r * 1.05, r * 0.92, 0.12);
+    this.painter.tick(dt);
+    if (game.soaked) {
+      withBreed(cat, wetBreed(cat.breed), () => this.painter.draw(ctx, cat, this.pose(game)));
+      drawSoaked(ctx, cat, this.painter.view(cat), this.time, this.ppu);
+    } else this.painter.draw(ctx, cat, this.pose(game));
     // glass over the cat
     for (const c of chunks) {
       const f = this.fronts.get(c.id);
       if (f && !f.tasks.length) this.blit(f);
     }
     this.world();
-    // the vacuum
-    const vy = this.vacDraw;
-    const gap = game.vacuumGap;
-    const danger = Math.max(0, Math.min(1, 1 - (gap - 40) / 420));
-    // the floor trembles as it closes in
-    if (game.phase === 'play' && danger > 0.55) this.shake = Math.max(this.shake, (danger - 0.55) * 1.3);
-    if (vy > this.camY - 40 && game.phase !== 'ready') {
-      drawSuction(ctx, vy, this.time, danger);
-      drawVacuum(ctx, vy, this.time, danger, game.phase === 'slurp' || game.phase === 'over' ? 1 : 0, this.ppu, this.camY - 40);
+    // bath time: the foam over everything, its drizzle and stray bubbles
+    const fy = this.foamDraw;
+    if (game.phase !== 'ready') {
+      if (fy > this.camY - 60) drawFoam(ctx, fy, this.time, this.camY - 30, this.ppu);
+      this.spawnBath(game, fy, dt);
     }
-    this.fx.update(dt, vy);
+    this.fx.update(dt);
     this.fx.draw(ctx);
     this.lerp.end();
-    // the vacuum looming: darken the top of the screen
-    if (game.phase === 'play' && danger > 0) {
-      ctx.setTransform(stage.dpr, 0, 0, stage.dpr, 0, 0);
-      const h = stage.h * 0.32;
-      const g = ctx.createLinearGradient(0, 0, 0, h);
-      const a = danger * (0.3 + 0.08 * Math.sin(this.time * 8));
-      g.addColorStop(0, `rgba(62,40,60,${a})`);
-      g.addColorStop(1, 'rgba(62,40,60,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, stage.w, h);
+  }
+
+  /**
+   * How near bath time is, 0 (far off) .. 1 (right over the cat): more drizzle
+   * and more bubbles drift into view as it comes.
+   */
+  nearness(game: DropGame): number {
+    if (game.phase !== 'play') return game.phase === 'ready' ? 0 : 1;
+    return Math.max(0, Math.min(1, 1 - (game.bathGap - 60) / 700));
+  }
+
+  /** Drizzle and loose bubbles from the foam (or in from the top while it is above the screen), and drips off a soaked cat. */
+  private spawnBath(game: DropGame, fy: number, dt: number): void {
+    if (dt <= 0) return;
+    const near = this.nearness(game);
+    const play = game.phase === 'play';
+    const top = this.camY;
+    const above = fy < top + 4;
+    const fall = play ? game.foamV : 0;
+    const owe = this.owe;
+    owe.rain += (play ? (near > 0 ? 2 + 30 * near * near : 0) : game.phase === 'soak' ? 34 : 7) * dt;
+    owe.bubble += (play ? (near > 0 ? 0.3 + 4 * near : 0) : game.phase === 'soak' ? 6 : 1.2) * dt;
+    for (; owe.rain >= 1; owe.rain--) {
+      const x = Math.random() * (SHAFT_W + 8) - 4;
+      if (above) this.fx.rain(x, top - 12 - Math.random() * 30, fall + 420 + Math.random() * 180);
+      else this.fx.rain(x, fy - 6 - Math.random() * 10, fall + 240 + Math.random() * 160);
+    }
+    for (; owe.bubble >= 1; owe.bubble--) {
+      const x = 14 + Math.random() * (SHAFT_W - 28);
+      const vy = fall * 1.05 + 26 + Math.random() * 50;
+      if (above) this.fx.bubble(x, top - 14, vy, 3 + Math.random() * 6);
+      else this.fx.bubble(x, fy - 4, vy, 3 + Math.random() * 6);
+    }
+    // drips off a soaked cat
+    if (game.soaked && game.soakT > 0.9) {
+      owe.drip += 5 * dt;
+      for (; owe.drip >= 1; owe.drip--) {
+        const p = soakedBottom(this.painter.view(game.cat), Math.random());
+        this.fx.drip(p.x, p.y);
+      }
     }
   }
 
@@ -370,14 +391,21 @@ export class DropView {
     const c = game.cat;
     let expression: Expression = 'open';
     const resting = c.airborneFrames < 3 && Math.abs(c.vcx) < 60 && Math.abs(c.vcy) < 60;
-    if (game.phase === 'slurp' || game.phase === 'over') expression = 'wide';
-    else if (game.phase === 'ready') expression = 'sleepy';
+    const bath = game.phase === 'soak' || game.phase === 'over';
+    if (bath) {
+      // soggy and sorry for itself (and a squeezed-shut sneeze)
+      expression = !game.soaked ? 'wide' : game.sinceSneeze < 22 ? 'squint' : 'sleepy';
+      return { expression, look: 0, resting: false, purr: 0, grabbed: game.soaked };
+    }
+    if (game.phase === 'ready') expression = 'sleepy';
     else if (game.sinceNom < 45) expression = 'happy';
     else if (game.sinceBoing < 24 || game.sinceHop < 18) expression = 'squint';
+    // worried eyes when bath time is close (or on a long fast fall)
+    else if (game.phase === 'play' && game.time > 1 && game.bathGap < 230) expression = 'wide';
     else if (c.airborneFrames > 6 && c.vcy > 360) expression = 'wide';
     else if (resting) expression = 'content';
     const look = game.steerX === null ? 0 : Math.max(-1, Math.min(1, (game.steerX - c.cx) / 90));
-    return { expression, look, resting: resting && game.phase !== 'slurp', purr: game.phase === 'ready' ? 0.6 : 0, grabbed: game.phase === 'slurp' };
+    return { expression, look, resting, purr: game.phase === 'ready' ? 0.6 : 0, grabbed: false };
   }
 
   private drawFish(ctx: Ctx, x: number, y: number, golden: boolean, dir: number, t: number): void {

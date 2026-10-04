@@ -9,7 +9,7 @@ interface DropState {
   fish: number;
   score: number;
   radius: number;
-  vacuumGap: number;
+  bathGap: number;
   over: boolean;
 }
 
@@ -53,21 +53,24 @@ test('eating a fish makes the cat chonkier and scores', async ({ page }) => {
   expect(res.s1.score).toBeGreaterThan(res.s0.score);
 });
 
-test('the vacuum slurps a cat it catches and the run ends', async ({ page }) => {
+test('bath time catches the cat, soaks it, and the run ends', async ({ page }) => {
   await boot(page);
   const end = await page.evaluate(() => {
-    const d = (window as unknown as { __drop: { pause(on: boolean): void; restart(seed?: number): DropState; vacuumTo(gap: number): void; step(n: number): DropState; state: DropState } }).__drop;
+    const d = (window as unknown as { __drop: { pause(on: boolean): void; restart(seed?: number): DropState; bathTo(gap: number): void; step(n: number): DropState; state: DropState } }).__drop;
     d.pause(true);
     d.restart(99);
+    const phases = new Set<string>();
     for (let i = 0; i < 600 && !d.state.over; i++) {
-      if (d.state.phase === 'play') d.vacuumTo(30);
+      if (d.state.phase === 'play') d.bathTo(30);
       d.step(1);
+      phases.add(d.state.phase);
     }
-    return d.state;
+    return { ...d.state, soaked: phases.has('soak') };
   });
+  expect(end.soaked).toBe(true);
   expect(end.over).toBe(true);
   await expect(page.locator('#dOver')).toHaveClass(/show/, { timeout: 5000 });
-  await expect(page.getByRole('heading', { name: 'Slurped!' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bath time!' })).toBeVisible();
   await page.getByRole('button', { name: 'Again' }).click();
   await expect(page.locator('#dOver')).not.toHaveClass(/show/);
   const again = await state(page);

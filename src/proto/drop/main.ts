@@ -1,6 +1,6 @@
 // Cat Drop: an endless squishy fall through a cozy house. Drag to steer, tap
 // to bounce, eat fish to grow (more points, slower squeezes) and stay ahead of
-// the vacuum. This file wires the simulation (game.ts) to the screen
+// bath time. This file wires the simulation (game.ts) to the screen
 // (view.ts), the HUD (ui.ts), input and sound, and exposes `window.__drop`.
 import '@fontsource/baloo-2/latin-700.css';
 import '@fontsource/baloo-2/latin-800.css';
@@ -11,7 +11,6 @@ import { AudioEngine, type ImpactMaterial } from '../../audio/audio';
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
 import { DropGame, type DropState, type GameEvent } from './game';
-import { SHAFT_W } from './level';
 import { DropSfx } from './sfx';
 import { BREED_CHOICES, DropUi } from './ui';
 import { DropView } from './view';
@@ -59,13 +58,13 @@ let viewRef: DropView | null = null;
 const stage = makeStage(document.getElementById('game') as HTMLCanvasElement, () => viewRef?.layout());
 const v = new DropView(stage);
 viewRef = v;
+v.fx.onPop = () => sfx.pop();
 
 let daily = false;
 let seed = randomSeed();
 let game = new DropGame(seed, prefs.breed);
 v.reset(game);
 let overAt = -1;
-let warned = false;
 
 function randomSeed(): number {
   return (Math.random() * 2 ** 31) >>> 0;
@@ -121,7 +120,6 @@ function newRun(s: number, breed: BreedId): void {
   game = new DropGame(seed, breed);
   v.reset(game);
   overAt = -1;
-  warned = false;
   steerKeys = 0;
   ui.setBest(loadBest(bestKey()), daily);
 }
@@ -269,14 +267,26 @@ function handleEvents(): void {
         v.fx.puff(e.x, e.y, 8);
         v.fx.sparks(e.x, e.y, 6);
         break;
-      case 'slurp':
-        sfx.slurp();
+      case 'soak':
         audio.stopAllPurrs();
-        audio.duckMusic(0.7, 2.5);
+        audio.duckMusic(0.6, 2.5);
         break;
+      case 'sploosh':
+        sfx.sploosh();
+        v.fx.drops(e.x, e.y, 9, 'rgba(176,212,244,0.95)');
+        for (let k = 0; k < 9; k++) v.fx.bubble(e.x + (Math.random() - 0.5) * c.p.radius * 3, e.y + (Math.random() - 0.3) * c.p.radius * 2, 10 + Math.random() * 30, 3 + Math.random() * 5);
+        break;
+      case 'sneeze': {
+        sfx.sneeze(voice());
+        // a puff of tiny bubbles from the nose
+        const f = v.painter.view(c);
+        const ny = f.fy + 4 * f.fs;
+        for (let k = 0; k < 5; k++) v.fx.bubble(f.fx + (k - 2) * 3, ny + Math.random() * 3, -10 + Math.random() * 25, 1.6 + Math.random() * 2.2);
+        v.fx.puff(f.fx, ny + 2, 4);
+        break;
+      }
       case 'over':
         overAt = performance.now();
-        sfx.hum(0);
         break;
     }
   }
@@ -293,23 +303,15 @@ const loop = new Loop(
   (alpha, dt) => {
     v.render(game, alpha, dt);
     const s = game.state();
-    const vacOnScreen = game.vacY > v.camY + 30;
-    ui.update(s, vacOnScreen);
-    // the vacuum's hum and a warning when it gets close; its dust bunnies
-    if (game.phase === 'play' && game.time > 1.6) {
-      const gap = game.vacuumGap;
-      sfx.hum(Math.max(0, Math.min(1, 1 - gap / 900)));
-      if (!warned && gap < 300) {
-        warned = true;
-        sfx.warn();
-      } else if (warned && gap > 520) warned = false;
-      if (gap < 420 && Math.random() < dt * 14) v.fx.fluff(30 + Math.random() * (SHAFT_W - 60), game.vacY + 60 + Math.random() * Math.min(260, gap));
-    } else if (game.phase !== 'slurp') sfx.hum(0);
+    ui.update(s, game.foamY > v.camY + 30);
+    // bath time's patter and bloops, louder as it comes (quieter once it has the cat)
+    const near = game.phase === 'play' ? (game.time > 1 ? v.nearness(game) : 0) : game.phase === 'soak' ? 0.7 : game.phase === 'over' ? 0.2 : 0;
+    sfx.bath(near, dt);
     // purring on the perch before the run
     if (game.phase === 'ready' && !ui.cardShown) audio.setPurr(1, 0.5, BREEDS[game.breed].purr);
     else if (game.phase === 'ready') audio.setPurr(1, 0.35, BREEDS[game.breed].purr);
-    // game over: the card, a moment after the slurp
-    if (overAt > 0 && performance.now() - overAt > 900) {
+    // game over: the card, a moment after the bath
+    if (overAt > 0 && performance.now() - overAt > 650) {
       overAt = -1;
       finish(s);
     }
@@ -330,7 +332,7 @@ function finish(s: DropState): void {
 // --- Test & debug handle ---------------------------------------------------------------
 
 const handle = {
-  /** Depth (m), fish, score, radius, vacuum gap, game over... */
+  /** Depth (m), fish, score, radius, bath gap, game over... */
   get state(): DropState {
     return game.state();
   },
@@ -375,9 +377,13 @@ const handle = {
   render(dt = 1 / 60): void {
     v.render(game, 1, dt);
   },
-  /** Move the vacuum to `gap` units above the cat (for tests and captures). */
+  /** Move bath time's foam to `gap` units above the cat (for tests and captures). */
+  bathTo(gap: number): void {
+    game.foamY = game.catTop() - gap;
+  },
+  /** The same as bathTo (from when the chaser was a vacuum). */
   vacuumTo(gap: number): void {
-    game.vacY = game.catTop() - gap;
+    game.foamY = game.catTop() - gap;
   },
   get game(): DropGame {
     return game;

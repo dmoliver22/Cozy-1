@@ -49,7 +49,8 @@
   z-index: 2;
 }
 
-.drop-vac {
+/* how far above bath time is (while its foam is off screen) */
+.drop-bath {
   position: fixed;
   top: calc(max(10px, env(safe-area-inset-top)) + 40px);
   left: 50%;
@@ -57,7 +58,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 12px 2px 8px;
+  padding: 2px 12px 1px 6px;
   border-radius: 999px;
   background: rgba(255, 248, 238, 0.9);
   box-shadow: 0 2px 0 rgba(62, 58, 79, 0.12), 0 6px 18px rgba(62, 58, 79, 0.14);
@@ -71,7 +72,7 @@
   z-index: 2;
 }
 
-.drop-vac::before {
+.drop-bath::before {
   content: '';
   position: absolute;
   left: 50%;
@@ -82,32 +83,42 @@
   border-bottom-color: rgba(255, 248, 238, 0.9);
 }
 
-.drop-vac.show {
+.drop-bath.show {
   opacity: 1;
   transform: translate(-50%, 0);
 }
 
-.drop-vac.near {
-  background: #f8dcc4;
+/* closer: a soapy blue, then lilac with a gentle bob (no alarms) */
+.drop-bath.near {
+  background: #dcebf8;
 }
 
-.drop-vac.close {
-  background: #f2b8b5;
-  animation: drop-pulse 0.5s ease-in-out infinite alternate;
+.drop-bath.close {
+  background: #e6ddf6;
+  animation: drop-bob 1.1s ease-in-out infinite alternate;
 }
 
-.drop-vac.near::before {
-  border-bottom-color: #f8dcc4;
+.drop-bath.near::before {
+  border-bottom-color: #dcebf8;
 }
 
-.drop-vac.close::before {
-  border-bottom-color: #f2b8b5;
+.drop-bath.close::before {
+  border-bottom-color: #e6ddf6;
 }
 
-@keyframes drop-pulse {
+@keyframes drop-bob {
   to {
-    transform: translate(-50%, 0) scale(1.08);
+    transform: translate(-50%, 2px);
   }
+}
+
+.drop-bath .sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .drop-toast {
@@ -167,7 +178,7 @@
 }
 
 .menu .drop-hud,
-.menu .drop-vac,
+.menu .drop-bath,
 .menu .drop-best {
   opacity: 0;
 }
@@ -185,6 +196,31 @@
 
 #dStart.show {
   transform: translate(-50%, 0) scale(1);
+}
+
+/* the end card sits low too, so the soggy cat shows above it */
+#dOver {
+  top: auto;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translate(-50%, 18px) scale(0.98);
+}
+
+#dOver.show {
+  transform: translate(-50%, 0) scale(1);
+}
+
+.drop-card .soaked {
+  position: relative;
+}
+
+.drop-card .soaked .face-svg {
+  filter: brightness(0.86) saturate(0.85);
+}
+
+.drop-card .soaked .suds {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
 }
 
 .drop-card .breeds {
