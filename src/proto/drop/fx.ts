@@ -208,10 +208,10 @@ export class Fx {
           break;
         }
         case 'rain': {
-          const len = Math.min(15, 4 + p.vy * 0.015);
+          const len = Math.min(18, 5 + p.vy * 0.018);
           ctx.lineCap = 'round';
-          ctx.strokeStyle = 'rgba(138,184,232,0.8)';
-          ctx.lineWidth = p.size * 1.3;
+          ctx.strokeStyle = 'rgba(122,172,226,0.85)';
+          ctx.lineWidth = p.size * 1.6;
           ctx.beginPath();
           ctx.moveTo(p.x - p.vx * 0.01, p.y - len);
           ctx.lineTo(p.x, p.y);

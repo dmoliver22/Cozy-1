@@ -144,7 +144,7 @@ function foamTile(ppu: number): HTMLCanvasElement {
   const g = c.getContext('2d')!;
   const k = S / TILE;
   g.setTransform(k, 0, 0, k, 0, 0);
-  g.fillStyle = '#EFEAF8';
+  g.fillStyle = '#F2EFF9';
   g.fillRect(0, 0, TILE, TILE);
   const rnd = rng(77);
   const cells: { x: number; y: number; r: number }[] = [];
@@ -159,13 +159,13 @@ function foamTile(ppu: number): HTMLCanvasElement {
         if (x + cl.r < 0 || x - cl.r > TILE || y + cl.r < 0 || y - cl.r > TILE) continue;
         const gr = g.createRadialGradient(x - cl.r * 0.35, y - cl.r * 0.4, cl.r * 0.05, x, y, cl.r);
         gr.addColorStop(0, '#FFFFFF');
-        gr.addColorStop(0.6, '#F7F4FC');
-        gr.addColorStop(1, '#D9D0EE');
+        gr.addColorStop(0.6, '#F9F7FD');
+        gr.addColorStop(1, '#E0D8F1');
         g.fillStyle = gr;
         g.beginPath();
         g.arc(x, y, cl.r, 0, TAU);
         g.fill();
-        g.strokeStyle = 'rgba(160,146,204,0.3)';
+        g.strokeStyle = 'rgba(160,146,204,0.24)';
         g.lineWidth = 0.6;
         g.stroke();
         g.fillStyle = 'rgba(255,255,255,0.9)';
@@ -215,7 +215,7 @@ export function drawFoam(ctx: Ctx, y: number, t: number, top: number, ppu: numbe
     const s0 = Math.max(top, bottom - 120);
     const g = ctx.createLinearGradient(0, bottom - 120, 0, bottom);
     g.addColorStop(0, 'rgba(176,162,218,0)');
-    g.addColorStop(1, 'rgba(176,162,218,0.45)');
+    g.addColorStop(1, 'rgba(176,162,218,0.34)');
     ctx.fillStyle = g;
     ctx.fillRect(x0, s0, x1 - x0, bottom - s0);
   }
@@ -223,7 +223,7 @@ export function drawFoam(ctx: Ctx, y: number, t: number, top: number, ppu: numbe
   // the back row sits in the front row's shade
   const g = ctx.createLinearGradient(0, y - 80, 0, y - 18);
   g.addColorStop(0, 'rgba(176,162,218,0)');
-  g.addColorStop(1, 'rgba(176,162,218,0.3)');
+  g.addColorStop(1, 'rgba(176,162,218,0.22)');
   ctx.fillStyle = g;
   ctx.fillRect(x0, y - 80, x1 - x0, 62);
   for (const b of EDGE.front) edgeBubble(ctx, b, y, t, ppu);

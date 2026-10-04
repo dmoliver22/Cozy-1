@@ -141,9 +141,11 @@ export class DropView {
       this.camInit = true;
       return;
     }
-    // hold still for the bath: the foam and the cat both in view
+    // bath time: ease the soggy cat to just under the foam, clear of the end card below
     if (this.camInit && (game.phase === 'soak' || game.phase === 'over')) {
-      this.camV *= 0.8;
+      const w = 3.2;
+      const a = w * w * (catY - this.viewH * 0.4 - this.camY) - 2 * w * this.camV;
+      this.camV += a * dt;
       this.camY += this.camV * dt;
       return;
     }
@@ -364,18 +366,19 @@ export class DropView {
     const above = fy < top + 4;
     const fall = play ? game.foamV : 0;
     const owe = this.owe;
-    owe.rain += (play ? (near > 0 ? 2 + 30 * near * near : 0) : game.phase === 'soak' ? 34 : 7) * dt;
-    owe.bubble += (play ? (near > 0 ? 0.3 + 4 * near : 0) : game.phase === 'soak' ? 6 : 1.2) * dt;
+    owe.rain += (play ? (near > 0 ? 3 + 36 * near * near : 0) : game.phase === 'soak' ? 36 : 8) * dt;
+    owe.bubble += (play ? (near > 0 ? 0.4 + 4.5 * near : 0) : game.phase === 'soak' ? 6 : 1.2) * dt;
+    // (whatever comes in from the top must outrun the camera to be seen)
+    const cam = Math.max(0, this.camV);
     for (; owe.rain >= 1; owe.rain--) {
       const x = Math.random() * (SHAFT_W + 8) - 4;
-      if (above) this.fx.rain(x, top - 12 - Math.random() * 30, fall + 420 + Math.random() * 180);
+      if (above) this.fx.rain(x, top - 12 - Math.random() * 30, Math.max(fall + 420, cam + 300) + Math.random() * 180);
       else this.fx.rain(x, fy - 6 - Math.random() * 10, fall + 240 + Math.random() * 160);
     }
     for (; owe.bubble >= 1; owe.bubble--) {
       const x = 14 + Math.random() * (SHAFT_W - 28);
-      const vy = fall * 1.05 + 26 + Math.random() * 50;
-      if (above) this.fx.bubble(x, top - 14, vy, 3 + Math.random() * 6);
-      else this.fx.bubble(x, fy - 4, vy, 3 + Math.random() * 6);
+      const vy = Math.max(fall * 1.05 + 26, above ? cam + 50 : 0) + Math.random() * 50;
+      this.fx.bubble(x, above ? top - 14 : fy - 4, vy, 3 + Math.random() * 6);
     }
     // drips off a soaked cat
     if (game.soaked && game.soakT > 0.9) {

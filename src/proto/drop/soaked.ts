@@ -15,13 +15,14 @@ export function wetBreed(b: Breed): Breed {
   let w = wet.get(b.id);
   if (w) return w;
   const l = b.look;
-  const soak = (c: string, k: number): string => mix(shadowOf(c, k), '#5A6484', 0.1);
+  // wet fur darkens, pale coats most of all, and goes a little cool
+  const soak = (c: string, k: number): string => mix(shadowOf(c, k * (0.75 + 0.45 * lum(c))), '#5A6484', 0.12);
   const look: BreedLook = {
     ...l,
-    body: soak(l.body, 0.34),
-    shade: soak(l.shade, 0.3),
-    light: soak(l.light, 0.22),
-    accent: soak(l.accent, 0.28),
+    body: soak(l.body, 0.4),
+    shade: soak(l.shade, 0.32),
+    light: soak(l.light, 0.26),
+    accent: soak(l.accent, 0.3),
     pattern: l.pattern === 'fluff' ? 'none' : l.pattern,
     fluff: 0,
     tailFluff: 0,
@@ -30,6 +31,12 @@ export function wetBreed(b: Breed): Breed {
   w = { ...b, look };
   wet.set(b.id, w);
   return w;
+}
+
+/** Rough lightness of a hex colour, 0..1. */
+function lum(hex: string): number {
+  const n = parseInt(hex.slice(1, 7), 16);
+  return (0.3 * ((n >> 16) & 255) + 0.59 * ((n >> 8) & 255) + 0.11 * (n & 255)) / 255;
 }
 
 /** Paint a body as another breed (the soaked look) for the length of `fn`. */
@@ -131,10 +138,10 @@ export function drawSoaked(ctx: Ctx, b: SoftBody, v: CatView, t: number, ppu: nu
     bead(ctx, p.x, p.y - 1.5, 1.5 + ph * ph * 6, 1.7 + ph * 0.9);
   }
   // suds stuck to the sides
-  const S = Math.max(4.5, r * 0.16);
+  const S = Math.max(5, r * 0.2);
   const sides: [number, number, number][] = [
     [-0.25, 0.85, 1],
-    [3.55, 0.7, -1],
+    [3.55, 0.75, -1],
   ];
   for (const [ang, size, side] of sides) {
     const p = rimPoint(v, ang);
@@ -147,14 +154,17 @@ export function drawSoaked(ctx: Ctx, b: SoftBody, v: CatView, t: number, ppu: nu
   }
   // a pile of suds on the head, between the ears
   const hx = v.ears.length === 2 ? (v.ears[0].x + v.ears[1].x) / 2 : v.hx;
-  const hy = v.hy - S * 0.3;
+  const hy = v.hy - S * 0.2;
   const pile: [number, number, number, number][] = [
-    [-1.25, 0.15, 0.95, 1],
-    [1.25, 0.2, 0.9, 2],
-    [0, -0.1, 1.2, 0],
-    [-0.55, -1.05, 0.85, 1],
-    [0.7, -1.0, 0.78, 2],
-    [0.05, -1.85, 0.62, 0],
+    [-1.7, 0.45, 0.75, 2],
+    [1.75, 0.5, 0.7, 1],
+    [-1.05, 0.05, 1.0, 1],
+    [1.1, 0.1, 0.95, 2],
+    [0, -0.15, 1.2, 0],
+    [-0.6, -1.1, 0.9, 1],
+    [0.65, -1.05, 0.85, 2],
+    [0.05, -1.95, 0.7, 0],
+    [0.95, -1.9, 0.38, 1],
   ];
   for (const [dx, dy, s, tint] of pile) {
     const wob = Math.sin(t * 2.2 + dx * 1.7) * 0.04;

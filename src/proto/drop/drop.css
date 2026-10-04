@@ -183,6 +183,14 @@
   opacity: 0;
 }
 
+/* on a phone the cards sit over the sound buttons: tuck them away meanwhile */
+@media (max-width: 520px) {
+  .menu .drop-btns {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 .drop-card {
   width: min(92vw, 360px);
 }
