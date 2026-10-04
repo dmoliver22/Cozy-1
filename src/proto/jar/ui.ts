@@ -56,6 +56,7 @@ export class JarUI {
       </div>
       <div class="card jar-card" id="end" role="dialog" aria-labelledby="endTitle">
         <h2 id="endTitle">Jar's full!</h2>
+        <p class="jar-small jar-daily" id="endMode"></p>
         <div class="jar-final" id="final">0</div>
         <p class="jar-small" id="endBest"></p>
         <div class="jar-biggest" id="biggest"></div>
@@ -103,6 +104,7 @@ export class JarUI {
 
   showEnd(game: JarGame, best: number, newBest: boolean): void {
     const $ = (id: string): HTMLElement => this.endCard.querySelector(`#${id}`) as HTMLElement;
+    $('endMode').textContent = game.mode === 'daily' ? `Daily jar · ${todayLabel()}` : '';
     $('final').textContent = fmt(game.score);
     $('endBest').textContent = newBest ? 'New best!' : `Best ${fmt(best)}`;
     $('endBest').classList.toggle('jar-new', newBest);
@@ -149,12 +151,14 @@ export class JarUI {
         html += `<span class="jar-paw${k < game.boops ? ' on' : ''}${gained && k === game.boops - 1 ? ' new' : ''}">${PAW}</span>`;
       }
       this.boopsEl.innerHTML = html;
+      this.boopsEl.setAttribute('aria-label', `Boops left: ${game.boops}`);
     }
-    const next = game.queue[1] ?? -1;
+    const next = game.over ? -1 : (game.queue[1] ?? -1);
     if (next !== s.next) {
       s.next = next;
       this.nextEl.innerHTML = next >= 0 ? faceSVG(TIERS[next].breed, { size: 22 + next * 4 }) : '';
       this.nextEl.title = next >= 0 ? TIERS[next].name : '';
+      (this.nextEl.parentElement as HTMLElement).style.visibility = next >= 0 ? '' : 'hidden';
     }
   }
 

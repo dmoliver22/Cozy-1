@@ -15,7 +15,7 @@ import { BREEDS } from '../../physics/breeds';
 import { PALETTE } from '../../render/paint';
 import { clamp } from '../../util/math';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
-import { CX, JAR, LAST_TIER, TIERS } from './config';
+import { CHAIN_MAX, CX, JAR, LAST_TIER, TIERS } from './config';
 import { JarGame, type JarCat, type JarEvent, type Mode } from './game';
 import { JarUI } from './ui';
 import { JarView } from './view';
@@ -40,6 +40,9 @@ let phase: Phase = 'start';
 let overAt = 0;
 let best = 0;
 let newBest = false;
+/** The biggest cat made so far this game (its name pops up the first time). */
+let topTier = 0;
+let zTimer = 0;
 
 const bestKey = (g: JarGame): string => (g.mode === 'daily' ? `catjar.daily.${g.seed}` : 'catjar.best');
 
@@ -83,6 +86,7 @@ function startGame(mode: Mode, seed?: number): void {
   view.reset();
   best = loadBest(bestKey(game));
   newBest = false;
+  topTier = 0;
   phase = 'play';
   ui.hideCards();
   audio.stopAllPurrs();
@@ -135,11 +139,12 @@ bindPointer(canvas, {
     if (phase !== 'play') return;
     aiming = false;
     const w = view.toWorld(x, y);
+    // a tap on a cat in the jar boops it (out of boops: the paws say so)
     if (info.tap) {
       const cat = game.catAt(w.x, w.y);
       if (cat) {
-        if (game.boop(cat, w.x)) return;
-        ui.noBoops();
+        if (!game.boop(cat, w.x)) ui.noBoops();
+        return;
       }
     }
     game.aim(w.x);
@@ -175,9 +180,11 @@ function handle(events: JarEvent[]): void {
       }
       case 'clink':
         audio.impact('glass', e.speed, sizeOf(e.cat.tier));
+        view.squash(e.cat, e.speed);
         break;
       case 'land': {
         const tier = e.cat.tier;
+        view.squash(e.cat, e.speed);
         audio.impact(tier >= 4 ? 'wall' : 'fabric', e.speed + 120, sizeOf(tier));
         if (e.speed > 380) {
           const b = e.cat.body;
@@ -195,6 +202,7 @@ function handle(events: JarEvent[]): void {
         audio.boop(b.voice.pitch);
         const h = view.painter.head(e.cat.body);
         view.fx.note(h.x + TIERS[e.cat.tier].r * 0.5, h.y - 6, '!');
+        view.fx.sparkles(e.cat.body.cx, e.cat.body.cy, 4, TIERS[e.cat.tier].r * 0.8);
         break;
       }
       case 'over':
@@ -209,7 +217,7 @@ function handle(events: JarEvent[]): void {
 }
 
 function onMerge(e: Extract<JarEvent, { t: 'merge' }>): void {
-  view.addGhosts(e.ghosts);
+  view.addGhosts(e.ghosts, game.frame);
   const fx = view.fx;
   if (e.tier >= LAST_TIER) {
     // two voids: they vanish in a starburst
@@ -228,8 +236,12 @@ function onMerge(e: Extract<JarEvent, { t: 'merge' }>): void {
   fx.sparkles(e.x, e.y, 5 + e.tier, T.r);
   fx.hearts(e.x, e.y - T.r * 0.6, e.tier >= 3 ? 3 : e.tier >= 1 ? 2 : 1, PALETTE.rose, T.r * 0.5);
   const color = e.tier >= 4 ? '#D9A62E' : e.tier >= 2 ? PALETTE.ginger : '#C98BA0';
-  fx.label(e.x, e.y - T.r - 8, e.chain > 1 ? `+${e.points} ×${e.chain}` : `+${e.points}`, color, 13 + Math.min(4, e.tier));
-  if (e.earned) fx.label(e.x, e.y - T.r - 30, '+1 boop', '#8DB283', 12);
+  fx.label(e.x, e.y - T.r - 8, `+${e.points}`, color, 13 + Math.min(4, e.tier));
+  if (e.chain > 1) fx.label(e.x, e.y - T.r - 8, `chain ×${Math.min(e.chain, CHAIN_MAX)}!`, '#B07AA8', 12);
+  if (e.earned) fx.label(e.x, e.y - T.r - 8, '+1 boop', '#7FA877', 12);
+  // the first of a new kind this game: say hello
+  if (e.tier + 1 > topTier) fx.label(e.x, e.y - T.r - 8, `${T.name}!`, '#6F8FB8', 13);
+  topTier = Math.max(topTier, e.tier + 1);
   if (e.cat && e.tier + 1 >= 3) setPurrCat(e.cat);
 }
 
@@ -248,7 +260,6 @@ function tickPurr(): void {
   if (!c) return;
   if (c.removed || !game.cats.includes(c)) {
     setPurrCat(null);
-    audio.setPurr(c.id, 0, BREEDS[TIERS[c.tier].breed].purr);
     return;
   }
   const age = game.frame - purrSince;
@@ -269,10 +280,23 @@ function step(): void {
   handle(game.drain());
 }
 
+/** Now and then a long-sleeping cat snores a little z. */
+function tickSnores(dt: number): void {
+  zTimer += dt;
+  if (zTimer < 1.7 || phase !== 'play') return;
+  zTimer = 0;
+  const sleepers = game.cats.filter((c) => c.body.asleep && c.rest > 600);
+  if (!sleepers.length) return;
+  const c = sleepers[Math.floor(Math.random() * sleepers.length)];
+  const h = view.painter.head(c.body);
+  view.fx.add('note', h.x + TIERS[c.tier].r * 0.55, h.y - 2, { vy: -14, vx: 5, life: 1.8, size: 12, color: 'rgba(62,58,79,0.55)', text: 'z' });
+}
+
 function draw(alpha: number, dt: number): void {
   view.draw(game, alpha, dt);
   ui.update(game, best, dt);
   tickPurr();
+  tickSnores(dt);
   if (phase === 'over' && performance.now() - overAt > 1100 && !ui.endShown) {
     audio.stopAllPurrs();
     ui.showEnd(game, best, newBest);
@@ -290,6 +314,7 @@ const api = {
   game,
   view,
   loop,
+  audio,
   /** Snapshot of the game for tests. */
   get state() {
     return {

@@ -16,7 +16,7 @@ export const JAR = {
   /** Glass half thickness (wall capsule radius). */
   wall: 5,
   /** Top of the walls (centre of their rounded ends) = the rim. */
-  rimY: 150,
+  rimY: 140,
   /** Inner floor (top face of the bottom glass). */
   floorY: 452,
   /** Inner bottom corner radius. */
@@ -29,8 +29,12 @@ export const JAR = {
 export const COUNTER_Y = JAR.footY;
 /** Where the next cat waits (centre). */
 export const HOLD_Y = 74;
-/** The "full" line: a cat resting with its top above it for FULL_FRAMES ends the game. */
-export const LINE_Y = JAR.rimY + 22;
+/**
+ * The "full" line: a cat resting with its top above it for FULL_FRAMES ends
+ * the game. It sits clear of the near rim's front arc (which the 2.5D rim
+ * ellipse dips 20 units below the wall tops) and the twine just under it.
+ */
+export const LINE_Y = JAR.rimY + 36;
 export const FULL_FRAMES = 120;
 /** A cat dropped (or booped) this recently doesn't count for the full line. */
 export const GRACE_DROP = 90;
@@ -75,7 +79,15 @@ export const LAST_TIER = TIERS.length - 1;
 /** Drops come from the first four tiers, weighted toward the small ones. */
 export const DROP_WEIGHTS = [0.37, 0.3, 0.21, 0.12];
 
-/** Points for melting two cats of tier t: triangular numbers x 10 (kittens 10 ... chonks 210). */
+/** A merged cat melting again within this many frames is a chain reaction... */
+export const CHAIN_FRAMES = 50;
+/** ...and its points are multiplied by the chain's length, up to this. */
+export const CHAIN_MAX = 3;
+
+/**
+ * Points for melting two cats of tier t: triangular numbers x 10 (kittens 10
+ * ... chonks 210), 1000 for two voids. Chain reactions multiply (game.ts).
+ */
 export function mergePoints(t: number): number {
   if (t >= LAST_TIER) return 1000;
   const n = t + 1;

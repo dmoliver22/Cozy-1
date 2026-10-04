@@ -6,6 +6,10 @@ body {
 
 .jar-hud {
   align-items: flex-start;
+  left: 50%;
+  right: auto;
+  width: min(calc(100vw - 24px), 460px);
+  transform: translateX(-50%);
   transition: opacity 0.25s ease;
 }
 
@@ -161,6 +165,17 @@ body {
   box-shadow: inset 0 -3px 0 rgba(62, 58, 79, 0.08), 0 3px 0 rgba(62, 58, 79, 0.1), 0 8px 18px rgba(62, 58, 79, 0.14);
 }
 
+/* hidden cards are really hidden (not just transparent) once they've faded */
+.jar-card {
+  visibility: hidden;
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0s linear 0.25s;
+}
+
+.jar-card.show {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
 .jar-card h2 {
   font-size: 34px;
 }
@@ -199,7 +214,8 @@ body {
   display: none;
 }
 
-.jar-new {
+.jar-new,
+.jar-daily {
   color: var(--ginger) !important;
 }
 

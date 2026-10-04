@@ -48,6 +48,13 @@ export class SoftBody {
   /** Damping of the finger's whole-body spring: high, so a lifted cat eases
    *  up to the finger instead of bobbing like a yo-yo. */
   static grabDamp = 0.6;
+  /**
+   * Let resting on another cat count as contact for rest damping, sleep and
+   * airborne frames (normally only furniture and containers count). Off by
+   * default, so If It Fits keeps its tuned behaviour; a game where cats pile
+   * up on each other (Cat Jar) turns it on, or the top of a pile never settles.
+   */
+  static restOnBodies = false;
   readonly id: number;
   readonly breed: Breed;
   /** Physics numbers (the breed's, unless overridden; resize() changes radius). */
@@ -127,6 +134,8 @@ export class SoftBody {
   /** Largest impact speed against a static shape this frame, and which. */
   impactSpeed = 0;
   impactShape = -1;
+  /** Node pushes against other bodies this substep (counted by World). */
+  bodyContacts = 0;
 
   /**
    * `physics` overrides the breed's numbers for this one body (other games
@@ -737,6 +746,7 @@ export class SoftBody {
     // Rolling resistance: cats don't roll like balls, they scoot.
     let contacts = 0;
     for (let i = 0; i < n; i++) if (this.contactShape[i] !== -1) contacts++;
+    if (SoftBody.restOnBodies) contacts += this.bodyContacts;
     const roll = contacts > 0 ? Math.min(1, ROLL_DAMP * h) : Math.min(1, 0.6 * h);
     const wKeep = w * (1 - roll);
     // Rest damping: once a cat's averaged motion is ~zero while touching
@@ -820,8 +830,8 @@ export class SoftBody {
    */
   private considerSleep(): void {
     const n = this.n;
-    let contacts = false;
-    for (let i = 0; i < n; i++)
+    let contacts = SoftBody.restOnBodies && this.bodyContacts > 0;
+    for (let i = 0; i < n && !contacts; i++)
       if (this.contactShape[i] !== -1) {
         contacts = true;
         break;

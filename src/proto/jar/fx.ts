@@ -74,6 +74,12 @@ export class Effects {
   }
 
   label(x: number, y: number, text: string, color: string, size = 14): void {
+    // stack above fresh labels nearby, so a chain reaction stays readable
+    for (let k = 0; k < 6; k++) {
+      const hit = this.list.some((e) => e.kind === 'label' && e.t < 0.9 && Math.abs(e.x - x) < 46 && Math.abs(e.y - y) < size + 5);
+      if (!hit) break;
+      y -= size + 7;
+    }
     this.add('label', x, y, { vy: -22, life: 1.5, text, color, size });
   }
 
@@ -139,13 +145,16 @@ export class Effects {
           break;
         }
         case 'ring': {
-          const r = e.size * (0.55 + 0.6 * easeOut(k));
-          ctx.globalAlpha = (1 - k) * 0.85;
-          ctx.strokeStyle = e.color;
-          ctx.lineWidth = 2 + 5 * (1 - k);
+          // a soft bloom of warm light that opens out and fades
+          const r = e.size * (0.5 + 0.7 * easeOut(k));
+          const g = ctx.createRadialGradient(e.x, e.y, r * 0.55, e.x, e.y, r);
+          g.addColorStop(0, rgba(e.color, 0));
+          g.addColorStop(0.72, rgba(e.color, 0.55 * (1 - k)));
+          g.addColorStop(1, rgba(e.color, 0));
+          ctx.fillStyle = g;
           ctx.beginPath();
           ctx.arc(e.x, e.y, r, 0, TAU);
-          ctx.stroke();
+          ctx.fill();
           break;
         }
         case 'ray': {

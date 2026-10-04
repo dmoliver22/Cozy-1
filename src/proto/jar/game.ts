@@ -15,6 +15,8 @@ import {
   BOOP_EARN_TIER,
   BOOPS_MAX,
   BOOPS_START,
+  CHAIN_FRAMES,
+  CHAIN_MAX,
   CX,
   DROP_WEIGHTS,
   FULL_FRAMES,
@@ -55,6 +57,8 @@ export interface JarCat {
   rest: number;
   /** Melted into another cat this frame. */
   removed: boolean;
+  /** Links in the chain reaction that made it (0 = dropped). */
+  chain: number;
 }
 
 /** A cat that just melted away (the view shrinks it into the new one). */
@@ -84,6 +88,10 @@ export interface Waiting {
 
 let nextCatId = 1;
 
+// In a jar most cats rest on other cats, not on the glass: let that count as
+// contact, so the whole pile gets the engine's rest damping and can doze off.
+SoftBody.restOnBodies = true;
+
 export class JarGame {
   world = new World();
   cats: JarCat[] = [];
@@ -109,9 +117,6 @@ export class JarGame {
   private rand: () => number = rng(1);
   private silent = new Set<number>();
   private reloadAt = 0;
-  /** Chain counter: merges in quick succession. */
-  private chain = 0;
-  private lastMerge = -1e9;
 
   constructor(mode: Mode = 'play', seed?: number) {
     this.restart(mode, seed);
@@ -138,8 +143,6 @@ export class JarGame {
     this.biggest = 0;
     this.drops = 0;
     this.merges = 0;
-    this.chain = 0;
-    this.lastMerge = -1e9;
     this.events = [];
     this.reloadAt = 0;
     this.fillQueue();
@@ -205,10 +208,6 @@ export class JarGame {
     }
   }
 
-  get ready(): boolean {
-    return !this.over && !!this.waiting;
-  }
-
   /** Skip the wait after a drop: the next cat appears now. */
   reload(): void {
     if (!this.waiting && !this.over) this.spawnWaiting();
@@ -247,6 +246,7 @@ export class JarGame {
       sleepRefs: null,
       rest: 0,
       removed: false,
+      chain: 0,
     };
     this.cats.push(cat);
     if (tier > this.biggest) this.biggest = tier;
@@ -284,13 +284,15 @@ export class JarGame {
     const b = cat.body;
     b.computeCentroid();
     const r = TIERS[cat.tier].r;
-    const vy = Math.sqrt(2 * GRAVITY * (r * 1.5 + 22));
+    // a hop about 1.2 radii (+16) high: a kitten springs, a chonk heaves
+    const vy = Math.sqrt(2 * GRAVITY * (r * 1.2 + 16));
     const side = clamp((b.cx - fromX) / r, -1, 1);
     b.kick(side * vy * 0.3, -vy);
     cat.booped = this.frame;
     cat.rest = 0;
     this.boops--;
-    this.world.wakeAll();
+    // the hop shoves its neighbours awake; the ones resting on them follow (watchSleep)
+    this.wakeNear(b, 8);
     this.events.push({ t: 'boop', cat });
     return true;
   }
@@ -438,11 +440,12 @@ export class JarGame {
     a.removed = b.removed = true;
     this.world.removeBody(A);
     this.world.removeBody(B);
-    // chains: merges within a second of each other
-    this.chain = this.frame - this.lastMerge < 60 ? this.chain + 1 : 1;
-    this.lastMerge = this.frame;
+    // A chain reaction: a cat fresh out of a merge melting again right away
+    // is the next link, and links multiply the points (x2, then x3 at most).
+    const link = (c: JarCat): number => (c.chain > 0 && this.frame - c.born < CHAIN_FRAMES ? c.chain : 0);
+    const chain = 1 + Math.max(link(a), link(b));
     this.merges++;
-    const points = mergePoints(tier);
+    const points = mergePoints(tier) * Math.min(chain, CHAIN_MAX);
     this.score += points;
     let earned = false;
     if (tier >= BOOP_EARN_TIER && this.boops < BOOPS_MAX) {
@@ -454,15 +457,18 @@ export class JarGame {
       const T = TIERS[tier + 1];
       // start small where there's room, then grow into the full size
       const room = this.clearance(x, y) - NODE_RADIUS * 2;
-      const r0 = clamp(room, T.r * 0.45, T.r * 0.8);
+      const r0 = clamp(room, T.r * 0.45, T.r * 0.62);
       const body = new SoftBody(T.breed, x, y, { ...T.phys, radius: r0, nodes: T.nodes });
       body.kick(vx * 0.5, vy * 0.5);
       this.world.addBody(body);
       cat = this.addCat(tier + 1, body, false);
       cat.grow = { from: r0, to: T.r, t0: this.frame, frames: 16 };
       cat.lockUntil = this.frame + 10;
+      cat.chain = chain;
+    } else {
+      // two voids vanished: whatever they held up comes down
+      for (const c of this.cats) c.body.wake();
     }
-    this.world.wakeAll();
     this.events.push({
       t: 'merge',
       tier,
@@ -474,7 +480,7 @@ export class JarGame {
       x,
       y,
       points,
-      chain: this.chain,
+      chain,
       earned,
     });
   }

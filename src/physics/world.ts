@@ -72,7 +72,10 @@ export class World {
       if (b.asleep && (b.grab || b.settleForce !== 0 || b.assistAx <= -40 || b.assistAx >= 40)) b.wake();
     }
     for (let s = 0; s < substeps; s++) {
-      for (const b of bodies) if (!b.asleep) b.integrate(h, GRAVITY);
+      for (const b of bodies) {
+        b.bodyContacts = 0;
+        if (!b.asleep) b.integrate(h, GRAVITY);
+      }
       // Two passes so pressure and walls agree before velocities are derived
       // (one pass lets them fight, which shows up as chatter in tight cups).
       for (let it = 0; it < World.iterations; it++) {
@@ -91,8 +94,8 @@ export class World {
     }
     for (const b of bodies) {
       b.frameUpdate(FRAME_DT);
-      let touching = false;
-      for (let i = 0; i < b.n; i++) {
+      let touching = SoftBody.restOnBodies && b.bodyContacts > 0;
+      for (let i = 0; i < b.n && !touching; i++) {
         if (b.contactShape[i] !== -1) {
           touching = true;
           break;
@@ -419,6 +422,8 @@ function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number;
     const denom = wa + (1 - t) * w0 + t * w1;
     if (denom < 1e-12) continue;
     const lambda = (depth / denom) * 0.8;
+    a.bodyContacts++;
+    b.bodyContacts++;
     a.x[i] += nX * lambda * wa;
     a.y[i] += nY * lambda * wa;
     b.x[j0] -= nX * lambda * w0;

@@ -10,7 +10,7 @@
 import type { Prop } from '../../game/props';
 import type { DecorPlacement } from '../../game/room';
 import { drawFurniture } from '../../render/furnitureArt';
-import { PALETTE, contactShadow, glint, hash01, lightOf, lineOf, mix, paperGrain, rgba, shadowOf, type Box, type Ctx } from '../../render/paint';
+import { PALETTE, contactShadow, glint, hash01, lightOf, lineOf, mix, paperGrain, rgba, shadowOf, softShadow, type Box, type Ctx } from '../../render/paint';
 import {
   K,
   caustic,
@@ -40,14 +40,17 @@ export const TINT = '#CDE4E3';
  * hides behind the counter (the beadboard's rail tucks under the worktop).
  */
 const SHELL_DY = -18;
+/** The room's painted width (the wall stops 10 units past either side). */
+const ROOM_X0 = -10;
+const ROOM_X1 = WORLD_W + 10;
 
 export const RIM: Rim = { cx: CX, y: JAR.rimY, rxm: (WALL_R - WALL_L) / 2, r: JAR.wall + 0.6 };
 export const CAV: Cavity = scanCavity(ALL_PARTS, CX, JAR.rimY);
 
 /** Wall decor, in the room's own (unshifted) coordinates. */
 const WALL_DECOR: DecorPlacement[] = [
-  { type: 'window', x: 22, y: -36, w: 74, h: 118, variant: 0 },
-  { type: 'clock', x: 352, y: 22, w: 15 },
+  { type: 'window', x: 30, y: 2, w: 72, h: 112, variant: 0 },
+  { type: 'clock', x: 322, y: 64, w: 14 },
 ];
 
 export interface Rect {
@@ -70,7 +73,7 @@ export function paintBack(ctx: Ctx, r: Rect, cssPerUnit: number): void {
   drawSunbeams(ctx, WALL_DECOR);
   ctx.restore();
   // tiles behind the worktop
-  drawDecor(ctx, { type: 'backsplash', x: -14, y: COUNTER_Y - 62, w: WORLD_W + 28, h: 62 }, THEME, SEED + 3);
+  drawDecor(ctx, { type: 'backsplash', x: ROOM_X0, y: COUNTER_Y - 62, w: ROOM_X1 - ROOM_X0, h: 62 }, THEME, SEED + 3);
   paintCounter(ctx, r);
   paintCounterThings(ctx);
   jarShadow(ctx);
@@ -84,7 +87,8 @@ function paintCounter(ctx: Ctx, r: Rect): void {
   // the counter art stands on the room floor (560): shift it so the floor is off screen
   const ty = Math.max(0, r.y1 + 14 - 560);
   const top = COUNTER_Y - ty;
-  const prop = { uid: 3, kind: 'furniture', type: 'counter', x0: -22, x1: WORLD_W + 22, y: top } as unknown as Prop;
+  // (the counter art insets its cabinets 6 units and lets the worktop overhang them)
+  const prop = { uid: 3, kind: 'furniture', type: 'counter', x0: ROOM_X0, x1: ROOM_X1, y: top } as unknown as Prop;
   ctx.save();
   ctx.translate(0, ty);
   drawFurniture(ctx, prop, THEME);
@@ -102,27 +106,17 @@ function paintCounterThings(ctx: Ctx): void {
 function jarShadow(ctx: Ctx): void {
   const hw = (FOOT_PART.k === 'box' ? FOOT_PART.x1 - FOOT_PART.x0 : 200) / 2;
   restShadow(ctx, CX + 6, COUNTER_Y - 1, hw + 8, 4.5, 0.26);
-  softBand(ctx, CX + 30, COUNTER_Y + 0.5, hw * 0.9, 3, 0.14);
+  // the shade falls away from the window, toward the right
+  softShadow(ctx, CX + 30, COUNTER_Y + 0.5, hw * 0.9, 3, 0.12);
   caustic(ctx, CX + hw * 0.45, COUNTER_Y + 1.2, hw * 0.55, 3.2, 0.38, mix('#FFF3D6', TINT, 0.3));
-}
-
-function softBand(ctx: Ctx, x: number, y: number, rx: number, ry: number, a: number): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(1, ry / rx);
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-  g.addColorStop(0, `rgba(62,58,79,${a})`);
-  g.addColorStop(1, 'rgba(62,58,79,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(0, 0, rx, 0, TAU);
-  ctx.fill();
-  ctx.restore();
 }
 
 /** Far wall, the light on the floor and the far half of the rim (under the cats). */
 function jarBack(ctx: Ctx): void {
   const ri = RIM.rxm - RIM.r;
+  // a jar this big would look milky with a teacup's veil: thin it out
+  ctx.save();
+  ctx.globalAlpha = 0.72;
   glassWall(
     ctx,
     'catjar',
@@ -136,6 +130,7 @@ function jarBack(ctx: Ctx): void {
     },
     RIM.y - ri * K,
   );
+  ctx.restore();
   floorLight(ctx, CAV, TINT);
   rimLip(ctx, RIM, TINT, 'far');
 }
@@ -162,9 +157,9 @@ function floorLight(ctx: Ctx, c: Cavity, tint: string): void {
 /** Dollhouse cut edges beyond the room (only seen on wide screens). */
 function paintFrame(ctx: Ctx, r: Rect): void {
   const SIDE = 7;
-  const x0 = -24;
-  const x1 = WORLD_W + 24;
-  if (r.x0 >= x0 - SIDE && r.x1 <= x1 + SIDE) return;
+  const x0 = ROOM_X0;
+  const x1 = ROOM_X1;
+  if (r.x0 >= x0 && r.x1 <= x1) return;
   ctx.save();
   ctx.fillStyle = PALETTE.ink;
   ctx.fillRect(r.x0, r.y0, x0 - SIDE - r.x0, r.y1 - r.y0);
@@ -222,6 +217,7 @@ export function paintFront(ctx: Ctx): void {
   ctx.lineTo(RIM.cx - ro, RIM.y + 600);
   ctx.closePath();
   ctx.clip();
+  ctx.globalAlpha = 0.85;
   glassWall(ctx, 'catjar', CAV, TINT, false, () => {
     ctx.beginPath();
     cavityPath(ctx, CAV);
@@ -283,7 +279,7 @@ const KRAFT = '#D9B98A';
 
 /** Jute twine tied round the neck, and a kraft paper tag with a paw print. */
 function twineAndTag(ctx: Ctx): void {
-  const y = RIM.y + 13;
+  const y = RIM.y + 5;
   const { cx, hw } = cavityAt(CAV, y);
   const R = hw + JAR.wall * 2 + 0.4;
   ctx.save();
