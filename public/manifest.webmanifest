@@ -1,0 +1,11 @@
+{
+  "name": "If It Fits",
+  "short_name": "If It Fits",
+  "description": "A cozy, no-fail soft-body puzzle: nudge squishy cats into teacups, boots and sinks.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#3E3A4F",
+  "theme_color": "#3E3A4F",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
