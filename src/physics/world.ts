@@ -17,6 +17,8 @@ export interface ImpactEvent {
 
 export class World {
   static iterations = 2;
+  /** Substeps per frame (other games on the engine may trade accuracy for speed). */
+  substeps = SUBSTEPS;
   readonly bodies: SoftBody[] = [];
   readonly statics: StaticShape[] = [];
   frame = 0;
@@ -60,7 +62,8 @@ export class World {
   }
 
   step(): void {
-    const h = FRAME_DT / SUBSTEPS;
+    const substeps = this.substeps;
+    const h = FRAME_DT / substeps;
     const bodies = this.bodies;
     for (const b of bodies) {
       b.impactSpeed = 0;
@@ -68,7 +71,7 @@ export class World {
       // A sleeping cat wakes the moment the game or a finger pulls on it.
       if (b.asleep && (b.grab || b.settleForce !== 0 || b.assistAx <= -40 || b.assistAx >= 40)) b.wake();
     }
-    for (let s = 0; s < SUBSTEPS; s++) {
+    for (let s = 0; s < substeps; s++) {
       for (const b of bodies) if (!b.asleep) b.integrate(h, GRAVITY);
       // Two passes so pressure and walls agree before velocities are derived
       // (one pass lets them fight, which shows up as chatter in tight cups).

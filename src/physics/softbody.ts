@@ -50,7 +50,8 @@ export class SoftBody {
   static grabDamp = 0.6;
   readonly id: number;
   readonly breed: Breed;
-  readonly p: BreedPhysics;
+  /** Physics numbers (the breed's, unless overridden; resize() changes radius). */
+  p: BreedPhysics;
   readonly n: number;
   readonly x: Float64Array;
   readonly y: Float64Array;
@@ -70,11 +71,12 @@ export class SoftBody {
   readonly contactShape: Int32Array;
   readonly contactNx: Float32Array;
   readonly contactNy: Float32Array;
-  readonly restLen: number;
-  readonly area0: number;
-  readonly mass: number;
-  readonly nodeMass: number;
-  readonly invNodeMass: number;
+  // Rest size (changed only by resize()).
+  restLen: number;
+  area0: number;
+  mass: number;
+  nodeMass: number;
+  invNodeMass: number;
 
   // Derived each substep
   cx = 0;
@@ -126,10 +128,15 @@ export class SoftBody {
   impactSpeed = 0;
   impactShape = -1;
 
-  constructor(breedId: BreedId, cx: number, cy: number) {
+  /**
+   * `physics` overrides the breed's numbers for this one body (other games
+   * built on the engine use breeds at other sizes, e.g. a radius and node
+   * count per merge tier).
+   */
+  constructor(breedId: BreedId, cx: number, cy: number, physics?: Partial<BreedPhysics>) {
     this.id = nextBodyId++;
     this.breed = BREEDS[breedId];
-    this.p = this.breed.physics;
+    this.p = physics ? { ...this.breed.physics, ...physics } : this.breed.physics;
     const n = (this.n = this.p.nodes);
     const r = this.p.radius;
     this.x = new Float64Array(n);
@@ -201,6 +208,32 @@ export class SoftBody {
     this.cy = sy / n;
     this.vcx = svx / n;
     this.vcy = svy / n;
+  }
+
+  /**
+   * Grow or shrink to a new rest radius, keeping the node count: the rest
+   * shapes, area, edge length and mass all scale, and the outline eases to the
+   * new size through the area and edge constraints over the next few frames.
+   */
+  resize(radius: number): void {
+    const k = radius / this.p.radius;
+    if (!(k > 0) || k === 1) return;
+    this.p = { ...this.p, radius };
+    const n = this.n;
+    for (let i = 0; i < n; i++) {
+      this.roundX[i] *= k;
+      this.roundY[i] *= k;
+      this.loafX[i] *= k;
+      this.loafY[i] *= k;
+      this.qx[i] *= k;
+      this.qy[i] *= k;
+    }
+    this.area0 *= k * k;
+    this.restLen *= k;
+    this.mass = (this.p.density * this.area0) / 1000;
+    this.nodeMass = this.mass / n;
+    this.invNodeMass = 1 / this.nodeMass;
+    this.wake();
   }
 
   /** Bounding box of node positions (no skin). */

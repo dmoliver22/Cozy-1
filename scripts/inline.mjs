@@ -1,10 +1,12 @@
-// Inline the built JS/CSS (and the favicon) into one self-contained index.html.
-// Usage: node scripts/inline.mjs dist-single
+// Inline the built JS/CSS (and the favicon) into one self-contained HTML page.
+// Usage: node scripts/inline.mjs dist-single            (the game, index.html)
+//        node scripts/inline.mjs dist-proto/jar jar     (a prototype, jar.html)
 import { readFileSync, writeFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const dir = process.argv[2] ?? 'dist-single';
-const htmlPath = join(dir, 'index.html');
+const page = `${process.argv[3] ?? 'index'}.html`;
+const htmlPath = join(dir, page);
 let html = readFileSync(htmlPath, 'utf8');
 
 html = html.replace(/<script type="module" crossorigin src="\.\/(assets\/[^"]+\.js)"><\/script>/g, (_, file) => {
@@ -20,6 +22,6 @@ if (existsSync(join(dir, 'icon.svg'))) {
 html = html.replace(/\s*<link rel="manifest"[^>]*>/, '');
 writeFileSync(htmlPath, html);
 
-// Everything now lives in index.html.
-for (const f of readdirSync(dir)) if (f !== 'index.html') rmSync(join(dir, f), { recursive: true, force: true });
+// Everything now lives in the one page.
+for (const f of readdirSync(dir)) if (f !== page) rmSync(join(dir, f), { recursive: true, force: true });
 console.log(`inlined -> ${htmlPath} (${(html.length / 1024).toFixed(0)} KB)`);
