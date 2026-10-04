@@ -99,6 +99,9 @@ export class CatView {
   pawRest = 0;
   pawRim = 0;
   dangle = 0;
+  /** Sitting deeper than the rim: the head peeks over it (0..1), at this x. */
+  peek = 0;
+  peekX = 0;
 
   constructor(n: number, seed: number) {
     this.ox = new Float64Array(n);
@@ -410,6 +413,14 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
     const px1 = v.fx + r * 0.42;
     if (px0 > rim.x0 + 2 && px1 < rim.x1 - 2) onRim = 1;
   }
+  // A cat sitting deeper than its rim peeks over it: eyes, ears and paws up.
+  const deep = rim && pose.seated && ol.y0 > rim.y - r * 0.3 ? 1 : 0;
+  if (rim && deep) {
+    const px = clamp(v.fx, rim.x0 + r * 0.5, rim.x1 - r * 0.5);
+    v.peekX = v.peek < 0.02 || snap ? px : v.peekX + (px - v.peekX) * ease(v.dt, 8);
+    onRim = rim.x1 - rim.x0 > r * 1.2 ? 1 : 0;
+  }
+  v.peek += (deep - v.peek) * (snap ? 1 : ease(v.dt, 5));
   v.pawRim += (onRim - v.pawRim) * (snap ? 1 : ease(v.dt, 7));
   furOutline(b, v, r, look);
 }
@@ -547,9 +558,10 @@ export function drawCat(ctx: Ctx, b: SoftBody, v: CatView, pose: CatPose, scaleH
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   if (!pose.rim) drawTailShape(ctx, v, r, look, ink);
-  for (const e of v.ears) drawEar(ctx, v, e, r, look, ink);
+  if (v.peek < 0.3) for (const e of v.ears) drawEar(ctx, v, e, r, look, ink);
   drawBody(ctx, v, pose, r, look, ink);
-  drawFace(ctx, look, ink, v.fx, v.fy, v.fs, r, pose, v);
+  // a peeking head carries the face over the rim instead
+  if (v.peek < 0.3) drawFace(ctx, look, ink, v.fx, v.fy, v.fs, r, pose, v);
   if (!pose.rim && v.pawRest > 0.02) drawRestPaws(ctx, v, r, ink);
   ctx.restore();
   if (layer === 'all' && pose.rim) drawOver(ctx, v, pose, r, look, ink);
@@ -569,7 +581,57 @@ function drawOver(ctx: Ctx, v: CatView, pose: CatPose, r: number, look: BreedLoo
   ctx.clip('evenodd');
   if (v.tailA > 0.02) drawTailShape(ctx, v, r, look, ink);
   ctx.restore();
+  if (v.peek > 0.02) drawPeek(ctx, v, pose, rim, r, look, ink);
   if (v.pawRim > 0.02) drawRimPaws(ctx, v, rim, r, ink);
+}
+
+/** The head of a cat sitting deep in a container, peeking over the rim. */
+function drawPeek(ctx: Ctx, v: CatView, pose: CatPose, rim: Rim, r: number, look: BreedLook, ink: Ink): void {
+  const p = v.peek;
+  const rx = Math.min(r * 0.62, (rim.x1 - rim.x0) / 2 + rim.lip * 0.6);
+  const ry = rx * 0.84;
+  const k = rx / (r * 0.62);
+  const hx = v.peekX;
+  const cy = rim.y + ry * 0.62 - r * 0.62 * k * p;
+  ctx.save();
+  ctx.globalAlpha *= clamp(p * 1.5, 0, 1);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // only what's above the near rim shows
+  ctx.beginPath();
+  ctx.rect(hx - r * 2, rim.y - r * 3, r * 4, r * 3 + 1.2);
+  ctx.clip();
+  for (const s of [-1, 1]) {
+    const a = 0.62;
+    let dx = s * 0.38;
+    let dy = -1;
+    const l = Math.hypot(dx, dy);
+    dx /= l;
+    dy /= l;
+    drawEar(ctx, v, { x: hx + s * rx * Math.sin(a) * 0.92, y: cy - ry * Math.cos(a) * 0.92, dx, dy }, r * k, look, ink);
+  }
+  const P = new Path2D();
+  P.ellipse(hx, cy, rx, ry, 0, 0, Math.PI * 2);
+  const box: Box = { x0: hx - rx, y0: cy - ry, x1: hx + rx, y1: cy + ry };
+  ctx.fillStyle = ink.base;
+  ctx.fill(P);
+  ctx.save();
+  ctx.clip(P);
+  if (ink.fur) fillTexture(ctx, ink.fur, box, ink.furAlpha, 'overlay', ink.furScale, hx, cy);
+  const g = ctx.createRadialGradient(hx - rx * 0.35, cy - ry * 0.45, rx * 0.05, hx - rx * 0.35, cy - ry * 0.45, rx * 2);
+  g.addColorStop(0, rgba(ink.lit, ink.dark ? 0.35 : 0.42));
+  g.addColorStop(0.45, rgba(ink.lit, 0));
+  g.addColorStop(0.65, rgba(ink.shade, 0));
+  g.addColorStop(1, rgba(ink.shade, 0.5));
+  ctx.fillStyle = g;
+  ctx.fillRect(box.x0, box.y0, rx * 2, ry * 2);
+  innerBands(ctx, P, box, ink.rim, r * 0.08, ink.rimAlpha, 'light', 1);
+  ctx.restore();
+  ctx.lineWidth = v.lw * 0.8;
+  ctx.strokeStyle = rgba(ink.line, ink.lineAlpha);
+  ctx.stroke(P);
+  drawFace(ctx, look, ink, hx, cy + ry * 0.2, v.fs * Math.min(1, k * 1.1), r * k, pose, v);
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,8 +1174,9 @@ function drawRimPaws(ctx: Ctx, v: CatView, rim: Rim, r: number, ink: Ink): void 
   const rx = r * 0.18;
   const ry = r * 0.13;
   const y = rim.y + ry * 0.35;
+  const cx = v.peek > 0.5 ? v.peekX : v.fx;
   for (const s of [-1, 1]) {
-    const x = v.fx + s * r * 0.3;
+    const x = cx + s * r * 0.3;
     // a little contact shadow on the rim below each paw
     const sg = ctx.createRadialGradient(x, y + ry * 0.9, 0, x, y + ry * 0.9, rx * 1.3);
     sg.addColorStop(0, 'rgba(62,48,70,0.22)');

@@ -42,7 +42,14 @@ one in your hand last) → effects. A cat counts as "in" a container once 2% of
 it is inside the cavity (or it is seated). Its tail then either drapes over the
 nearer rim (when the body reaches the rim) or curls up out of a roomy container,
 clipped so nothing shows inside the container below the rim line. Tail control
-points are eased relative to the head, so pose changes never pop.
+points are eased relative to the head, so pose changes never pop. A seated cat
+whose whole body is below the rim peeks over it: the over pass paints its head
+rising above the rim (ears and eyes), with its front paws on the rim.
+
+Night rooms multiply the finished frame by a light map painted once per room
+(indigo ambient, darker corners, warm pools under pendant lamps, moonlight by
+night windows) and add a small glow round each bulb. A daytime room never shows
+the night view through a window; it gets golden hour instead.
 
 All paint shares one light (`LIGHT`, upper left). Shadows use `shadowOf` (darker,
 nudged toward violet), lights use `lightOf` (lighter, nudged toward yellow),

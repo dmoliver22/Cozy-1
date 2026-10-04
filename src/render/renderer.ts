@@ -3,12 +3,12 @@
 
 import type { Cat, Session } from '../game/session';
 import { FLOOR_Y, WORLD_W, type Prop } from '../game/props';
-import type { RoomDef } from '../game/room';
+import type { DecorPlacement, RoomDef } from '../game/room';
 import { clamp, damp, easeInOut, lerp } from '../util/math';
 import { CatView, drawCat, catFootprint, type CatPose, type Expression } from './catArt';
 import { drawContainerBack, drawContainerFront, containerShadow } from './propArt';
 import { drawFurniture } from './furnitureArt';
-import { drawDecor, drawShell, drawSunbeams, THEMES, type Theme } from './roomArt';
+import { SUN_DRIFT, drawDecor, drawShell, drawSunbeams, THEMES, type Theme } from './roomArt';
 import { PALETTE, contactShadow, hash01, lightOf, paperGrain, pill, rgba, roundRect, shadowOf, softShadow, type Ctx } from './paint';
 
 export const ROOM_TOP = -14;
@@ -42,9 +42,7 @@ export interface HintGhost {
 }
 
 export class Renderer {
-  static nightTint = 'rgba(104,96,172,0.52)';
-  static nightGlowOp: GlobalCompositeOperation = 'lighter';
-  static lampColor = 'rgba(255,170,90,0.34)';
+  static nightAmbient: [number, number, number] = [108, 104, 180];
   readonly canvas: HTMLCanvasElement;
   readonly ctx: Ctx;
   dpr = 1;
@@ -260,20 +258,38 @@ export class Renderer {
     ctx.restore();
   }
 
+  private decorFor: RoomDef | null = null;
+  private decorList: DecorPlacement[] = [];
+
+  /**
+   * The room's decor as painted: a daytime room never looks out of a night
+   * window (generated sills can pick the night view), it gets golden hour.
+   */
+  private decor(): DecorPlacement[] {
+    const def = this.def;
+    if (!def) return [];
+    if (this.decorFor !== def) {
+      this.decorFor = def;
+      this.decorList = def.mood === 'night' ? def.decor : def.decor.map((d) => (d.type === 'window' && d.variant === 3 ? { ...d, variant: 2 } : d));
+    }
+    return this.decorList;
+  }
+
   private paintBack(ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }): void {
     const s = this.session!;
     const def = s.def;
     const seed = hashStr(def.id);
     drawShell(ctx, this.theme, r.x0, r.y0, r.x1, r.y1, seed);
-    for (const d of def.decor) if (d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel') drawDecor(ctx, d, this.theme, seed + d.x);
+    const decor = this.decor();
+    for (const d of decor) if (d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel') drawDecor(ctx, d, this.theme, seed + d.x);
     for (const p of s.furniture) if (!this.liveProps.has(p.uid)) drawFurniture(ctx, p, this.theme);
-    for (const d of def.decor) if (!(d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel')) drawDecor(ctx, d, this.theme, seed + d.x);
+    for (const d of decor) if (!(d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel')) drawDecor(ctx, d, this.theme, seed + d.x);
     for (const p of s.containers) {
       if (this.liveProps.has(p.uid)) continue;
       containerShadow(ctx, p);
       drawContainerBack(ctx, p);
     }
-    drawSunbeams(ctx, def.decor);
+    drawSunbeams(ctx, decor);
     this.paintFrame(ctx, r);
   }
 
@@ -519,56 +535,113 @@ export class Renderer {
     }
   }
 
-  /** Dust motes drifting in the window light. */
+  /** Dust motes drifting down the window's shaft of light. */
   private drawMotes(ctx: Ctx): void {
     const t = this.time;
     ctx.save();
-    for (const d of this.def!.decor) {
+    for (const d of this.decor()) {
       if (d.type !== 'window' || d.variant === 3) continue;
       const w = d.w ?? 110;
-      const top = d.y + (d.h ?? 130);
-      const bottom = FLOOR_Y + 30;
-      const skew = 0.55;
-      const x0 = d.x - w / 2 + 6;
-      const span = w - 12;
-      for (let i = 0; i < 16; i++) {
-        const sp = 0.012 + hash01(i, 3) * 0.02;
+      const h = d.h ?? 130;
+      const x = d.x - w / 2;
+      const top = d.y + h * 0.75;
+      const span = FLOOR_Y - top;
+      for (let i = 0; i < 18; i++) {
+        const sp = 0.01 + hash01(i, 3) * 0.018;
         const u = (hash01(i, 1) + t * sp) % 1;
-        const y = top + u * (bottom - top) * 0.8;
-        const v = (hash01(i, 2) + Math.sin(t * (0.25 + hash01(i, 4) * 0.3) + i) * 0.08 + 1) % 1;
-        const x = x0 + (y - top) * skew + v * span;
-        const a = Math.sin(u * Math.PI) * (0.35 + 0.35 * Math.sin(t * (1 + hash01(i, 5)) + i * 1.7)) * 0.8;
-        if (a <= 0.02) continue;
-        const rr = 0.7 + hash01(i, 6) * 0.9;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, rr * 2.2);
-        g.addColorStop(0, `rgba(255,246,214,${a})`);
-        g.addColorStop(1, 'rgba(255,246,214,0)');
+        const py = top + u * span * 0.92;
+        const v = 0.12 + 0.76 * ((hash01(i, 2) + Math.sin(t * (0.25 + hash01(i, 4) * 0.3) + i) * 0.06 + 1) % 1);
+        const px = x + w * v + (py - d.y - h * 0.5) * SUN_DRIFT;
+        const a = Math.sin(u * Math.PI) * (0.45 + 0.35 * Math.sin(t * (1 + hash01(i, 5)) + i * 1.7));
+        if (a <= 0.03) continue;
+        const rr = 0.5 + hash01(i, 6) * 0.9;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rr * 2.2);
+        g.addColorStop(0, `rgba(255,250,232,${a})`);
+        g.addColorStop(0.4, `rgba(255,246,220,${a * 0.5})`);
+        g.addColorStop(1, 'rgba(255,246,220,0)');
         ctx.fillStyle = g;
-        ctx.fillRect(x - rr * 2.2, y - rr * 2.2, rr * 4.4, rr * 4.4);
+        ctx.fillRect(px - rr * 2.2, py - rr * 2.2, rr * 4.4, rr * 4.4);
       }
     }
     ctx.restore();
   }
 
+  /**
+   * Lamp-lit night: the scene is multiplied by a light map (deep indigo
+   * ambient, darker toward the corners, warm pools under the lamps, cool
+   * moonlight by night windows), then each bulb gets a small glow.
+   */
   private drawNight(ctx: Ctx): void {
     const r = this.layerRect;
+    const map = this.nightLightMap();
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = Renderer.nightTint;
-    ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
-    ctx.globalCompositeOperation = Renderer.nightGlowOp;
-    for (const d of this.def!.decor) {
-      if (d.type !== 'pendant' && d.type !== 'window') continue;
-      const cx = d.x;
-      const cy = d.type === 'pendant' ? d.y + 20 : d.y + (d.h ?? 120) / 2;
-      const rad = d.type === 'pendant' ? 230 : 120;
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-      g.addColorStop(0, d.type === 'pendant' ? Renderer.lampColor : 'rgba(150,160,230,0.22)');
-      g.addColorStop(1, 'rgba(255,196,120,0)');
+    ctx.drawImage(map, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    ctx.globalCompositeOperation = 'screen';
+    for (const d of this.decor()) {
+      if (d.type !== 'pendant') continue;
+      const g = ctx.createRadialGradient(d.x, d.y + 4, 0, d.x, d.y + 4, 42);
+      g.addColorStop(0, 'rgba(255,226,170,0.55)');
+      g.addColorStop(0.4, 'rgba(255,200,140,0.18)');
+      g.addColorStop(1, 'rgba(255,200,140,0)');
       ctx.fillStyle = g;
-      ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+      ctx.fillRect(d.x - 42, d.y - 38, 84, 84);
     }
     ctx.restore();
+  }
+
+  private nightMap: HTMLCanvasElement | null = null;
+  private nightMapKey = '';
+
+  /** The night light map, painted once per room and layout at low resolution. */
+  private nightLightMap(): HTMLCanvasElement {
+    const r = this.layerRect;
+    const key = `${this.layerKey}`;
+    if (this.nightMap && this.nightMapKey === key) return this.nightMap;
+    const k = 0.5;
+    const c = this.nightMap ?? document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil((r.x1 - r.x0) * k));
+    c.height = Math.max(1, Math.ceil((r.y1 - r.y0) * k));
+    const g = c.getContext('2d')!;
+    g.setTransform(k, 0, 0, k, -r.x0 * k, -r.y0 * k);
+    const w = r.x1 - r.x0;
+    const h = r.y1 - r.y0;
+    const [ar, ag, ab] = Renderer.nightAmbient;
+    g.fillStyle = `rgb(${ar},${ag},${ab})`;
+    g.fillRect(r.x0, r.y0, w, h);
+    const cx = (r.x0 + r.x1) / 2;
+    const cy = (r.y0 + r.y1) / 2;
+    const vg = g.createRadialGradient(cx, cy, Math.min(w, h) * 0.3, cx, cy, Math.max(w, h) * 0.72);
+    vg.addColorStop(0, 'rgba(54,50,112,0)');
+    vg.addColorStop(1, 'rgba(54,50,112,0.6)');
+    g.fillStyle = vg;
+    g.fillRect(r.x0, r.y0, w, h);
+    for (const d of this.decor()) {
+      if (d.type === 'pendant') {
+        const lx = d.x;
+        const ly = d.y + 30;
+        const rad = 265;
+        const lg = g.createRadialGradient(lx, ly, 0, lx, ly, rad);
+        lg.addColorStop(0, 'rgba(255,238,206,1)');
+        lg.addColorStop(0.16, 'rgba(255,218,176,0.92)');
+        lg.addColorStop(0.45, 'rgba(214,168,160,0.5)');
+        lg.addColorStop(1, `rgba(${ar},${ag},${ab},0)`);
+        g.fillStyle = lg;
+        g.fillRect(lx - rad, ly - rad, rad * 2, rad * 2);
+      } else if (d.type === 'window' && d.variant === 3) {
+        const wx = d.x;
+        const wy = d.y + (d.h ?? 120) / 2;
+        const rad = 130;
+        const wg = g.createRadialGradient(wx, wy, 0, wx, wy, rad);
+        wg.addColorStop(0, 'rgba(170,184,240,0.75)');
+        wg.addColorStop(1, 'rgba(170,184,240,0)');
+        g.fillStyle = wg;
+        g.fillRect(wx - rad, wy - rad, rad * 2, rad * 2);
+      }
+    }
+    this.nightMap = c;
+    this.nightMapKey = key;
+    return c;
   }
 
   private poseFor(cat: Cat, v: CatView): CatPose {

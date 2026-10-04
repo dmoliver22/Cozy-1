@@ -123,12 +123,12 @@ function panel(ctx: Ctx, x: number, y: number, w: number, h: number, base: strin
   inkLine(ctx, path, base, 0.9, 0.55);
 }
 
-/** Painted carcass shading: light from the upper left, deeper toward the floor. */
-function carcassLight(ctx: Ctx, path: PathFn, x0: number, x1: number, y0: number, y1: number, base: string): void {
+/** Painted carcass in one fill: light from the upper left, deeper toward the floor. */
+function carcass(ctx: Ctx, path: PathFn, x0: number, x1: number, y0: number, y1: number, base: string): void {
   const g = ctx.createLinearGradient(x0, y0, x1 + (y1 - y0) * 0.25, y1);
-  g.addColorStop(0, rgba(lightOf(base, 0.6), 0.32));
-  g.addColorStop(0.45, rgba(base, 0));
-  g.addColorStop(1, rgba(shadowOf(base, 0.6), 0.32));
+  g.addColorStop(0, mix(base, lightOf(base, 0.6), 0.32));
+  g.addColorStop(0.45, base);
+  g.addColorStop(1, mix(base, shadowOf(base, 0.6), 0.32));
   ctx.fillStyle = g;
   path();
   ctx.fill();
@@ -237,11 +237,7 @@ function counter(ctx: Ctx, x0: number, x1: number, y: number, theme: FurnitureTh
   const body = (): void => roundRect(ctx, x0, by, w, FLOOR_Y - by, [0, 0, 2, 2]);
   wallShadow(ctx, x1 + 6, y, 12, 0.22);
   contactShadow(ctx, (x0 + x1) / 2, FLOOR_Y, w / 2 + 2, 0.32, 0.8);
-  ctx.fillStyle = cab;
-  body();
-  ctx.fill();
-  paintTex(ctx, body, 'brush', 0.2, 0.4, 0.4, x0, by);
-  carcassLight(ctx, body, x0, x1, by, FLOOR_Y, cab);
+  carcass(ctx, body, x0, x1, by, FLOOR_Y, cab);
   // toe kick, recessed into shadow
   ctx.fillStyle = shadowOf(cab, 0.5);
   ctx.fillRect(x0 + 3, FLOOR_Y - 9, w - 6, 9);
@@ -262,6 +258,8 @@ function counter(ctx: Ctx, x0: number, x1: number, y: number, theme: FurnitureTh
     const hx = doors === 1 ? dx + dw - 9 : k % 2 === 0 ? dx + dw - 9 : dx + 9;
     knob(ctx, hx, dy + 12, 2.3, BRASS);
   }
+  // one pass of dry-brush texture over the whole painted front, doors and all
+  paintTex(ctx, body, 'brush', 0.2, 0.4, 0.4, x0, by);
   // worktop: butcher block (stone in the bathroom)
   const tx = x0 - 6;
   const tw = w + 12;
@@ -528,11 +526,7 @@ function cabinet(ctx: Ctx, x0: number, x1: number, y: number, col: string, seed:
   roundRect(ctx, x0 + 2, base, w - 4, 5, 1.5);
   ctx.fill();
   for (const fx of [x0 + 7, x1 - 7]) knob(ctx, fx, FLOOR_Y - 2.6, 3.2, shadowOf(WOOD, 0.2));
-  ctx.fillStyle = col;
-  body();
-  ctx.fill();
-  paintTex(ctx, body, 'brush', 0.2, 0.4, 0.4, x0, by);
-  carcassLight(ctx, body, x0, x1, by, base, col);
+  carcass(ctx, body, x0, x1, by, base, col);
   // drawers
   const rows = Math.max(2, Math.round((base - by - 4) / 34));
   const rh = (base - by - 4) / rows;
@@ -545,6 +539,7 @@ function cabinet(ctx: Ctx, x0: number, x1: number, y: number, col: string, seed:
       cupPull(ctx, x0 + w * 0.7, ry + rh / 2 - 1.5, 10);
     } else knob(ctx, (x0 + x1) / 2, ry + rh / 2, 2.4, BRASS);
   }
+  paintTex(ctx, body, 'brush', 0.2, 0.4, 0.4, x0, by);
   inkLine(ctx, body, col, 1.1, 0.7);
   // wooden top
   plank(ctx, x0 - 1.5, y, w + 3, top, mix(WOOD, col, 0.2), seed, 2.5, 3);
@@ -564,16 +559,20 @@ function bookcase(ctx: Ctx, x0: number, x1: number, y: number, seed: number): vo
   const sh = (bottom - top) / shelves;
   const back = shadowOf(wood, 0.55);
   const cols = ['#8FA9C8', '#D99A92', '#E8CB86', '#9DB894', '#B8A6CC', '#D6A27E', '#E9DFCB', '#A9C1C9'];
+  // the back of the case, then each compartment darker deep under its shelf
+  ctx.fillStyle = back;
+  ctx.fillRect(ix0, top, ix1 - ix0, bottom - top);
+  const under = ctx.createLinearGradient(0, 0, 0, 12);
+  under.addColorStop(0, rgba(shadowOf(back, 0.6), 0.75));
+  under.addColorStop(1, rgba(shadowOf(back, 0.6), 0));
   for (let k = 0; k < shelves; k++) {
     const cy0 = top + k * sh;
     const cy1 = cy0 + sh - 5;
-    // the back of the compartment, darker deep under the shelf above
-    const bg = ctx.createLinearGradient(0, cy0, 0, cy1);
-    bg.addColorStop(0, shadowOf(back, 0.45));
-    bg.addColorStop(0.35, back);
-    bg.addColorStop(1, mix(back, wood, 0.25));
-    ctx.fillStyle = bg;
-    ctx.fillRect(ix0, cy0, ix1 - ix0, cy1 - cy0);
+    ctx.save();
+    ctx.translate(0, cy0);
+    ctx.fillStyle = under;
+    ctx.fillRect(ix0, 0, ix1 - ix0, 12);
+    ctx.restore();
     // books, batched by colour: spines, then lit and shaded strips, gilt and labels
     let bx = ix0 + 1.5;
     let i = 0;

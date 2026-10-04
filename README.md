@@ -69,7 +69,12 @@ form shading, occlusion underneath and a rim of light; ears with pink insides,
 dot eyes with highlights, whisker pads, little paws. A cat in a container is
 painted in two passes, its body under the container's front and its tail and
 front paws over it, so the tail drapes over the rim instead of poking through
-the cup. The room and the props are painted once into cached layers.
+the cup; a cat sitting deeper than the rim peeks over it. Containers are
+glazed, woven, stamped or brushed (cylinder shading baked into cached maps so
+painted motifs shade with the body), and the rooms get plaster walls,
+wainscoting, plank floors, deep windows with a painted view, light shafts with
+drifting dust, and lamp-lit nights. The room and the props are painted once
+into cached layers.
 
 **Fitting.** Containers have a cavity polygon. A cat touching a container makes
 a sticky decision: pour in (a damped pull toward the opening plus a gentle

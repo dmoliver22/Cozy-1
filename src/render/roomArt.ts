@@ -783,7 +783,8 @@ function paintFloor(ctx: Ctx, theme: Theme, vx0: number, vx1: number, vy1: numbe
 // --- Sunbeams ------------------------------------------------------------------
 
 /** Sunlight comes from the upper left: per unit of drop it drifts right. */
-const SUN_DRIFT = 0.27;
+/** Sideways drift of window light per unit it falls (the sun is up and to the left). */
+export const SUN_DRIFT = 0.27;
 
 interface WinBox {
   x: number;
@@ -807,20 +808,19 @@ function sunOnFloor(px: number, py: number, b: WinBox): [number, number] {
   return [px + (FLOOR_Y - py) * SUN_DRIFT, FLOOR_Y + 7 + (b.y + b.h - py) * 0.2];
 }
 
-/** Sunbeams from windows, drawn over the back layer: soft shafts, a warm patch on the floor, dust motes. */
+/** Sunbeams from windows, drawn over the back layer: soft shafts and a warm patch on the floor (the renderer adds drifting dust). */
 export function drawSunbeams(ctx: Ctx, decor: DecorPlacement[]): void {
   for (const d of decor) {
     if (d.type !== 'window') continue;
     const b = windowBox(d);
     const night = d.variant === 3;
-    const seed = Math.floor(d.x * 13 + d.y * 7);
     ctx.save();
-    lightShafts(ctx, b, night, seed);
+    lightShafts(ctx, b, night);
     ctx.restore();
   }
 }
 
-function lightShafts(ctx: Ctx, b: WinBox, night: boolean, seed: number): void {
+function lightShafts(ctx: Ctx, b: WinBox, night: boolean): void {
   const { x, y, w, h } = b;
   const mid = x + w / 2;
   const tr = y + h * 0.45; // transom
@@ -880,25 +880,6 @@ function lightShafts(ctx: Ctx, b: WinBox, night: boolean, seed: number): void {
   patch();
   ctx.fill();
   ctx.globalAlpha = 1;
-  // dust motes drifting in the light
-  if (!night) {
-    for (let k = 0; k < 18; k++) {
-      const t = hash01(seed, k);
-      const u = hash01(seed, k + 40);
-      const py = y + h * 0.75 + t * (FLOOR_Y - y - h * 0.75) * 0.92;
-      const px = x + w * (0.12 + u * 0.76) + (py - y - h * 0.5) * SUN_DRIFT;
-      const r = 0.5 + hash01(seed, k + 80) * 0.9;
-      const a = 0.4 + hash01(seed, k + 120) * 0.45;
-      const gl = ctx.createRadialGradient(px, py, 0, px, py, r * 2.2);
-      gl.addColorStop(0, `rgba(255,250,232,${a})`);
-      gl.addColorStop(0.4, `rgba(255,246,220,${a * 0.5})`);
-      gl.addColorStop(1, 'rgba(255,246,220,0)');
-      ctx.fillStyle = gl;
-      ctx.beginPath();
-      ctx.arc(px, py, r * 2.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
 }
 
 // --- Windows ---------------------------------------------------------------------
