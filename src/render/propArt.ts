@@ -1,61 +1,68 @@
-// Painted containers, in two layers: the "back" (the inside and the far rim)
-// goes under the cats, the "front" (body and near rim) over them, so a poured
-// cat really looks like it's sitting in the teacup. Fronts never paint above
-// the near rim over the opening. Vessels use the kit in propKit.ts; drawing is
-// in local space (origin bottom centre, up is -y), mirrored for flipped props
-// while the light stays upper left.
+// Glass containers, in two layers: the "back" (the far wall seen through the
+// glass, the far half of the rim, light and shade on the floor) goes under the
+// cats; the "front" (the near wall, walls and base seen edge-on, the near rim,
+// highlights) goes over them, mostly clear so a cat inside shows through,
+// slightly veiled. The glass is drawn exactly on the physics parts, so a
+// squished cat presses against its inner face. Drawing is in local space
+// (origin bottom centre, up is -y), mirrored for flipped props while the light
+// stays upper left.
 
-import type { ContainerType, Prop } from '../game/props';
-import { PALETTE, edgeShade, glint, hash01, lightGradient, lightOf, lineOf, mix, rgba, roundRect, shadowOf, softShadow, specular, type Box, type Ctx } from './paint';
+import { CONTAINERS, type ContainerType, type Prop } from '../game/props';
+import { glint, hash01, lightGradient, lightOf, mix, rgba, roundRect, shadowOf, type Box, type Ctx } from './paint';
 import {
-  aroundRing,
-  band,
-  edgeShadeL,
-  inkPattern,
-  kraftPaint,
+  K,
+  bezierPts,
+  caustic,
+  cavityAt,
+  cavityPath,
+  glassShape,
+  glassSolid,
+  glassStreak,
+  glassWall,
   lightDir,
   litFrame,
   lsign,
-  makeVessel,
-  memo,
-  outline,
-  paintBody,
-  paintInside,
-  paintNearRim,
+  partPath,
   resBucket,
   restShadow,
-  ring,
+  ribbonPath,
+  rimLip,
   rivet,
-  shadeCylinder,
-  shadeDown,
+  scanCavity,
+  shapePart,
+  sparkle,
   texPaint,
   tube,
-  vesselPath,
-  type PathFn,
-  type Vessel,
+  type Cavity,
+  type GlassPart,
+  type Part,
+  type Rim,
+  type ShapePart,
 } from './propKit';
 
+/** Light glass tints per container (variants are picked by the prop's tint). */
 const TINTS: Record<ContainerType, string[]> = {
-  teacup: [PALETTE.teacup, '#9FCDB8', '#E9B4B0', '#F1D58F'],
-  mug: ['#F3E6D2', PALETTE.terracotta, '#A9C9B6', '#B9C7E6'],
-  boot: ['#F2C14E', '#E07F6E', '#8FB8A0', '#8FA6D9'],
-  box: ['#D8B084'],
-  shoebox: ['#B9CFE6', '#F0B9B4', '#C7DDB8'],
-  fruitbowl: ['#A9C3A0', PALETTE.teacup, '#E6A88D', '#F0D9A8'],
-  sink: ['#FBF7F0'],
-  pot: [PALETTE.terracotta, '#C97E5A'],
-  basket: ['#D7AF72'],
-  saucepan: ['#D9895A', '#9FB2C2'],
-  vase: [PALETTE.teacup, '#9FCDB8', '#E9B4B0'],
-  bucket: ['#A7B7C4', '#E3A8A0'],
-  slipper: ['#F2B8C6', '#C9B8DD', '#BFDCCB'],
-  mixingbowl: ['#F6EBDA', '#BFDCCB', '#F2C9A0'],
+  teacup: ['#A9CCEC', '#A6DCC5', '#EDBACB', '#EED49C'],
+  mug: ['#D9E9EF', '#E6D8C4', '#CDE7D6', '#D2DCF2'],
+  boot: ['#F0BE6C', '#EFA77A', '#B4D8A6', '#A8C3EA'],
+  box: ['#D6E8EA'],
+  shoebox: ['#D3E5EE', '#EED5DC', '#D2E9D3'],
+  fruitbowl: ['#BCE2C0', '#BAD4EE', '#EFC3C3', '#EFD9A2'],
+  sink: ['#DDEBEF'],
+  pot: ['#C9E5CD', '#E6D3BC'],
+  basket: ['#DAE9E9'],
+  saucepan: ['#E9AC62', '#E6A3AB'],
+  vase: ['#A9DCCA', '#B4CBEB', '#EDC0CA'],
+  bucket: ['#D9E7EE', '#EFD1D5'],
+  slipper: ['#CFE3F7', '#E1D4F4', '#CFEDE1'],
+  mixingbowl: ['#CFE2F2', '#DFEAEE', '#D2EBDC'],
 };
 
 const TAU = Math.PI * 2;
-const PORCELAIN = '#F8F1E6';
 const GOLD = '#D7AC57';
-const CLAY = '#E7D2B3';
+const CHROME = '#BAC6D1';
+const CHROME_LINE = '#8E9AA9';
+const BRASS = '#C9A15A';
 
 interface Look {
   base: string;
@@ -66,7 +73,7 @@ interface Look {
 }
 
 function lookOf(p: Prop): Look {
-  const list = TINTS[p.type as ContainerType] ?? [PALETTE.teacup];
+  const list = TINTS[p.type as ContainerType] ?? TINTS.mug;
   const v = ((p.tint % list.length) + list.length) % list.length;
   return { base: list[v], v, seed: p.uid * 13 + p.tint };
 }
@@ -76,1065 +83,676 @@ function local(ctx: Ctx, p: Prop): void {
   ctx.scale(p.flip ? -p.scale : p.scale, p.scale);
 }
 
-type Painter = (ctx: Ctx, l: Look) => void;
+/** The glass of a container type, derived once from its physics parts. */
+interface Geo {
+  type: ContainerType;
+  solid: GlassPart[];
+  thick: GlassPart[];
+  cav: Cavity;
+  rim: Rim;
+}
 
-interface Art {
-  back: Painter;
-  front: Painter;
-  /** Contact footprint: centre x, half width, base ellipse ry; plus an optional broad overhang shadow half width. */
-  foot: [number, number, number, number?];
-  /** Local extent of everything painted (x0, y0, x1, y1), for the sprite cache. */
+type Painter = (ctx: Ctx, l: Look, g: Geo) => void;
+
+interface Glass {
+  /** Parts drawn by the type's own painters (handles, saucer), not as glass body. */
+  skip?: number[];
+  /** Thick parts (bases, feet): denser, greener glass. */
+  thick: number[];
+  /**
+   * Extra solid glass, drawn only and thick: a smooth toe replacing the
+   * physics' boxy one (listed in skip), tracing the hollow's exact inner face.
+   */
+  extra?: (cav: Cavity) => ShapePart[];
+  /** Round rim: centre x, y and radius of the wall centres at the top, and the wall radius. */
+  rim: [number, number, number, number];
+  /** Straight-sided box: how deep its opening reaches back. */
+  depth?: number;
+  gold?: boolean;
+  /** Under the far wall, and over the back layer (still under the cats). */
+  back?: Painter;
+  backOver?: Painter;
+  /** Over the cats: before the glass body (things behind or inside the glass), and on top. */
+  front?: Painter;
+  frontOver?: Painter;
+  /** Contact footprint: centre x, half width, base ellipse ry. */
+  foot: [number, number, number];
+  /** Local extent of everything painted (x0, y0, x1, y1). */
   ext: [number, number, number, number];
 }
 
+const geos = new Map<ContainerType, Geo>();
+
+function geoOf(type: ContainerType): Geo {
+  let g = geos.get(type);
+  if (g) return g;
+  const spec = CONTAINERS[type];
+  const def = GLASS[type];
+  const parts = spec.parts as Part[];
+  const [cx, y, rxm, r] = def.rim;
+  const cav = scanCavity(parts, (spec.opening[0] + spec.opening[1]) / 2, y);
+  const extra = def.extra?.(cav) ?? [];
+  g = {
+    type,
+    solid: [...parts.filter((_, i) => !def.skip?.includes(i)), ...extra],
+    thick: [...def.thick.filter((i) => !def.skip?.includes(i)).map((i) => parts[i]), ...extra],
+    cav,
+    rim: { cx, y, rxm, r },
+  };
+  geos.set(type, g);
+  return g;
+}
+
 // ---------------------------------------------------------------------------
-// Shared bits
+// The generic glass layers
 
-/** A painted line around the vessel at height y (front half), e.g. a gilded band. */
-function ringLine(ctx: Ctx, v: Vessel, y: number, w: number, color: string): void {
-  const r = ring(v, y);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = w;
+/** Light and shade where the hollow meets the floor: a soft ring of shade and a caustic. */
+function floorLight(ctx: Ctx, c: Cavity, tint: string): void {
+  if (c.n < 2) return;
+  const L = lsign(ctx);
+  const { cx, hw } = cavityAt(c, c.floorY - 0.6);
+  const ry = Math.max(1.2, hw * K);
+  const y = c.floorY;
+  ctx.save();
+  ctx.translate(cx, y);
+  ctx.scale(1, ry / hw);
+  const g = ctx.createRadialGradient(0, 0, hw * 0.35, 0, 0, hw);
+  g.addColorStop(0, rgba(shadowOf(tint, 0.6), 0));
+  g.addColorStop(1, rgba(shadowOf(tint, 0.6), 0.28));
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.ellipse(0, y, r.rx + 1.5, r.ry, 0, 0, Math.PI);
-  ctx.stroke();
-}
-
-/** Filled band around the vessel between heights y0 < y1. */
-function ringBand(ctx: Ctx, v: Vessel, y0: number, y1: number, color: string): void {
-  const a = ring(v, y0);
-  const b = ring(v, y1);
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(a.rx + 2, y0);
-  ctx.ellipse(0, y0, a.rx + 2, a.ry, 0, 0, Math.PI, false);
-  ctx.lineTo(-b.rx - 2, y1);
-  ctx.ellipse(0, y1, b.rx + 2, b.ry, 0, Math.PI, 0, true);
-  ctx.closePath();
+  ctx.arc(0, 0, hw, 0, TAU);
   ctx.fill();
+  ctx.restore();
+  caustic(ctx, cx + L * hw * 0.32, y, hw * 0.42, ry * 0.5, 0.5, mix('#FFF4DA', tint, 0.25));
 }
 
-/** A raised ring (rib) pressed into a metal body: lit top edge, shaded underside. */
-function rib(ctx: Ctx, v: Vessel, y: number, base: string): void {
-  const r = ring(v, y);
-  const b: Box = { x0: -r.rx, y0: y - 3, x1: r.rx, y1: y + r.ry + 3 };
+/** The far wall, floor light and far rim lip (under the cats). */
+function glassBack(ctx: Ctx, l: Look, g: Geo): void {
+  const def = GLASS[g.type];
+  const { cav, rim } = g;
+  def.back?.(ctx, l, g);
+  if (def.depth) boxBack(ctx, l.base, g, def.depth);
+  else {
+    const ri = rim.rxm - rim.r;
+    glassWall(
+      ctx,
+      g.type,
+      cav,
+      l.base,
+      true,
+      () => {
+        ctx.beginPath();
+        cavityPath(ctx, cav);
+        ctx.ellipse(rim.cx, rim.y, ri, ri * K, 0, 0, TAU);
+      },
+      rim.y - ri * K,
+    );
+    floorLight(ctx, cav, l.base);
+    rimLip(ctx, rim, l.base, 'far', def.gold ? GOLD : undefined);
+  }
+  def.backOver?.(ctx, l, g);
+}
+
+/** The near wall, the glass body, the near rim and the highlights (over the cats). */
+function glassFront(ctx: Ctx, l: Look, g: Geo): void {
+  const def = GLASS[g.type];
+  const { cav, rim } = g;
+  const T = l.base;
+  def.front?.(ctx, l, g);
+  ctx.save();
+  if (!def.depth) {
+    const ro = rim.rxm + rim.r;
+    ctx.beginPath();
+    ctx.moveTo(rim.cx - ro, rim.y);
+    ctx.ellipse(rim.cx, rim.y, ro, ro * K, 0, Math.PI, 0, true);
+    ctx.lineTo(rim.cx + ro, rim.y + 400);
+    ctx.lineTo(rim.cx - ro, rim.y + 400);
+    ctx.closePath();
+    ctx.clip();
+  }
+  glassWall(ctx, g.type, cav, T, false, () => {
+    ctx.beginPath();
+    cavityPath(ctx, cav);
+  });
+  ctx.restore();
+  glassSolid(ctx, g.solid, g.thick, T);
+  floorEdge(ctx, cav, T);
+  if (def.depth) boxNearEdge(ctx, T, g);
+  else rimLip(ctx, rim, T, 'near', def.gold ? GOLD : undefined);
+  def.frontOver?.(ctx, l, g);
+  // crisp streaks down the near wall on the lit side, and a glint
+  if (cav.n > 4) {
+    const top = cav.y0 + (cav.floorY - cav.y0) * 0.08;
+    const len = cav.floorY - cav.y0;
+    glassStreak(ctx, cav, 0.72, top + 2, top + len * 0.72, Math.min(3, 0.9 + len * 0.04), 0.7);
+    glassStreak(ctx, cav, 0.52, top + len * 0.1, top + len * 0.45, Math.min(1.4, 0.5 + len * 0.02), 0.45);
+    glassStreak(ctx, cav, -0.8, top + len * 0.3, top + len * 0.8, Math.min(1.6, 0.6 + len * 0.02), 0.22);
+    const L = lsign(ctx);
+    const { cx, hw } = cavityAt(cav, top + 3);
+    glint(ctx, cx - L * hw * 0.7, top + 3, 1, 0.9);
+  }
+}
+
+/** The near edge of the floor (the inside bottom seen through the front), a thin bright arc. */
+function floorEdge(ctx: Ctx, c: Cavity, tint: string): void {
+  if (c.n < 2) return;
+  const { cx, hw } = cavityAt(c, c.floorY - 0.6);
+  ctx.save();
+  ctx.strokeStyle = rgba(lightOf(tint, 0.85), 0.55);
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.ellipse(cx, c.floorY, hw, Math.max(1, hw * K), 0, 0.15, Math.PI - 0.15);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// --- Straight-sided boxes -----------------------------------------------------------
+
+/** Back pane and the opening of a glass box, with the glass edges round the top. */
+function boxBack(ctx: Ctx, tint: string, g: Geo, depth: number): void {
+  const { cav, rim } = g;
+  const y = rim.y;
+  const ri = rim.rxm - rim.r;
+  const bx = ri - depth * 0.45;
+  const by = y - depth;
+  glassWall(
+    ctx,
+    g.type,
+    cav,
+    tint,
+    true,
+    () => {
+      ctx.beginPath();
+      cavityPath(ctx, cav);
+      ctx.moveTo(-ri, y + 0.5);
+      ctx.lineTo(-bx, by);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(ri, y + 0.5);
+      ctx.closePath();
+    },
+    by,
+  );
+  floorLight(ctx, cav, tint);
+  // the panes' top edges: back, and the two sides running back from the front corners
+  const b: Box = { x0: -rim.rxm - rim.r, y0: by - 2, x1: rim.rxm + rim.r, y1: y + 2 };
   ctx.save();
   ctx.lineCap = 'round';
-  ctx.strokeStyle = lightGradient(ctx, b, [[0, rgba(shadowOf(base, 0.5), 0.35)], [1, rgba(shadowOf(base, 0.6), 0.7)]]);
-  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = rgba(mix(tint, shadowOf(tint, 0.3), 0.5), 0.4);
+  ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.ellipse(0, y + 1.1, r.rx + 1, r.ry, 0, 0, Math.PI);
+  ctx.moveTo(-rim.rxm, y);
+  ctx.lineTo(-bx - rim.r * 0.6, by);
+  ctx.lineTo(bx + rim.r * 0.6, by);
+  ctx.lineTo(rim.rxm, y);
   ctx.stroke();
-  ctx.strokeStyle = lightGradient(ctx, b, [[0, rgba(lightOf(base, 0.8), 0.85)], [0.6, rgba(lightOf(base, 0.5), 0.45)], [1, rgba(lightOf(base, 0.3), 0.15)]]);
-  ctx.lineWidth = 1.1;
+  ctx.strokeStyle = lightGradient(ctx, b, [[0, 'rgba(255,255,255,0.9)'], [1, rgba(lightOf(tint, 0.6), 0.55)]], lightDir(ctx));
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+  // the back pane's lower edge meeting the floor, seen through the glass
+  ctx.strokeStyle = rgba(lightOf(tint, 0.8), 0.35);
+  ctx.lineWidth = 0.7;
   ctx.beginPath();
-  ctx.ellipse(0, y - 0.2, r.rx + 1, r.ry, 0, 0, Math.PI);
+  ctx.moveTo(-bx, cav.floorY - depth * 0.8);
+  ctx.lineTo(bx, cav.floorY - depth * 0.8);
   ctx.stroke();
   ctx.restore();
 }
 
-/** Speckled stoneware / terracotta flecks. */
-function speckle(ctx: Ctx, path: PathFn, alpha: number, scale = 0.5): void {
-  texPaint(ctx, path, 'speckle', { alpha: alpha * 0.85, scale });
-}
-
-/** Little five-petal flower with two leaves, squashed by `s` as it turns away. */
-function sprig(ctx: Ctx, x: number, y: number, s: number, a: number, c: { petal: string; heart: string; leaf: string }, size = 1): void {
+/** The front pane's top edge: a thin bright strip of glass between the walls. */
+function boxNearEdge(ctx: Ctx, tint: string, g: Geo): void {
+  const { rim } = g;
+  const ri = rim.rxm - rim.r;
+  const b: Box = { x0: -ri, y0: rim.y - 1, x1: ri, y1: rim.y + 2 };
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s * size, size);
-  ctx.globalAlpha *= a;
-  ctx.fillStyle = c.leaf;
-  for (const sx of [-1, 1]) {
-    ctx.beginPath();
-    ctx.ellipse(sx * 3.3, 2.5, 2.3, 0.95, sx * 0.55, 0, TAU);
-    ctx.fill();
-  }
-  ctx.fillStyle = c.petal;
-  for (let k = 0; k < 5; k++) {
-    const t = (k / 5) * TAU - Math.PI / 2;
-    ctx.beginPath();
-    ctx.ellipse(Math.cos(t) * 1.75, Math.sin(t) * 1.75, 1.45, 1.15, t, 0, TAU);
-    ctx.fill();
-  }
-  ctx.fillStyle = c.heart;
+  ctx.fillStyle = rgba(lightOf(tint, 0.6), 0.45);
+  ctx.fillRect(-ri, rim.y, 2 * ri, 1.5);
+  ctx.strokeStyle = lightGradient(ctx, b, [[0, 'rgba(255,255,255,0.95)'], [1, rgba(lightOf(tint, 0.6), 0.6)]], lightDir(ctx));
+  ctx.lineWidth = 0.9;
   ctx.beginPath();
-  ctx.arc(0, 0, 0.9, 0, TAU);
-  ctx.fill();
+  ctx.moveTo(-ri, rim.y + 0.2);
+  ctx.lineTo(ri, rim.y + 0.2);
+  ctx.moveTo(-ri, rim.y + 1.6);
+  ctx.lineTo(ri, rim.y + 1.6);
+  ctx.stroke();
   ctx.restore();
 }
 
-/** An almond-shaped painted leaf at (x, y) pointing along `ang`. */
-function leaf(ctx: Ctx, x: number, y: number, len: number, wid: number, ang: number, s = 1): void {
+/** The hollow's right inner face from height y0 down to the floor, as points. */
+function rightFace(c: Cavity, y0: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < c.n; i++) {
+    const y = c.y0 + i * c.step;
+    if (y >= y0) out.push([c.xr[i], y]);
+  }
+  out.push([c.xr[c.n - 1], c.floorY]);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Small glass details
+
+/** A glass handle or loop along a centre line: drawn behind the walls it joins. */
+function glassHandle(ctx: Ctx, g: Geo, pts: [number, number][], w: number, tint: string): void {
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const b: Box = { x0: Math.min(...xs) - w, y0: Math.min(...ys) - w, x1: Math.max(...xs) + w, y1: Math.max(...ys) + w };
+  const pb = b;
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s, 1);
-  ctx.rotate(ang);
+  // keep out of the walls, so the handle joins them from behind
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.quadraticCurveTo(len * 0.5, -wid, len, 0);
-  ctx.quadraticCurveTo(len * 0.5, wid, 0, 0);
-  ctx.fill();
+  ctx.moveTo(pb.x0 - 60, pb.y0 - 60);
+  ctx.lineTo(pb.x0 - 60, pb.y1 + 60);
+  ctx.lineTo(pb.x1 + 60, pb.y1 + 60);
+  ctx.lineTo(pb.x1 + 60, pb.y0 - 60);
+  ctx.closePath();
+  for (const p of g.solid) partPath(ctx, p);
+  ctx.clip();
+  glassShape(ctx, () => ribbonPath(ctx, pts, w), b, tint, 0.34);
+  // a highlight running along the lit side of the handle
+  const d = lightDir(ctx);
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.lineWidth = 0.8;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  const k0 = Math.floor(pts.length * 0.15);
+  const k1 = Math.ceil(pts.length * 0.75);
+  for (let i = k0; i < k1; i++) {
+    const x = pts[i][0] + d.x * w * 0.22;
+    const y = pts[i][1] + d.y * w * 0.22;
+    if (i === k0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Points around the glass at height y (front half), for etched or painted motifs. */
+function aroundGlass(g: Geo, y: number, n: number, phase: number, fn: (x: number, y: number, squash: number, fade: number) => void): void {
+  const { cx, hw } = cavityAt(g.cav, y);
+  const R = hw + g.rim.r * 0.8;
+  for (let i = 0; i < n; i++) {
+    const th = ((i + phase) / n) * TAU;
+    const c = Math.cos(th);
+    if (c < 0.15) continue;
+    fn(cx + R * Math.sin(th), y + R * K * c, c, Math.min(1, (c - 0.15) * 3));
+  }
+}
+
+/** Small bubbles trapped in thick glass, deterministic per seed (only where the glass is). */
+function bubbles(ctx: Ctx, seed: number, n: number, b: Box, inside: (x: number, y: number) => boolean): void {
+  ctx.save();
+  for (let k = 0; k < n; k++) {
+    const x = b.x0 + hash01(seed, k * 2 + 1) * (b.x1 - b.x0);
+    const y = b.y0 + hash01(seed, k * 2 + 2) * (b.y1 - b.y0);
+    if (!inside(x, y)) continue;
+    const r = 0.5 + hash01(seed, k + 70) * 0.9;
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath();
+    ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.3, 0, TAU);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Teacup: porcelain cup on a saucer, gilded bands and a garland of flowers.
+// Teacup: pale blue glass on a glass saucer, gilded rim, etched flowers.
 
-const CUP = makeVessel('teacup', [[-58, 40], [-53, 39.9], [-45, 38.7], [-37, 36.3], [-29, 32.5], [-22, 27.7], [-16.5, 22.6]], { lip: 2.8, lipC: 1.9 });
-const CUP_FOOT = makeVessel('teacup.foot', [[-16.5, 18.2], [-12.5, 18.8], [-9.6, 20.4]]);
-const CUP_FLOWERS = [
-  { petal: '#FBF4EA', heart: GOLD, leaf: '#A3BF9B' },
-  { petal: '#F4C9C4', heart: '#F4D88A', leaf: '#6E9E86' },
-  { petal: '#FBF4EA', heart: GOLD, leaf: '#9CB993' },
-  { petal: '#A9C2E2', heart: '#FBF4EA', leaf: '#94B28C' },
-];
-const cupRim = (base: string): string => lightOf(mix(base, PORCELAIN, 0.45), 0.25);
-
-function saucer(ctx: Ctx, base: string): void {
+function saucer(ctx: Ctx, tint: string): void {
   litFrame(ctx, () => {
-    const cy = -9.6;
-    const rx = 46;
-    const ry = 7.4;
-    const th = 2.3;
+    const cy = -8;
+    const rx = 45;
+    const ry = rx * K;
+    const th = 1.6;
     const ob: Box = { x0: -rx, y0: cy - ry, x1: rx, y1: cy + ry + th };
-    const sil = (): void => {
-      ctx.beginPath();
-      ctx.ellipse(0, cy, rx, ry, 0, Math.PI, TAU);
-      ctx.lineTo(rx, cy + th);
-      ctx.ellipse(0, cy + th, rx, ry, 0, 0, Math.PI);
-      ctx.closePath();
-    };
-    sil();
-    ctx.fillStyle = lightGradient(ctx, ob, [[0, shadowOf(base, 0.12)], [0.6, shadowOf(base, 0.3)], [1, shadowOf(base, 0.45)]]);
-    ctx.fill();
     const top = (): void => {
       ctx.beginPath();
       ctx.ellipse(0, cy, rx, ry, 0, 0, TAU);
     };
-    top();
-    ctx.fillStyle = lightGradient(ctx, ob, [[0, lightOf(base, 0.45)], [0.55, base], [1, shadowOf(base, 0.14)]]);
+    // the plate's edge, thicker glass, along the near side
+    ctx.fillStyle = rgba(mix(tint, shadowOf(tint, 0.3), 0.5), 0.45);
+    ctx.beginPath();
+    ctx.moveTo(-rx, cy);
+    ctx.ellipse(0, cy + th, rx, ry, 0, Math.PI, 0, true);
+    ctx.lineTo(rx, cy);
+    ctx.ellipse(0, cy, rx, ry, 0, 0, Math.PI, false);
+    ctx.closePath();
     ctx.fill();
-    // the well dips: shaded just inside its lit edge, catching light on the far side
-    const wr = 0.64;
-    const well = (): void => {
-      ctx.beginPath();
-      ctx.ellipse(0, cy + 0.3, rx * wr, ry * wr, 0, 0, TAU);
-    };
-    const wb: Box = { x0: -rx * wr, y0: cy - ry * wr, x1: rx * wr, y1: cy + ry * wr };
-    ctx.save();
-    well();
-    ctx.clip();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = lightGradient(ctx, wb, [[0, rgba(shadowOf(base, 0.45), 0.45)], [0.5, rgba(shadowOf(base, 0.45), 0)], [0.6, rgba(lightOf(base, 0.6), 0)], [1, rgba(lightOf(base, 0.6), 0.55)]]);
-    well();
+    glassShape(ctx, top, ob, tint, 0.24);
+    // the well, a gilded edge, the cup's caustic and a crisp lip highlight
+    ctx.strokeStyle = rgba(lightOf(tint, 0.8), 0.55);
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.ellipse(0, cy + 0.3, rx * 0.6, ry * 0.6, 0, 0, TAU);
     ctx.stroke();
-    ctx.restore();
     ctx.strokeStyle = rgba(GOLD, 0.9);
     ctx.lineWidth = 0.9;
     ctx.beginPath();
-    ctx.ellipse(0, cy, rx - 3, ry - 0.5, 0, 0, TAU);
+    ctx.ellipse(0, cy, rx - 2.6, ry - 0.45, 0, 0, TAU);
     ctx.stroke();
-    // the cup's own shadow on the saucer
-    softShadow(ctx, 4, cy + 0.9, 26, 4.4, 0.3);
-    ctx.strokeStyle = rgba(lightOf(base, 0.9), 0.75);
+    caustic(ctx, 6, cy + 1, 16, 2.6, 0.45, '#FFF6DE');
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
     ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.ellipse(0, cy, rx - 0.7, ry - 0.25, 0, Math.PI * 0.55, Math.PI * 0.95);
+    ctx.ellipse(0, cy, rx - 0.5, ry - 0.15, 0, Math.PI * 0.58, Math.PI * 0.92);
     ctx.stroke();
-    glint(ctx, -31, cy - 5.1, 0.85, 0.8);
-    outline(ctx, sil, ob, lineOf(base), 1.2);
-  });
-}
-
-function teacupBack(ctx: Ctx, l: Look): void {
-  saucer(ctx, mix(l.base, PORCELAIN, 0.3));
-  paintInside(ctx, CUP, { inner: mix(PORCELAIN, l.base, 0.3), rimTop: cupRim(l.base), line: lineOf(l.base), depth: 0.7, gloss: 0.65 });
-}
-
-function teacupFront(ctx: Ctx, l: Look): void {
-  const line = lineOf(l.base);
-  const fl = CUP_FLOWERS[l.v % CUP_FLOWERS.length];
-  tube(
-    ctx,
-    () => {
-      ctx.beginPath();
-      ctx.moveTo(35, -50.5);
-      ctx.bezierCurveTo(47.5, -53.5, 53, -44.5, 49, -36.5);
-      ctx.bezierCurveTo(46, -30.5, 38.5, -27.5, 29, -24.5);
-    },
-    6,
-    l.base,
-    { line, spec: 0.7 },
-  );
-  paintBody(ctx, CUP_FOOT, { base: shadowOf(l.base, 0.04), finish: 'gloss', line, decorate: () => ringLine(ctx, CUP_FOOT, -11.8, 0.9, GOLD), outlineW: 1.2 });
-  paintBody(ctx, CUP, {
-    base: l.base,
-    finish: 'gloss',
-    line,
-    mottle: 0.22,
-    decorate: () => {
-      ringLine(ctx, CUP, -52.4, 1.6, GOLD);
-      ringLine(ctx, CUP, -49.8, 0.6, GOLD);
-      aroundRing(CUP, -41, 9, 0.25, (x, y, s, f) => sprig(ctx, x, y, s, f, fl, 1.18));
-      ctx.fillStyle = fl.petal;
-      aroundRing(CUP, -41, 9, 0.75, (x, y, s, f) => {
-        ctx.globalAlpha = f;
-        ctx.beginPath();
-        ctx.ellipse(x, y - 1, 0.8 * s, 0.8, 0, 0, TAU);
-        ctx.ellipse(x, y + 1.6, 0.6 * s, 0.6, 0, 0, TAU);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      });
-    },
-    under: [-36, -12, 0.32],
-    bounce: 0.14,
-    spec: [[0.62, -51.5, -22, 3.2, 0.78]],
-    glints: [[-25.5, -47.5, 1.1]],
-  });
-  paintNearRim(ctx, CUP, { top: cupRim(l.base), line, gloss: 0.8 });
-}
-
-// ---------------------------------------------------------------------------
-// Mug: speckled stoneware, glaze dipped short of a raw clay foot, a paw print.
-
-const MUG = makeVessel('mug', [[-66, 31], [-60, 31.2], [-40, 31.5], [-18, 31.3], [-8.5, 30.7], [-4.9, 30.1]], { lip: 3.5, lipC: 2.2 });
-const MUG_PAW = ['#D98A63', '#F7E9D4', '#F7EEDF', '#F7EEDF'];
-
-/** Wavy edge of a dipped glaze around the vessel at height y, with a few drips. */
-function glazeEdge(v: Vessel, y: number, seed: number): [number, number][] {
-  const r = ring(v, y);
-  const drips = [0, 1, 2].map((k) => ({ x: (hash01(seed, k) - 0.5) * r.rx * 1.5, a: 1.4 + hash01(seed, k + 5) * 2.6, w: 1.6 + hash01(seed, k + 9) * 1.8 }));
-  const pts: [number, number][] = [];
-  for (let x = -r.rx - 2; x <= r.rx + 2; x += 1) {
-    const c = Math.sqrt(Math.max(0, 1 - (x / r.rx) ** 2));
-    let yy = y + r.ry * c + Math.sin(x * 0.45 + seed) * 0.35;
-    for (const d of drips) yy += d.a * Math.exp(-(((x - d.x) / d.w) ** 2));
-    pts.push([x, yy]);
-  }
-  return pts;
-}
-
-function paw(ctx: Ctx, x: number, y: number, color: string): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(-4.2, 2.6);
-  ctx.bezierCurveTo(-5.2, -1.2, -2, -2.6, 0, -2.6);
-  ctx.bezierCurveTo(2, -2.6, 5.2, -1.2, 4.2, 2.6);
-  ctx.bezierCurveTo(3.4, 4.6, 1.2, 3.6, 0, 3.6);
-  ctx.bezierCurveTo(-1.2, 3.6, -3.4, 4.6, -4.2, 2.6);
-  ctx.fill();
-  for (const [tx, ty, r] of [
-    [-5, -4.4, 1.45],
-    [-1.8, -6.5, 1.6],
-    [1.8, -6.5, 1.6],
-    [5, -4.4, 1.45],
-  ]) {
-    ctx.beginPath();
-    ctx.ellipse(tx, ty, r, r * 1.22, tx * 0.08, 0, TAU);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function mugBack(ctx: Ctx, l: Look): void {
-  paintInside(ctx, MUG, { inner: mix(l.base, PORCELAIN, 0.2), rimTop: lightOf(l.base, 0.5), line: lineOf(l.base), depth: 0.72, gloss: 0.55 });
-}
-
-function mugFront(ctx: Ctx, l: Look): void {
-  const line = lineOf(l.base);
-  tube(
-    ctx,
-    () => {
-      ctx.beginPath();
-      ctx.moveTo(28.5, -56.5);
-      ctx.bezierCurveTo(47.5, -58.5, 49, -25, 28.5, -22.5);
-    },
-    7.4,
-    l.base,
-    { line, spec: 0.6 },
-  );
-  const edge = glazeEdge(MUG, -10.5, l.seed);
-  paintBody(ctx, MUG, {
-    base: l.base,
-    finish: 'gloss',
-    line,
-    mottle: 0.16,
-    decorate: () => {
-      ctx.fillStyle = CLAY;
-      ctx.beginPath();
-      edge.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      ctx.lineTo(40, 8);
-      ctx.lineTo(-40, 8);
-      ctx.closePath();
-      ctx.fill();
-      // glaze pools a little darker along its edge
-      ctx.strokeStyle = rgba(shadowOf(l.base, 0.35), 0.65);
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      edge.forEach(([x, y], i) => (i ? ctx.lineTo(x, y - 0.4) : ctx.moveTo(x, y - 0.4)));
-      ctx.stroke();
-      paw(ctx, 0, -35, MUG_PAW[l.v % MUG_PAW.length]);
-    },
-    texture: () => speckle(ctx, () => vesselPath(ctx, MUG), 0.26, 0.6),
-    under: [-24, -1, 0.18],
-    bounce: 0.15,
-    spec: [[0.6, -61, -15, 3, 0.72]],
-    glints: [[-19.5, -57.5, 1]],
-  });
-  paintNearRim(ctx, MUG, { top: lightOf(l.base, 0.5), line, gloss: 0.6 });
-}
-
-// ---------------------------------------------------------------------------
-// Rain boot: glossy rubber, rolled top, toe bumper, buckled strap, tread sole.
-
-const BOOT_RIM = makeVessel('boot.rim', [[-70, 23.5], [-60, 23.5]], { lip: 3, lipC: 2.1, k: 0.18 });
-/** Shading map for the boot: a cylinder down the shaft, fading to flat over the foot. */
-const BOOT_SHADE = makeVessel('boot.shade', [[-75, 23.6], [-44, 23.6], [-38, 28], [-32, 45], [-24, 90], [0, 90]]);
-
-function bootPath(ctx: Ctx): void {
-  ctx.beginPath();
-  ctx.moveTo(-23.5, -70);
-  ctx.ellipse(0, -70, 23.5, 23.5 * 0.18, 0, Math.PI, 0, true);
-  ctx.lineTo(23.4, -41);
-  ctx.bezierCurveTo(23.4, -34, 25.5, -31, 31, -30.2);
-  ctx.bezierCurveTo(40.5, -29.6, 46.8, -26.5, 47.2, -17);
-  ctx.lineTo(47.2, -7.5);
-  ctx.lineTo(-24.4, -7.5);
-  ctx.bezierCurveTo(-25, -14, -24.6, -22, -23.8, -32);
-  ctx.closePath();
-}
-
-function solePath(ctx: Ctx): void {
-  ctx.beginPath();
-  ctx.moveTo(-25.4, -9);
-  ctx.lineTo(46.4, -9);
-  ctx.quadraticCurveTo(48.9, -8.8, 48.7, -5.2);
-  ctx.quadraticCurveTo(48.5, -0.2, 44.8, 0);
-  ctx.lineTo(10.5, 0);
-  ctx.quadraticCurveTo(8, -2.3, 4.5, -2.4);
-  ctx.lineTo(-2.4, -2.4);
-  ctx.lineTo(-2.9, 0);
-  ctx.lineTo(-22.6, 0);
-  ctx.quadraticCurveTo(-25.6, 0, -25.6, -3.2);
-  ctx.closePath();
-}
-
-const BOOT_LINING = ['#E9DDC9', '#F1E3CF', '#E6DCCB', '#E8DCCB'];
-/** Dark rubber soles, one per boot colour. */
-const BOOT_SOLE = ['#6E5140', '#6A4B52', '#4E5E58', '#4F5674'];
-
-function bootBack(ctx: Ctx, l: Look): void {
-  const line = lineOf(l.base);
-  // pull tab at the back of the shaft
-  const tab = (): void => roundRect(ctx, -23.5, -80.5, 7.5, 12, 3);
-  tab();
-  ctx.fillStyle = shadowOf(l.base, 0.1);
-  ctx.fill();
-  edgeShadeL(ctx, tab, { x0: -23.5, y0: -80.5, x1: -16, y1: -68.5 }, shadowOf(l.base, 0.5), 2, 0.4, 'shadow', 2);
-  ctx.fillStyle = shadowOf(l.base, 0.75);
-  roundRect(ctx, -21.6, -78.4, 3.7, 4.4, 1.8);
-  ctx.fill();
-  outline(ctx, tab, { x0: -23.5, y0: -80.5, x1: -16, y1: -68.5 }, line, 1.1);
-  paintInside(ctx, BOOT_RIM, { inner: BOOT_LINING[l.v % BOOT_LINING.length], rimTop: lightOf(l.base, 0.25), line, depth: 0.85, gloss: 0.5 });
-}
-
-function bootFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const line = lineOf(base);
-  const L = lsign(ctx);
-  const b: Box = { x0: -25, y0: -74, x1: 48, y1: -7 };
-  const path = (): void => bootPath(ctx);
-  path();
-  ctx.fillStyle = base;
-  ctx.fill();
-  ctx.save();
-  path();
-  ctx.clip();
-  // toe bumper and the foxing strip above the sole
-  const bumper = shadowOf(base, 0.16);
-  ctx.fillStyle = bumper;
-  ctx.beginPath();
-  ctx.moveTo(29, -40);
-  ctx.quadraticCurveTo(25.5, -20, 31, -6);
-  ctx.lineTo(60, -6);
-  ctx.lineTo(60, -40);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillRect(-30, -13.2, 90, 6);
-  ctx.strokeStyle = rgba(shadowOf(base, 0.5), 0.7);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(29, -40);
-  ctx.quadraticCurveTo(25.5, -20, 31, -6);
-  ctx.moveTo(-30, -13.2);
-  ctx.lineTo(60, -13.2);
-  ctx.stroke();
-  ctx.strokeStyle = rgba(lightOf(base, 0.65), 0.7);
-  ctx.beginPath();
-  ctx.moveTo(30.2, -38);
-  ctx.quadraticCurveTo(27, -20, 32.2, -6);
-  ctx.moveTo(-30, -12.2);
-  ctx.lineTo(60, -12.2);
-  ctx.stroke();
-  // strap with a little buckle near the top
-  ctx.fillStyle = shadowOf(base, 0.16);
-  ctx.beginPath();
-  ctx.moveTo(4, -56.6);
-  ctx.quadraticCurveTo(15, -57.4, 25, -60.2);
-  ctx.lineTo(25, -55.4);
-  ctx.quadraticCurveTo(15, -52.6, 4, -51.8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-  texPaint(ctx, path, 'plaster', { alpha: 0.14, scale: 0.32 });
-  // rubber: a cylinder down the shaft, soft form over the foot
-  shadeCylinder(ctx, BOOT_SHADE, base, 'satin', path);
-  const toeLight = ctx.createRadialGradient(36 + 4 * L, -27, 1, 36, -24, 16);
-  toeLight.addColorStop(0, rgba(lightOf(base, 0.7), 0.5));
-  toeLight.addColorStop(1, rgba(lightOf(base, 0.7), 0));
-  ctx.save();
-  path();
-  ctx.clip();
-  ctx.fillStyle = toeLight;
-  ctx.fillRect(18, -40, 32, 34);
-  ctx.restore();
-  path();
-  ctx.fillStyle = lightGradient(ctx, b, [[0, rgba(shadowOf(base, 0.6), 0)], [0.55, rgba(shadowOf(base, 0.6), 0)], [1, rgba(shadowOf(base, 0.6), 0.45)]], lightDir(ctx));
-  ctx.fill();
-  shadeDown(ctx, path, -20, -7, base, 0.3, -30, 50);
-  // buckle (crisp, after shading)
-  const bx = 13.5;
-  const by = -55.8;
-  ctx.save();
-  ctx.lineWidth = 1.1;
-  ctx.strokeStyle = shadowOf(GOLD, 0.35);
-  roundRect(ctx, bx - 2.6, by - 3.6, 5.2, 7, 1.4);
-  ctx.stroke();
-  ctx.strokeStyle = lightOf(GOLD, 0.3);
-  ctx.lineWidth = 0.7;
-  ctx.beginPath();
-  ctx.moveTo(bx, by - 3.4);
-  ctx.lineTo(bx, by + 3.3);
-  ctx.stroke();
-  ctx.restore();
-  // rubber sheen: a broad soft band and a crisp streak on the lit side of the shaft
-  const sx = -11.5 * L;
-  ctx.save();
-  path();
-  ctx.clip();
-  specular(ctx, sx, -50, 34, 4.2, Math.PI / 2, 0.22, '#FFFFFF', 0);
-  specular(ctx, sx - 1.5 * L, -52, 26, 1.3, Math.PI / 2, 0.7, '#FFFFFF', 0);
-  ctx.restore();
-  glint(ctx, sx - 1.2 * L, -63.5, 1, 0.85);
-  glint(ctx, L > 0 ? 34 : 44.5, L > 0 ? -28.4 : -24, 1, 0.8);
-  outline(ctx, path, b, line, 1.35);
-  // sole with tread
-  const sole = BOOT_SOLE[l.v % BOOT_SOLE.length];
-  const sb: Box = { x0: -25.6, y0: -9, x1: 48.9, y1: 0 };
-  const sp = (): void => solePath(ctx);
-  sp();
-  ctx.fillStyle = sole;
-  ctx.fill();
-  ctx.save();
-  sp();
-  ctx.clip();
-  ctx.strokeStyle = rgba(shadowOf(sole, 0.6), 0.85);
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-27, -4.6);
-  ctx.lineTo(50, -4.6);
-  for (let x = -23; x < 48; x += 3.4) {
-    if (x > -4 && x < 10) continue;
-    ctx.moveTo(x, -2.6);
-    ctx.lineTo(x + 0.6, 0.5);
-  }
-  ctx.stroke();
-  ctx.restore();
-  ctx.strokeStyle = rgba(lightOf(sole, 0.55), 0.8);
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-24.6, -8.3);
-  ctx.lineTo(46.2, -8.3);
-  ctx.stroke();
-  outline(ctx, sp, sb, lineOf(sole), 1.2, 0.6);
-  paintNearRim(ctx, BOOT_RIM, { top: lightOf(base, 0.25), line, gloss: 0.7 });
-}
-
-// ---------------------------------------------------------------------------
-// Cardboard box: corrugated kraft, flaps with cut edges, tape and a stamp.
-
-/** Cut edge of corrugated board from a to b: two liners and the wavy flute between. */
-function cutEdge(ctx: Ctx, ax: number, ay: number, bx: number, by: number, th: number, base: string): void {
-  const len = Math.hypot(bx - ax, by - ay);
-  ctx.save();
-  ctx.translate(ax, ay);
-  ctx.rotate(Math.atan2(by - ay, bx - ax));
-  ctx.fillStyle = shadowOf(base, 0.42);
-  ctx.fillRect(0, -th / 2, len, th);
-  ctx.strokeStyle = lightOf(base, 0.2);
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(0, -th / 2 + 0.25);
-  ctx.lineTo(len, -th / 2 + 0.25);
-  ctx.moveTo(0, th / 2 - 0.25);
-  ctx.lineTo(len, th / 2 - 0.25);
-  const p = 2.1;
-  const a = th / 2 - 0.45;
-  ctx.moveTo(0, 0);
-  for (let x = 0, s = 1; x < len; x += p / 2, s = -s) ctx.quadraticCurveTo(x + p / 4, s * a * 2, Math.min(len, x + p / 2), 0);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function kraftPanel(ctx: Ctx, path: PathFn, b: Box, base: string, lit: number, flute = true): void {
-  path();
-  ctx.fillStyle = base;
-  ctx.fill();
-  kraftPaint(ctx, path, 0.5, flute);
-  path();
-  ctx.fillStyle = lightGradient(ctx, b, [[0, rgba(lightOf(base, 0.6), 0.3 * lit)], [0.5, rgba(base, 0)], [1, rgba(shadowOf(base, 0.6), 0.3)]]);
-  ctx.fill();
-}
-
-function boxBack(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    const line = lineOf(base);
-    // far flap, standing up and leaning back (its inside faces us)
-    const flap = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(-44.5, -78.5);
-      ctx.lineTo(-41, -93);
-      ctx.lineTo(41.5, -94);
-      ctx.lineTo(44.5, -78.5);
-      ctx.closePath();
-    };
-    const fb: Box = { x0: -44.5, y0: -94, x1: 44.5, y1: -78.5 };
-    kraftPanel(ctx, flap, fb, lightOf(base, 0.08), 1);
-    const fold = ctx.createLinearGradient(0, -83, 0, -78.5);
-    fold.addColorStop(0, rgba(shadowOf(base, 0.6), 0));
-    fold.addColorStop(1, rgba(shadowOf(base, 0.6), 0.35));
-    flap();
-    ctx.fillStyle = fold;
-    ctx.fill();
-    cutEdge(ctx, -41, -93, 41.5, -94, 1.9, base);
-    outline(ctx, flap, fb, line, 1.2);
-    // inside: the back wall above the front edge, and the two side walls
-    const back = (): void => {
-      ctx.beginPath();
-      ctx.rect(-44.5, -78.5, 89, 11.2);
-    };
-    const bb: Box = { x0: -44.5, y0: -78.5, x1: 44.5, y1: -67.3 };
-    back();
-    const g = ctx.createLinearGradient(0, -78.5, 0, -67.3);
-    g.addColorStop(0, shadowOf(base, 0.22));
-    g.addColorStop(1, shadowOf(base, 0.55));
-    ctx.fillStyle = g;
-    ctx.fill();
-    kraftPaint(ctx, back, 0.45, true);
-    // the left wall's shadow falls across the back wall
-    ctx.fillStyle = rgba(shadowOf(base, 0.8), 0.35);
-    ctx.beginPath();
-    ctx.moveTo(-44.5, -78.5);
-    ctx.lineTo(-33, -78.5);
-    ctx.lineTo(-24, -67.3);
-    ctx.lineTo(-44.5, -67.3);
-    ctx.closePath();
-    ctx.fill();
-    for (const s of [-1, 1]) {
-      const wall = (): void => {
-        ctx.beginPath();
-        ctx.moveTo(s * 50, -67.3);
-        ctx.lineTo(s * 44.5, -78.5);
-        ctx.lineTo(s * 44.5, -67.3);
-        ctx.closePath();
-      };
-      wall();
-      ctx.fillStyle = s < 0 ? shadowOf(base, 0.62) : shadowOf(base, 0.3);
-      ctx.fill();
-      kraftPaint(ctx, wall, 0.4, false);
-    }
-    const occ = shadowOf(base, 0.85);
-    band(ctx, bb, 'top', 2.2, occ, 0.5);
-    band(ctx, bb, 'left', 2.2, occ, 0.45);
-    band(ctx, bb, 'right', 2.2, occ, 0.45);
-    // folds along the top edges catch the light
-    ctx.strokeStyle = rgba(lightOf(base, 0.5), 0.8);
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(-44, -78.3);
-    ctx.lineTo(44, -78.3);
-    ctx.stroke();
-  });
-}
-
-function sideFlap(ctx: Ctx, s: number, base: string): void {
-  const ax = 50 * s;
-  const ay = -67.5;
-  const bx = 44.5 * s;
-  const by = -78.5;
-  const fx = 17 * s;
-  const fy = -16.5;
-  const face = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.lineTo(bx + fx, by + fy);
-    ctx.lineTo(ax + fx, ay + fy);
-    ctx.closePath();
-  };
-  const b: Box = { x0: Math.min(ax + fx, bx), y0: by + fy, x1: Math.max(ax + fx, bx), y1: ay };
-  // the inside of the right flap faces the light, the left one turns away
-  kraftPanel(ctx, face, b, s > 0 ? lightOf(base, 0.2) : shadowOf(base, 0.1), s > 0 ? 1.2 : 0.4, false);
-  // shade where it folds over the wall
-  ctx.save();
-  face();
-  ctx.clip();
-  ctx.strokeStyle = rgba(shadowOf(base, 0.6), 0.3);
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(bx, by);
-  ctx.stroke();
-  ctx.restore();
-  outline(ctx, face, b, lineOf(base), 1.1);
-  cutEdge(ctx, ax + 0.6 * s, ay + 0.6, ax + fx + 0.6 * s, ay + fy + 0.6, 2, base);
-}
-
-function stamp(ctx: Ctx, l: Look): void {
-  const red = inkPattern(ctx, '#B45A4C', 0.3) ?? '#B45A4C';
-  const ink = inkPattern(ctx, '#5A536E', 0.3) ?? '#5A536E';
-  ctx.save();
-  ctx.translate(-14, -24);
-  ctx.rotate(-0.08 + (hash01(l.seed, 3) - 0.5) * 0.06);
-  ctx.font = '800 8.2px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const w = Math.min(40, ctx.measureText('FRAGILE').width + 6);
-  ctx.globalAlpha *= 0.9;
-  ctx.strokeStyle = red;
-  ctx.lineWidth = 1.1;
-  roundRect(ctx, -w / 2, -6.3, w, 12.6, 1.2);
-  ctx.stroke();
-  ctx.fillStyle = red;
-  ctx.fillText('FRAGILE', 0, 0.7);
-  ctx.restore();
-  // "this way up" arrows
-  ctx.save();
-  ctx.translate(27, -36);
-  ctx.globalAlpha *= 0.75;
-  ctx.strokeStyle = ink;
-  ctx.fillStyle = ink;
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = 'round';
-  for (const ax of [-3.2, 3.2]) {
-    ctx.beginPath();
-    ctx.moveTo(ax, 4);
-    ctx.lineTo(ax, -3);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(ax - 2.6, -2.4);
-    ctx.lineTo(ax, -6.4);
-    ctx.lineTo(ax + 2.6, -2.4);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.beginPath();
-  ctx.moveTo(-6.5, 6.2);
-  ctx.lineTo(6.5, 6.2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function boxFront(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    const line = lineOf(base);
-    for (const s of [-1, 1]) sideFlap(ctx, s, base);
-    const face = (): void => {
-      ctx.beginPath();
-      ctx.rect(-50, -67.5, 100, 67.5);
-    };
-    const fb: Box = { x0: -50, y0: -67.5, x1: 50, y1: 0 };
-    face();
-    ctx.fillStyle = base;
-    ctx.fill();
-    kraftPaint(ctx, face, 0.5, true);
-    stamp(ctx, l);
-    face();
-    ctx.fillStyle = lightGradient(ctx, fb, [[0, rgba(lightOf(base, 0.6), 0.3)], [0.45, rgba(base, 0)], [1, rgba(shadowOf(base, 0.6), 0.34)]]);
-    ctx.fill();
-    band(ctx, fb, 'bottom', 7, shadowOf(base, 0.6), 0.4);
-    band(ctx, fb, 'bottom', 2.2, '#F7C98F', 0.14);
-    band(ctx, fb, 'right', 3, shadowOf(base, 0.5), 0.45);
-    band(ctx, fb, 'left', 1.6, lightOf(base, 0.7), 0.5);
-    outline(ctx, face, fb, line, 1.35);
-    // the near flap, folded down over the front, and its shadow
-    const sh = ctx.createLinearGradient(0, -56, 0, -50.5);
-    sh.addColorStop(0, rgba(shadowOf(base, 0.75), 0.42));
-    sh.addColorStop(1, rgba(shadowOf(base, 0.75), 0));
-    ctx.fillStyle = sh;
-    ctx.fillRect(-50, -56, 100, 5.5);
-    const flap = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(-51, -67.5);
-      ctx.lineTo(51, -67.5);
-      ctx.lineTo(50.3, -55.8);
-      ctx.lineTo(-50.3, -55.8);
-      ctx.closePath();
-    };
-    const lb: Box = { x0: -51, y0: -67.5, x1: 51, y1: -55.8 };
-    kraftPanel(ctx, flap, lb, lightOf(base, 0.1), 1.2);
-    band(ctx, lb, 'top', 1.5, lightOf(base, 0.7), 0.6);
-    band(ctx, lb, 'bottom', 1.8, shadowOf(base, 0.5), 0.45);
-    outline(ctx, flap, lb, line, 1.25);
-    // packing tape down the middle, torn where the box was opened
-    const end = -49.5 - hash01(l.seed, 2) * 2;
-    const tape = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(-6.6, -67.5);
-      ctx.lineTo(6.6, -67.5);
-      ctx.lineTo(6.6, end + 0.6);
-      for (let k = 0; k <= 6; k++) ctx.lineTo(6.6 - (13.2 * k) / 6, end + (k % 2 ? -1.1 : 0.7) + hash01(l.seed, k + 20) * 0.6);
-      ctx.closePath();
-    };
-    tape();
-    ctx.fillStyle = 'rgba(214,170,104,0.62)';
-    ctx.fill();
-    ctx.save();
-    tape();
-    ctx.clip();
-    specular(ctx, -2.8, -60, 18, 1.6, Math.PI / 2, 0.4, '#FFFFFF', 0);
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(-5, -53.5);
-    ctx.lineTo(-1, -55.5);
-    ctx.moveTo(1.5, -62);
-    ctx.lineTo(5, -63.6);
-    ctx.stroke();
-    // the tape bridges the step at the flap's edge
-    ctx.fillStyle = 'rgba(120,84,50,0.25)';
-    ctx.fillRect(-7, -55.8, 14, 1.6);
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(150,108,62,0.45)';
-    ctx.lineWidth = 0.6;
-    tape();
-    ctx.stroke();
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Shoebox: printed paper over board, lid propped behind, tissue inside.
-
-const SHOE_PRINT = ['#F7EFE2', '#FBF1EA', '#F6F3E6'];
-
-function shoeboxBack(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    const line = lineOf(base);
-    const print = SHOE_PRINT[l.v % SHOE_PRINT.length];
-    // lid propped up behind the box
-    ctx.save();
-    ctx.translate(-1, -50.6);
-    ctx.rotate(-0.04);
-    const lid = (): void => roundRect(ctx, -44.5, -10.5, 89, 14, 2);
-    const lb: Box = { x0: -44.5, y0: -10.5, x1: 44.5, y1: 3.5 };
-    lid();
-    ctx.fillStyle = lightOf(base, 0.1);
-    ctx.fill();
-    ctx.fillStyle = print;
-    ctx.fillRect(-44.5, -4.6, 89, 1.3);
-    ctx.fillRect(-44.5, -2.5, 89, 0.6);
-    ctx.fillStyle = shadowOf(base, 0.14);
-    roundRect(ctx, -44.5, -10.5, 89, 3.2, [2, 2, 0, 0]);
-    ctx.fill();
-    lid();
-    ctx.fillStyle = lightGradient(ctx, lb, [[0, rgba(lightOf(base, 0.6), 0.25)], [1, rgba(shadowOf(base, 0.6), 0.3)]]);
-    ctx.fill();
-    outline(ctx, lid, lb, line, 1.15);
-    ctx.restore();
-    // inside: back wall and the side walls (plain board, faintly tinted)
-    const board = mix('#D7C9B5', base, 0.22);
-    const back = (): void => {
-      ctx.beginPath();
-      ctx.rect(-39, -52.5, 78, 9.3);
-    };
-    const bb: Box = { x0: -39, y0: -52.5, x1: 39, y1: -43.2 };
-    const g = ctx.createLinearGradient(0, -52.5, 0, -43.2);
-    g.addColorStop(0, shadowOf(board, 0.12));
-    g.addColorStop(1, shadowOf(board, 0.5));
-    back();
-    ctx.fillStyle = g;
-    ctx.fill();
-    for (const sd of [-1, 1]) {
-      ctx.fillStyle = sd < 0 ? shadowOf(board, 0.5) : shadowOf(board, 0.2);
-      ctx.beginPath();
-      ctx.moveTo(sd * 43.5, -43.2);
-      ctx.lineTo(sd * 39, -52.5);
-      ctx.lineTo(sd * 39, -43.2);
-      ctx.closePath();
-      ctx.fill();
-    }
-    band(ctx, bb, 'left', 1.8, shadowOf(board, 0.8), 0.4);
-    band(ctx, bb, 'right', 1.8, shadowOf(board, 0.8), 0.4);
-    // tissue paper draped over the back wall, crinkled
-    const tissue = mix('#FBF7F1', base, 0.2);
-    const tp = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(-31, -48.6);
-      ctx.lineTo(-31.5, -52);
-      for (let k = 0; k <= 7; k++) {
-        const x = -31.5 + k * 7.4;
-        ctx.quadraticCurveTo(x - 3.7, -55.2 - hash01(l.seed, k) * 2.2, x, -52.8 - hash01(l.seed, k + 30) * 1.4);
-      }
-      ctx.lineTo(20.5, -49);
-      for (let k = 0; k <= 5; k++) ctx.lineTo(20.5 - k * 10.3, -48.6 + (k % 2 ? 1 : -0.3) + hash01(l.seed, k + 50) * 0.8);
-      ctx.closePath();
-    };
-    softShadow(ctx, -5, -48.2, 27, 2, 0.32);
-    tp();
-    ctx.fillStyle = lightGradient(ctx, { x0: -37, y0: -58, x1: 33, y1: -45 }, [[0, lightOf(tissue, 0.5)], [1, shadowOf(tissue, 0.18)]]);
-    ctx.fill();
-    ctx.save();
-    tp();
-    ctx.clip();
-    ctx.strokeStyle = rgba(shadowOf(tissue, 0.45), 0.55);
-    ctx.lineWidth = 0.6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (let k = 0; k < 6; k++) {
-      const x = -28 + k * 8.4 + hash01(l.seed, k + 70) * 3;
-      ctx.moveTo(x, -54);
-      ctx.quadraticCurveTo(x + 2, -51.5, x + 0.6 + hash01(l.seed, k + 80) * 2, -48.6);
-    }
-    ctx.stroke();
-    ctx.restore();
-    ctx.strokeStyle = rgba(shadowOf(tissue, 0.5), 0.6);
-    ctx.lineWidth = 0.6;
-    tp();
-    ctx.stroke();
-    // the cut top edges of the walls (light board)
-    ctx.strokeStyle = lightOf(board, 0.6);
-    ctx.lineWidth = 1.2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-43.2, -43.6);
-    ctx.lineTo(-38.8, -52.4);
-    ctx.moveTo(38.8, -52.4);
-    ctx.lineTo(43.2, -43.6);
-    ctx.stroke();
-    ctx.strokeStyle = rgba(line, 0.7);
+    ctx.strokeStyle = rgba(lightOf(tint, 0.6), 0.8);
     ctx.lineWidth = 0.9;
     ctx.beginPath();
-    ctx.moveTo(-43.6, -43.3);
-    ctx.lineTo(-39.2, -53);
-    ctx.lineTo(-32, -53);
-    ctx.moveTo(21.5, -53);
-    ctx.lineTo(39.2, -53);
-    ctx.lineTo(43.6, -43.3);
+    ctx.ellipse(0, cy + th, rx, ry, 0, 0.05, Math.PI - 0.05);
     ctx.stroke();
   });
 }
 
-function shoeboxFront(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    const line = lineOf(base);
-    const print = SHOE_PRINT[l.v % SHOE_PRINT.length];
-    const face = (): void => roundRect(ctx, -43.5, -43.5, 87, 43.5, [1, 1, 2, 2]);
-    const fb: Box = { x0: -43.5, y0: -43.5, x1: 43.5, y1: 0 };
-    face();
-    ctx.fillStyle = base;
-    ctx.fill();
-    // printed paper: polka dots, a cream band, a darker foot band and a label
-    ctx.save();
-    face();
-    ctx.clip();
-    ctx.fillStyle = rgba(print, 0.5);
-    ctx.beginPath();
-    for (let row = 0, y = -28.5; y < -9; y += 5.6, row++)
-      for (let x = -41 + (row % 2) * 3.4; x < 43; x += 6.8) {
-        ctx.moveTo(x + 1, y);
-        ctx.arc(x, y, 1, 0, TAU);
-      }
-    ctx.fill();
-    ctx.fillStyle = print;
-    ctx.fillRect(-43.5, -37.2, 87, 2.2);
-    ctx.fillRect(-43.5, -33.9, 87, 0.7);
-    ctx.fillStyle = shadowOf(base, 0.14);
-    ctx.fillRect(-43.5, -7.5, 87, 7.5);
-    ctx.fillStyle = rgba(print, 0.8);
-    ctx.fillRect(-43.5, -7.5, 87, 0.6);
-    ctx.restore();
-    const lab = (): void => roundRect(ctx, 5, -27, 30, 14.5, 1.6);
-    lab();
-    ctx.fillStyle = print;
-    ctx.fill();
-    ctx.strokeStyle = rgba(shadowOf(base, 0.5), 0.7);
-    ctx.lineWidth = 0.6;
-    roundRect(ctx, 6.3, -25.7, 27.4, 11.9, 1);
-    ctx.stroke();
-    ctx.fillStyle = shadowOf(base, 0.55);
-    // a little shoe on the label
-    ctx.beginPath();
-    ctx.moveTo(9.6, -18.2);
-    ctx.lineTo(9.6, -22.6);
-    ctx.lineTo(12.2, -22.6);
-    ctx.quadraticCurveTo(13.4, -20.2, 16.8, -19.8);
-    ctx.quadraticCurveTo(18.8, -19.4, 18.8, -18.2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.font = '700 4.4px system-ui, sans-serif';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText('N°38', 21, -20.4);
-    ctx.fillRect(9.6, -16.4, 21.4, 0.6);
-    // light and shade
-    face();
-    ctx.fillStyle = lightGradient(ctx, fb, [[0, rgba(lightOf(base, 0.6), 0.32)], [0.45, rgba(base, 0)], [1, rgba(shadowOf(base, 0.6), 0.32)]]);
-    ctx.fill();
-    band(ctx, fb, 'bottom', 6, shadowOf(base, 0.6), 0.32);
-    band(ctx, fb, 'bottom', 2, '#F7C98F', 0.12);
-    band(ctx, fb, 'right', 2.6, shadowOf(base, 0.5), 0.45);
-    band(ctx, fb, 'left', 1.5, lightOf(base, 0.75), 0.55);
-    // the front wall's cut top edge (board), just below the rim line
-    ctx.fillStyle = mix(lightOf(base, 0.6), '#F4EEE4', 0.6);
-    ctx.fillRect(-43.2, -43.5, 86.4, 1.3);
-    outline(ctx, face, fb, line, 1.3);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Fruit bowl: wide glazed bowl on a ring foot, a painted laurel band.
-
-const FRUIT = makeVessel('fruitbowl', [[-46, 61.5], [-42, 61.2], [-35, 58.6], [-28, 54], [-22, 48], [-17.5, 41.5], [-14, 34]], { lip: 3.4, lipC: 2.3 });
-const FRUIT_FOOT = makeVessel('fruitbowl.foot', [[-14.5, 20.6], [-8, 21], [-3.5, 22.2]]);
-const FRUIT_PAINT = ['#F6EEDC', '#F6EEDC', '#FBF0E2', '#FBF3E4'];
-const FRUIT_LEAF = ['#F3EBD8', '#7FA36E', '#6F9A63', '#7FA36E'];
-const CHERRY = '#C4544F';
-
-/** A painted pair of cherries with a leaf, squashed by `s` as it turns away. */
-function cherries(ctx: Ctx, x: number, y: number, s: number, a: number, leafC: string): void {
+/** Etched (frosted) five-petal flower, squashed by `s` as the glass turns away. */
+function etchedFlower(ctx: Ctx, x: number, y: number, s: number, a: number): void {
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(s * 1.15, 1.15);
+  ctx.scale(s, 1);
   ctx.globalAlpha *= a;
-  ctx.strokeStyle = '#6E7F4E';
-  ctx.lineWidth = 0.55;
-  ctx.lineCap = 'round';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (let k = 0; k < 5; k++) {
+    const t = (k / 5) * TAU - Math.PI / 2;
+    ctx.beginPath();
+    ctx.ellipse(Math.cos(t) * 1.8, Math.sin(t) * 1.8, 1.45, 1.1, t, 0, TAU);
+    ctx.fill();
+  }
+  ctx.fillStyle = rgba(GOLD, 0.9);
   ctx.beginPath();
-  ctx.moveTo(-1.9, 1.4);
-  ctx.quadraticCurveTo(-1.3, -2, 0.7, -3.7);
-  ctx.moveTo(2.1, 1.9);
-  ctx.quadraticCurveTo(1.5, -1.4, 0.7, -3.7);
+  ctx.arc(0, 0, 0.8, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(-6, 2.6);
+  ctx.quadraticCurveTo(-3, 4, 0, 2.8);
+  ctx.quadraticCurveTo(3, 4, 6, 2.6);
   ctx.stroke();
-  ctx.fillStyle = leafC;
-  leaf(ctx, 0.7, -3.7, 3.8, 1.35, -0.3);
-  ctx.fillStyle = CHERRY;
-  ctx.beginPath();
-  ctx.arc(-1.9, 2.3, 1.9, 0, TAU);
-  ctx.moveTo(4, 2.8);
-  ctx.arc(2.1, 2.8, 1.9, 0, TAU);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,240,230,0.7)';
-  ctx.beginPath();
-  ctx.arc(-2.5, 1.6, 0.55, 0, TAU);
-  ctx.moveTo(2, 2.1);
-  ctx.arc(1.5, 2.1, 0.55, 0, TAU);
-  ctx.fill();
   ctx.restore();
 }
 
-function fruitbowlBack(ctx: Ctx, l: Look): void {
-  paintInside(ctx, FRUIT, { inner: mix(l.base, PORCELAIN, 0.3), rimTop: lightOf(l.base, 0.45), line: lineOf(l.base), depth: 0.62, gloss: 0.6 });
+const teacup: Glass = {
+  skip: [0, 5],
+  thick: [1, 2],
+  rim: [0, -56, 35, 4.5],
+  gold: true,
+  back: (ctx, l) => saucer(ctx, l.base),
+  front: (ctx, l, g) => glassHandle(ctx, g, bezierPts(35, -50.5, 48, -55, 54, -32, 29.5, -25, 20), 6.2, l.base),
+  frontOver: (ctx, _l, g) => {
+    aroundGlass(g, -40, 9, 0.2, (x, y, s, f) => etchedFlower(ctx, x, y, s, f));
+  },
+  foot: [0, 45, 3],
+  ext: [-50, -70, 58, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Mug: clear glass with a heavy base and a thick D handle, an etched paw.
+
+const mug: Glass = {
+  skip: [3],
+  thick: [0],
+  rim: [0, -64, 27, 4],
+  front: (ctx, l, g) => glassHandle(ctx, g, bezierPts(28, -57, 47, -59.5, 50, -23, 28, -20, 20), 7.4, l.base),
+  frontOver: (ctx, l) => {
+    // an etched paw print, and a few bubbles in the thick base
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    ctx.translate(0, -36);
+    ctx.beginPath();
+    ctx.moveTo(-4.2, 2.6);
+    ctx.bezierCurveTo(-5.2, -1.2, -2, -2.6, 0, -2.6);
+    ctx.bezierCurveTo(2, -2.6, 5.2, -1.2, 4.2, 2.6);
+    ctx.bezierCurveTo(3.4, 4.6, 1.2, 3.6, 0, 3.6);
+    ctx.bezierCurveTo(-1.2, 3.6, -3.4, 4.6, -4.2, 2.6);
+    for (const [tx, ty, r] of [
+      [-5, -4.4, 1.45],
+      [-1.8, -6.5, 1.6],
+      [1.8, -6.5, 1.6],
+      [5, -4.4, 1.45],
+    ]) {
+      ctx.moveTo(tx + r, ty);
+      ctx.ellipse(tx, ty, r, r * 1.22, 0, 0, TAU);
+    }
+    ctx.fill();
+    ctx.restore();
+    bubbles(ctx, l.seed, 10, { x0: -24, y0: -8, x1: 24, y1: -2 }, () => true);
+  },
+  foot: [0, 30.5, 2.5],
+  ext: [-36, -76, 56, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Boot: an amber "das Boot" glass boot, its toe stuffed with a knitted sock.
+
+function sock(ctx: Ctx): void {
+  const path = (): void => roundRect(ctx, 16.5, -28.5, 27, 23, [6, 9, 5, 4]);
+  ctx.save();
+  path();
+  ctx.clip();
+  const stripes = ['#F3E8D8', '#D9726A', '#F3E8D8', '#7FA0C8'];
+  for (let k = 0; k < 8; k++) {
+    ctx.fillStyle = stripes[k % stripes.length];
+    ctx.fillRect(14, -30 + k * 3.4, 32, 3.4);
+  }
+  // knit: rows of little vees
+  ctx.strokeStyle = 'rgba(80,60,70,0.25)';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  for (let y = -28; y < -4; y += 1.7)
+    for (let x = 17; x < 44; x += 2) {
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 1, y + 1.2);
+      ctx.lineTo(x + 2, y);
+    }
+  ctx.stroke();
+  ctx.restore();
 }
 
-function fruitbowlFront(ctx: Ctx, l: Look): void {
-  const line = lineOf(l.base);
-  const paint = FRUIT_PAINT[l.v % FRUIT_PAINT.length];
-  paintBody(ctx, FRUIT_FOOT, {
-    base: shadowOf(l.base, 0.06),
-    finish: 'gloss',
-    line,
-    decorate: () => ringBand(ctx, FRUIT_FOOT, -5.4, 0, CLAY),
-    outlineW: 1.2,
-  });
-  paintBody(ctx, FRUIT, {
-    base: l.base,
-    finish: 'gloss',
-    line,
-    mottle: 0.22,
-    decorate: () => {
-      ringLine(ctx, FRUIT, -41.6, 1.3, paint);
-      ringLine(ctx, FRUIT, -39.6, 0.5, paint);
-      ringLine(ctx, FRUIT, -26.2, 0.8, paint);
-      const leafC = FRUIT_LEAF[l.v % FRUIT_LEAF.length];
-      aroundRing(FRUIT, -35, 11, 0.3, (x, y, s, f) => cherries(ctx, x, y, s, f, leafC));
-      ctx.fillStyle = paint;
-      aroundRing(FRUIT, -33.5, 11, 0.8, (x, y, s, f) => {
-        ctx.globalAlpha = f;
-        ctx.beginPath();
-        ctx.ellipse(x, y, 0.9 * s, 0.9, 0, 0, TAU);
+/** The boot's foot: a smooth instep and toe over the physics' toe box, on its exact inner face. */
+function bootFoot(c: Cavity): ShapePart {
+  const face = rightFace(c, -31);
+  const pts: [number, number][] = [
+    [17, -33],
+    [21, -36],
+    ...bezierPts(21, -36, 26, -33.5, 33, -31.6, 39, -30.8, 12).slice(1),
+    ...bezierPts(39, -30.8, 44, -30, 46.6, -25, 46.6, -17, 12).slice(1),
+    [46.6, -5.5],
+    [face[face.length - 1][0], -5.5],
+  ];
+  for (let i = face.length - 1; i >= 0; i--) pts.push([face[i][0], face[i][1]]);
+  return shapePart(pts);
+}
+
+const boot: Glass = {
+  skip: [3],
+  thick: [0, 3],
+  extra: (c) => [bootFoot(c)],
+  rim: [0, -68, 19, 4],
+  // the sock sits inside the glass toe, under the glass body
+  front: (ctx) => sock(ctx),
+  frontOver: (ctx, l) => {
+    // trapped bubbles in the heavy sole
+    bubbles(ctx, l.seed, 14, { x0: -20, y0: -6, x1: 44, y1: -1.5 }, () => true);
+  },
+  foot: [11, 34.5, 2],
+  ext: [-30, -78, 52, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Box: a clear glass box whose side panes swing open on little brass hinges.
+
+const box: Glass = {
+  thick: [0],
+  rim: [0, -64, 46, 3.5],
+  depth: 11,
+  back: (ctx, l) => {
+    // the open side panes, running back from their front edges (behind the cats)
+    for (const s of [-1, 1]) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(s * 46, -64);
+      ctx.lineTo(s * 41, -75);
+      ctx.lineTo(s * 58, -94);
+      ctx.lineTo(s * 64, -84);
+      ctx.closePath();
+      ctx.fillStyle = rgba(l.base, 0.16);
+      ctx.fill();
+      ctx.strokeStyle = rgba(lightOf(l.base, 0.8), 0.6);
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      ctx.restore();
+    }
+  },
+  frontOver: (ctx) => {
+    for (const s of [-1, 1]) {
+      for (const [x, y] of [
+        [s * 46.2, -65.4],
+        [s * 43.4, -70.8],
+      ]) {
+        ctx.fillStyle = BRASS;
+        roundRect(ctx, x - 1.6, y - 1.3, 3.2, 2.6, 0.8);
         ctx.fill();
-        ctx.globalAlpha = 1;
-      });
-    },
-    under: [-30, -9, 0.38],
-    bounce: 0.14,
-    spec: [[0.66, -42.5, -22, 3.4, 0.75]],
-    glints: [[-38, -39.5, 1.1]],
-  });
-  paintNearRim(ctx, FRUIT, { top: lightOf(l.base, 0.45), line, gloss: 0.75 });
-}
+        rivet(ctx, x, y, 0.7, lightOf(BRASS, 0.3));
+      }
+    }
+    // brass feet at the corners
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = BRASS;
+      roundRect(ctx, s * 47 - 3, -3, 6, 3, 1);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,240,200,0.6)';
+      ctx.fillRect(s * 47 - 2, -2.6, 2.5, 0.7);
+    }
+  },
+  foot: [0, 50, 2],
+  ext: [-70, -98, 70, 3],
+};
 
 // ---------------------------------------------------------------------------
-// Mixing bowl: speckled stoneware, thick rolled rim, two painted stripes.
+// Shoebox: a low glass box, its glass lid propped up behind.
 
-const MIXB = makeVessel('mixingbowl', [[-52, 53], [-46, 52.5], [-38, 51], [-30, 48.4], [-23.5, 44.5], [-18, 38.5], [-14, 31]], { lip: 4.6, lipC: 2.6 });
-const MIXB_FOOT = makeVessel('mixingbowl.foot', [[-13, 18.4], [-7, 19], [-3.1, 19.8]]);
-const MIXB_STRIPE = [PALETTE.teacup, '#F6EEDE', '#D9875F'];
-
-function mixingbowlBack(ctx: Ctx, l: Look): void {
-  paintInside(ctx, MIXB, { inner: mix(PORCELAIN, l.base, 0.25), rimTop: lightOf(l.base, 0.4), line: lineOf(l.base), depth: 0.62, gloss: 0.55 });
-}
-
-function mixingbowlFront(ctx: Ctx, l: Look): void {
-  const line = lineOf(l.base);
-  const stripe = MIXB_STRIPE[l.v % MIXB_STRIPE.length];
-  const sp = (): void => vesselPath(ctx, MIXB);
-  paintBody(ctx, MIXB_FOOT, { base: CLAY, finish: 'satin', line: lineOf(CLAY), texture: () => speckle(ctx, () => vesselPath(ctx, MIXB_FOOT), 0.5), outlineW: 1.2 });
-  paintBody(ctx, MIXB, {
-    base: l.base,
-    finish: 'gloss',
-    line,
-    mottle: 0.16,
-    decorate: () => {
-      ringBand(ctx, MIXB, -45.2, -41, stripe);
-      ringBand(ctx, MIXB, -38.6, -37.2, stripe);
-    },
-    texture: () => speckle(ctx, sp, 0.3, 0.6),
-    under: [-30, -9, 0.34],
-    bounce: 0.14,
-    spec: [[0.64, -47.5, -22, 3.2, 0.72]],
-    glints: [[-34, -44, 1]],
-  });
-  paintNearRim(ctx, MIXB, { top: lightOf(l.base, 0.45), line, gloss: 0.6 });
-}
+const shoebox: Glass = {
+  thick: [0],
+  rim: [0, -40, 40, 3.5],
+  depth: 9,
+  back: (ctx, l) => {
+    ctx.save();
+    ctx.translate(-1, -48.6);
+    ctx.rotate(-0.045);
+    const lid = (): void => roundRect(ctx, -44.5, -12, 89, 15, 2.5);
+    glassShape(ctx, lid, { x0: -44.5, y0: -12, x1: 44.5, y1: 3 }, l.base, 0.24);
+    ctx.fillStyle = rgba(mix(l.base, shadowOf(l.base, 0.3), 0.5), 0.35);
+    roundRect(ctx, -44.5, -12, 89, 3.2, [2.5, 2.5, 0, 0]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-40, -8);
+    ctx.lineTo(-20, -8);
+    ctx.stroke();
+    ctx.restore();
+  },
+  foot: [0, 43.5, 2],
+  ext: [-50, -64, 52, 3],
+};
 
 // ---------------------------------------------------------------------------
-// Pedestal sink: glazed porcelain basin and column, chrome tap behind.
+// Fruit bowl: pale green cut glass on a heavy foot.
 
-const BASIN = makeVessel('sink', [[-139, 76], [-134, 75.6], [-126, 73.4], [-117, 69.4], [-108, 63.6], [-101, 56.5], [-96, 48], [-92.6, 39]], { lip: 6.4, lipC: 3.4 });
-const PED = makeVessel('sink.ped', [[-90, 14.6], [-74, 12.8], [-50, 12.7], [-28, 14.6], [-14, 18.4], [-6, 22.6], [-3.7, 23.4]]);
-const CHROME = '#BAC6D1';
-const SINK_LINE = '#9DA7B6';
+const fruitbowl: Glass = {
+  thick: [0],
+  rim: [0, -44, 57, 5],
+  frontOver: (ctx, _l, g) => {
+    // diamond cuts round the bowl: two sets of diagonals that turn with the glass
+    const { cx, hw } = cavityAt(g.cav, -30);
+    const R = hw + 6;
+    const y0 = -37;
+    const y1 = -23;
+    const n = 26;
+    ctx.save();
+    ctx.lineWidth = 0.6;
+    for (const dir of [1, -1]) {
+      for (let i = 0; i < n; i++) {
+        const t0 = ((i + 0.5) / n) * TAU - Math.PI;
+        const t1 = t0 + dir * (TAU / n) * 1.6;
+        const c0 = Math.cos(t0);
+        const c1 = Math.cos(t1);
+        if (c0 < 0.2 || c1 < 0.2) continue;
+        const ax = cx + R * Math.sin(t0);
+        const ay = y0 + R * K * c0;
+        const bx = cx + R * 0.92 * Math.sin(t1);
+        const by = y1 + R * 0.92 * K * c1;
+        ctx.strokeStyle = `rgba(255,255,255,${0.45 * Math.min(c0, c1)})`;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        ctx.strokeStyle = rgba(shadowOf(g.solid.length ? _l.base : _l.base, 0.5), 0.18 * Math.min(c0, c1));
+        ctx.beginPath();
+        ctx.moveTo(ax + 0.6, ay + 0.4);
+        ctx.lineTo(bx + 0.6, by + 0.4);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    // a scalloped, cut rim: little bright notches along the near lip
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 0.7;
+    const r = g.rim;
+    for (let k = 1; k < 14; k++) {
+      const t = (k / 14) * Math.PI;
+      const x = r.cx + (r.rxm + r.r) * Math.cos(t);
+      const y = r.y + (r.rxm + r.r) * K * Math.sin(t);
+      ctx.beginPath();
+      ctx.arc(x, y + 0.6, 1.4, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+  foot: [0, 22, 3],
+  ext: [-66, -58, 66, 3],
+};
 
-function tap(ctx: Ctx, x: number, y: number, cap: string): void {
-  // escutcheon on the deck, a short stem and a cross handle
+// ---------------------------------------------------------------------------
+// Mixing bowl: clear Pyrex-style glass, faintly blue, with measuring marks.
+
+const mixingbowl: Glass = {
+  thick: [0],
+  rim: [0, -50, 48, 5],
+  frontOver: (ctx, _l, g) => {
+    const L = lsign(ctx);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 0.7;
+    for (let k = 0; k < 4; k++) {
+      const y = -44 + k * 6.5;
+      const { cx, hw } = cavityAt(g.cav, y);
+      const x = cx + L * hw * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + L * (k % 2 ? 3 : 5), y + 0.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+  foot: [0, 20, 3],
+  ext: [-56, -64, 56, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Sink: a clear glass vessel basin on a frosted glass pedestal, chrome tap.
+
+const SINK_PARTS = CONTAINERS.sink.parts as Part[];
+
+function sinkTap(ctx: Ctx, x: number, y: number, cap: string): void {
   ctx.save();
   ctx.fillStyle = shadowOf(CHROME, 0.25);
   ctx.beginPath();
@@ -1149,7 +767,7 @@ function tap(ctx: Ctx, x: number, y: number, cap: string): void {
     },
     3.2,
     CHROME,
-    { line: SINK_LINE, spec: 0.9 },
+    { line: CHROME_LINE, spec: 0.9 },
   );
   tube(
     ctx,
@@ -1160,7 +778,7 @@ function tap(ctx: Ctx, x: number, y: number, cap: string): void {
     },
     1.9,
     CHROME,
-    { line: SINK_LINE, spec: 0.9 },
+    { line: CHROME_LINE, spec: 0.9 },
   );
   ctx.fillStyle = cap;
   ctx.beginPath();
@@ -1170,425 +788,128 @@ function tap(ctx: Ctx, x: number, y: number, cap: string): void {
   ctx.restore();
 }
 
-function sinkBack(ctx: Ctx): void {
-  litFrame(ctx, () => {
-    paintInside(ctx, BASIN, {
-      inner: '#EDEEF0',
-      rimTop: '#FBF8F3',
-      line: SINK_LINE,
-      depth: 0.56,
-      gloss: 0.75,
-      extra: () => {
-        // overflow slot under the back of the rim
-        ctx.fillStyle = shadowOf('#EDEEF0', 0.7);
-        roundRect(ctx, -6, -144.6, 12, 2.4, 1.2);
-        ctx.fill();
-        ctx.strokeStyle = CHROME;
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-      },
-    });
-    // chrome tap on the deck: a column and a gooseneck spout, hot and cold handles
-    const spout = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(0, -148.5);
-      ctx.lineTo(0, -168);
-      ctx.bezierCurveTo(0, -181, 22, -182, 24.5, -167);
-      ctx.lineTo(24.5, -163.5);
-    };
-    ctx.fillStyle = shadowOf(CHROME, 0.3);
-    ctx.beginPath();
-    ctx.ellipse(0, -148.5, 7.4, 2.2, 0, 0, TAU);
-    ctx.fill();
-    tube(ctx, spout, 4.6, CHROME, { line: SINK_LINE, spec: 0.95, shade: 0.5 });
-    ctx.fillStyle = shadowOf(CHROME, 0.6);
-    ctx.beginPath();
-    ctx.ellipse(24.5, -162.9, 2.3, 0.8, 0, 0, TAU);
-    ctx.fill();
-    tube(
-      ctx,
-      () => {
+const sink: Glass = {
+  thick: [0, 1],
+  rim: [0, -138, 70, 6],
+  backOver: (ctx) => {
+    litFrame(ctx, () => {
+      const yb = -138 - 70 * K - 1;
+      const spout = (): void => {
         ctx.beginPath();
-        ctx.moveTo(-3.6, -149.2);
-        ctx.lineTo(3.6, -149.2);
-      },
-      3,
-      CHROME,
-      { line: SINK_LINE, spec: 0.8 },
-    );
-    tap(ctx, -21, -148.4, '#E39C95');
-    tap(ctx, 21, -148.4, '#86AAD4');
-  });
-}
-
-function sinkFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  paintBody(ctx, PED, {
-    base: shadowOf(base, 0.03),
-    finish: 'gloss',
-    line: SINK_LINE,
-    mottle: 0.12,
-    under: [-30, 0, 0.12],
-    bounce: 0.15,
-    after: () => {
-      // the basin overhang shades the top of the column
-      const g = ctx.createLinearGradient(0, -90, 0, -70);
-      g.addColorStop(0, rgba(shadowOf(base, 0.7), 0.45));
-      g.addColorStop(1, rgba(shadowOf(base, 0.7), 0));
-      ctx.fillStyle = g;
-      ctx.fillRect(-20, -92, 40, 22);
-    },
-    spec: [[0.55, -80, -12, 2.6, 0.55]],
-  });
-  paintBody(ctx, BASIN, {
-    base,
-    finish: 'gloss',
-    line: SINK_LINE,
-    mottle: 0.15,
-    under: [-118, -88, 0.3],
-    spec: [
-      [0.66, -133, -101, 4.2, 0.8],
-      [0.4, -128, -112, 2, 0.35],
-    ],
-    glints: [[-49, -128.5, 1.4]],
-  });
-  paintNearRim(ctx, BASIN, { top: '#FCFAF6', line: SINK_LINE, gloss: 0.85 });
-}
-
-// ---------------------------------------------------------------------------
-// Terracotta pot: matte speckled clay, rolled collar, a little bloom and wear.
-
-const POT_RIM = makeVessel('pot.rim', [[-61, 38.2], [-56, 38.5], [-51.2, 38]], { lip: 4.8, lipC: 2.4 });
-const POT = makeVessel('pot', [[-54, 34.8], [-44, 33.5], [-30, 31.7], [-16, 29.6], [-4.4, 27.6]]);
-
-function potBack(ctx: Ctx, l: Look): void {
-  paintInside(ctx, POT_RIM, { inner: shadowOf(l.base, 0.3), rimTop: lightOf(l.base, 0.28), line: lineOf(l.base), depth: 0.7 });
-}
-
-function potFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const line = lineOf(base);
-  const bp = (): void => vesselPath(ctx, POT);
-  paintBody(ctx, POT, {
-    base,
-    finish: 'matte',
-    line,
-    decorate: () => {
-      // mineral bloom and a damp, darker foot
-      for (let k = 0; k < 3; k++) {
-        const x = (hash01(l.seed, k + 40) - 0.5) * 40;
-        const y = -12 - hash01(l.seed, k + 44) * 26;
-        const r = 5 + hash01(l.seed, k + 48) * 5;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-        g.addColorStop(0, 'rgba(246,236,224,0.2)');
-        g.addColorStop(1, 'rgba(246,236,224,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
-      }
-    },
-    texture: () => {
-      speckle(ctx, bp, 0.3, 0.65);
-      texPaint(ctx, bp, 'plaster', { alpha: 0.22, scale: 0.4 });
-    },
-    under: [-26, 0, 0.22],
-    bounce: 0.18,
-    after: () => {
-      // the collar overhangs and casts a soft shade on the body
-      const r = ring(POT_RIM, -51.2);
-      for (const [dy, w, a] of [
-        [1.4, 3, 0.3],
-        [3, 6.5, 0.14],
-      ] as const) {
-        ctx.strokeStyle = rgba(shadowOf(base, 0.7), a);
-        ctx.lineWidth = w;
-        ctx.beginPath();
-        ctx.ellipse(1, -51.2 + dy, r.rx, r.ry, 0, 0, Math.PI);
-        ctx.stroke();
-      }
-    },
-  });
-  const rp = (): void => vesselPath(ctx, POT_RIM);
-  paintBody(ctx, POT_RIM, {
-    base: lightOf(base, 0.06),
-    finish: 'matte',
-    line,
-    texture: () => {
-      speckle(ctx, rp, 0.3, 0.65);
-      texPaint(ctx, rp, 'plaster', { alpha: 0.22, scale: 0.4 });
-    },
-    after: () => {
-      // the rolled lower edge of the collar
-      const r = ring(POT_RIM, -51.2);
-      ctx.strokeStyle = rgba(shadowOf(base, 0.4), 0.5);
-      ctx.lineWidth = 1.6;
+        ctx.moveTo(0, yb);
+        ctx.lineTo(0, yb - 19);
+        ctx.bezierCurveTo(0, yb - 32, 22, yb - 33, 24.5, yb - 18);
+        ctx.lineTo(24.5, yb - 14.5);
+      };
+      ctx.fillStyle = shadowOf(CHROME, 0.3);
       ctx.beginPath();
-      ctx.ellipse(0, -52, r.rx + 1, r.ry, 0, 0, Math.PI);
-      ctx.stroke();
-      // a chip in the rim showing paler clay
-      const cx = 10 + hash01(l.seed, 61) * 12;
-      ctx.fillStyle = lightOf(base, 0.45);
-      ctx.beginPath();
-      ctx.moveTo(cx - 2.2, -60.9 + ring(POT_RIM, -61).ry * 0.95);
-      ctx.lineTo(cx, -58.7 + ring(POT_RIM, -61).ry * 0.9);
-      ctx.lineTo(cx + 2.4, -60.9 + ring(POT_RIM, -61).ry * 0.92);
-      ctx.closePath();
+      ctx.ellipse(0, yb, 7.4, 2.2, 0, 0, TAU);
       ctx.fill();
-    },
-  });
-  paintNearRim(ctx, POT_RIM, { top: lightOf(base, 0.28), line });
-}
-
-// ---------------------------------------------------------------------------
-// Wicker laundry basket: stakes and weavers, a wrapped rim, hand holes.
-
-const BASKET = makeVessel('basket', [[-72, 61], [-66, 60.4], [-46, 58.2], [-24, 56], [-8.7, 54.4]], { lip: 6.6, lipC: 3.8 });
-const STAKES = 13;
-const HOLE_X = 39;
-const HOLE_Y = -60;
-
-function holePath(ctx: Ctx, s: number, grow = 0): void {
-  const r = ring(BASKET, HOLE_Y);
-  const th = Math.asin(HOLE_X / r.rx);
-  const cx = s * HOLE_X;
-  const cy = HOLE_Y + r.ry * Math.cos(th) - 4;
-  const w = 8.5 * Math.cos(th) + grow;
-  ctx.moveTo(cx + w, cy);
-  ctx.ellipse(cx, cy, w, 3.6 + grow, s * -0.12, 0, TAU);
-}
-
-function basketBody(ctx: Ctx): void {
-  vesselPath(ctx, BASKET);
-  holePath(ctx, -1);
-  holePath(ctx, 1);
-}
-
-function weave(ctx: Ctx, base: string): void {
-  const v = BASKET;
-  const dth = Math.PI / STAKES;
-  // dark gaps between the canes
-  ctx.fillStyle = shadowOf(base, 0.62);
-  ctx.fillRect(-70, -80, 140, 85);
-  // stakes: upright canes the weavers pass in front of and behind
-  ctx.lineCap = 'butt';
-  ctx.strokeStyle = shadowOf(base, 0.18);
-  ctx.beginPath();
-  for (let j = -STAKES; j <= STAKES; j++) {
-    const th = j * dth;
-    if (Math.abs(th) >= Math.PI / 2) continue;
-    for (let y = -70; y <= -6; y += 4) {
-      const r1 = ring(v, y);
-      const r2 = ring(v, y + 4);
-      const p1 = [r1.rx * Math.sin(th), y + r1.ry * Math.cos(th)];
-      const p2 = [r2.rx * Math.sin(th), y + 4 + r2.ry * Math.cos(th)];
-      if (y === -70) ctx.moveTo(p1[0], p1[1]);
-      ctx.lineTo(p2[0], p2[1]);
-    }
-  }
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  // weavers: each row passes in front of every other stake, alternating by row
-  const rowH = 5.3;
-  const pills = [new Path2D(), new Path2D(), new Path2D()];
-  const hi = new Path2D();
-  const lo = new Path2D();
-  let row = 0;
-  for (let y = -66.4; y < -4; y += rowH, row++) {
-    const r = ring(v, y);
-    const off = row % 2;
-    for (let j = -STAKES - 1; j <= STAKES + 1; j += 2) {
-      const tc = (j + off) * dth;
-      const ta = tc - dth * 0.93;
-      const tb = tc + dth * 0.93;
-      if (tb <= -Math.PI / 2 || ta >= Math.PI / 2) continue;
-      const a = Math.max(-Math.PI / 2, ta);
-      const b = Math.min(Math.PI / 2, tb);
-      const m = (a + b) / 2;
-      const P = (t: number, dy: number): [number, number] => [r.rx * Math.sin(t), y + dy + r.ry * Math.cos(t)];
-      const h = rowH * 0.47;
-      const [x0, y0t] = P(a, -h);
-      const [xm, ymt] = P(m, -h);
-      const [x1, y1t] = P(b, -h);
-      const [, y0b] = P(a, h);
-      const [, ymb] = P(m, h);
-      const [, y1b] = P(b, h);
-      const e0 = 1.5 * Math.cos(a);
-      const e1 = 1.5 * Math.cos(b);
-      const pill = pills[Math.floor(hash01(row * 31 + j, 5) * 3)];
-      pill.moveTo(x0, y0t + 0.6);
-      pill.quadraticCurveTo(2 * xm - (x0 + x1) / 2, 2 * ymt - (y0t + y1t) / 2, x1, y1t + 0.6);
-      pill.quadraticCurveTo(x1 + e1, (y1t + y1b) / 2, x1, y1b - 0.6);
-      pill.quadraticCurveTo(2 * xm - (x0 + x1) / 2, 2 * ymb - (y0b + y1b) / 2, x0, y0b - 0.6);
-      pill.quadraticCurveTo(x0 - e0, (y0t + y0b) / 2, x0, y0t + 0.6);
-      // highlight along the top of the cane, shade along its underside
-      const [ha, hya] = P(a + dth * 0.25, -h * 0.45);
-      const [hm, hym] = P(m, -h * 0.45);
-      const [hb, hyb] = P(b - dth * 0.25, -h * 0.45);
-      hi.moveTo(ha, hya);
-      hi.quadraticCurveTo(2 * hm - (ha + hb) / 2, 2 * hym - (hya + hyb) / 2, hb, hyb);
-      const [la, lya] = P(a + dth * 0.15, h * 0.6);
-      const [lm, lym] = P(m, h * 0.6);
-      const [lb, lyb] = P(b - dth * 0.15, h * 0.6);
-      lo.moveTo(la, lya);
-      lo.quadraticCurveTo(2 * lm - (la + lb) / 2, 2 * lym - (lya + lyb) / 2, lb, lyb);
-    }
-  }
-  const tones = [base, lightOf(base, 0.12), shadowOf(base, 0.08)];
-  pills.forEach((pp, i) => {
-    ctx.fillStyle = tones[i];
-    ctx.fill(pp);
-  });
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = rgba(shadowOf(base, 0.45), 0.6);
-  ctx.lineWidth = 1.5;
-  ctx.stroke(lo);
-  ctx.strokeStyle = rgba(lightOf(base, 0.6), 0.75);
-  ctx.lineWidth = 1.1;
-  ctx.stroke(hi);
-}
-
-/** Half of the wrapped rim of the basket: 'near' (front) or 'far' (back). */
-function basketRim(ctx: Ctx, base: string, half: 'near' | 'far'): void {
-  const v = BASKET;
-  const { rimY, rx, ry } = v;
-  const irx = rx - v.lip;
-  const iry = ry - v.lipC;
-  const a0 = half === 'near' ? 0 : Math.PI;
-  const band = (): void => {
-    ctx.beginPath();
-    ctx.ellipse(0, rimY, rx, ry, 0, a0, a0 + Math.PI);
-    ctx.ellipse(0, rimY, irx, iry, 0, a0 + Math.PI, a0, true);
-    ctx.closePath();
-  };
-  const b: Box = { x0: -rx, y0: rimY - ry, x1: rx, y1: rimY + ry };
-  band();
-  ctx.fillStyle = lightGradient(ctx, b, [[0, lightOf(base, 0.35)], [0.5, base], [1, shadowOf(base, 0.3)]]);
-  ctx.fill();
-  // the wrapping cane: slanted turns all along the rim
-  ctx.save();
-  band();
-  ctx.clip();
-  const turns = 46;
-  const lo = new Path2D();
-  const hi = new Path2D();
-  for (let k = 0; k <= turns / 2; k++) {
-    const t = a0 + (k / (turns / 2)) * Math.PI;
-    const t2 = t + 0.09;
-    lo.moveTo(rx * Math.cos(t) * 1.02, rimY + ry * Math.sin(t) * 1.02);
-    lo.lineTo(irx * Math.cos(t2) * 0.98, rimY + iry * Math.sin(t2) * 0.98);
-    const t3 = t + 0.05;
-    hi.moveTo((rx - 1.4) * Math.cos(t3), rimY + (ry - 0.6) * Math.sin(t3));
-    hi.lineTo((irx + 1.6) * Math.cos(t3 + 0.08), rimY + (iry + 0.6) * Math.sin(t3 + 0.08));
-  }
-  ctx.strokeStyle = rgba(shadowOf(base, 0.55), 0.8);
-  ctx.lineWidth = 1.1;
-  ctx.stroke(lo);
-  ctx.strokeStyle = rgba(lightOf(base, 0.65), 0.6);
-  ctx.lineWidth = 0.8;
-  ctx.stroke(hi);
-  ctx.restore();
-  ctx.strokeStyle = rgba(lineOf(base), 0.9);
-  ctx.lineWidth = 1.1;
-  ctx.beginPath();
-  ctx.ellipse(0, rimY, rx, ry, 0, a0, a0 + Math.PI);
-  ctx.stroke();
-  ctx.strokeStyle = rgba(lineOf(base), 0.55);
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.ellipse(0, rimY, irx, iry, 0, a0, a0 + Math.PI);
-  ctx.stroke();
-}
-
-function basketBack(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    // the far wall's inside, in shade, seen through the hand holes
-    ctx.fillStyle = shadowOf(base, 0.78);
-    ctx.beginPath();
-    holePath(ctx, -1, 2);
-    holePath(ctx, 1, 2);
+      tube(ctx, spout, 4.6, CHROME, { line: CHROME_LINE, spec: 0.95, shade: 0.5 });
+      ctx.fillStyle = shadowOf(CHROME, 0.6);
+      ctx.beginPath();
+      ctx.ellipse(24.5, yb - 13.9, 2.3, 0.8, 0, 0, TAU);
+      ctx.fill();
+      sinkTap(ctx, -21, yb + 0.2, '#E39C95');
+      sinkTap(ctx, 21, yb + 0.2, '#86AAD4');
+    });
+  },
+  front: () => undefined,
+  frontOver: (ctx) => {
+    // the pedestal and foot are frosted
+    const ped = (): void => {
+      ctx.beginPath();
+      partPath(ctx, SINK_PARTS[1]);
+      partPath(ctx, SINK_PARTS[0]);
+    };
+    ped();
+    ctx.fillStyle = 'rgba(250,252,253,0.28)';
     ctx.fill();
-    paintInside(ctx, BASKET, {
-      inner: shadowOf(base, 0.25),
-      rimTop: base,
-      line: lineOf(base),
-      depth: 0.7,
-      extra: () =>
-        texPaint(
-          ctx,
-          () => {
-            ctx.beginPath();
-            ctx.rect(-60, -90, 120, 30);
-          },
-          'weave',
-          { alpha: 0.45, scale: 0.55 },
-        ),
-    });
-    memo(ctx, `basket.rim.far|${base}`, { x0: -63, y0: -84, x1: 63, y1: -70 }, (g) => basketRim(g, base, 'far'));
-  });
-}
-
-function basketFront(ctx: Ctx, l: Look): void {
-  litFrame(ctx, () => {
-    const base = l.base;
-    const v = BASKET;
-    const vp = (): void => vesselPath(ctx, v);
-    // weave, cane grain and light (cached), clipped to the body minus the hand holes
-    ctx.save();
-    ctx.beginPath();
-    basketBody(ctx);
-    ctx.clip('evenodd');
-    memo(ctx, `basket.weave|${base}`, { x0: -62, y0: -73, x1: 62, y1: 1 }, (g) => {
-      g.save();
-      vesselPath(g, v);
-      g.clip();
-      weave(g, base);
-      texPaint(g, () => vesselPath(g, v), 'card', { alpha: 0.3, scale: 0.28 });
-      shadeCylinder(g, v, base, 'matte', () => vesselPath(g, v), { under: [-30, -2, 0.3], bounce: 0.16 });
-      g.restore();
-    });
-    ctx.restore();
-    // the wrapped edges of the hand holes
-    ctx.save();
-    ctx.beginPath();
-    holePath(ctx, -1);
-    holePath(ctx, 1);
-    ctx.lineWidth = 3.2;
-    ctx.strokeStyle = shadowOf(base, 0.1);
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = rgba(lightOf(base, 0.6), 0.8);
-    ctx.translate(-0.4, -0.6);
-    ctx.stroke();
-    ctx.translate(0.4, 0.6);
-    ctx.strokeStyle = rgba(lineOf(base), 0.8);
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    ctx.restore();
-    outline(ctx, vp, { x0: -61, y0: -82, x1: 61, y1: 0 }, lineOf(base), 1.4);
-    memo(ctx, `basket.rim.near|${base}`, { x0: -63, y0: -74, x1: 63, y1: -61 }, (g) => basketRim(g, base, 'near'));
-  });
-}
+    texPaint(ctx, ped, 'plaster', { alpha: 0.35, scale: 0.25, light: '#FFFFFF', dark: '#9FB3C2' });
+  },
+  foot: [0, 24, 3],
+  ext: [-80, -186, 80, 3],
+};
 
 // ---------------------------------------------------------------------------
-// Saucepan: brushed copper (tin lined) or steel, riveted iron handle.
+// Pot: a glass planter with a rolled lip and a jute twine tied round it.
 
-const PAN = makeVessel('saucepan', [[-46, 47.5], [-42, 47.6], [-14, 47.4], [-9, 46.8], [-7.4, 46.2]], { lip: 2.4, lipC: 2 });
-const IRON = '#575166';
+const pot: Glass = {
+  thick: [0],
+  rim: [0, -58, 31, 5.5],
+  frontOver: (ctx, l, g) => {
+    const L = lsign(ctx);
+    const y = -47;
+    const { cx, hw } = cavityAt(g.cav, y);
+    const R = hw + 5.6;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const [dy, w] of [
+      [0, 1.3],
+      [2.2, 1.1],
+    ] as const) {
+      ctx.strokeStyle = '#B98F58';
+      ctx.lineWidth = w + 0.5;
+      ctx.beginPath();
+      ctx.ellipse(cx, y + dy, R, R * K, 0, 0, Math.PI);
+      ctx.stroke();
+      ctx.strokeStyle = '#DDBB83';
+      ctx.lineWidth = w * 0.55;
+      ctx.beginPath();
+      ctx.ellipse(cx, y + dy - 0.3, R, R * K, 0, 0.05, Math.PI - 0.05);
+      ctx.stroke();
+    }
+    // a little knot with two ends on the lit side
+    const kx = cx - L * R * 0.62;
+    const ky = y + R * K * 0.78 + 1;
+    ctx.fillStyle = '#C9A066';
+    ctx.beginPath();
+    ctx.ellipse(kx, ky, 1.6, 1.3, 0, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = '#B98F58';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(kx, ky + 0.8);
+    ctx.quadraticCurveTo(kx - L * 1.5, ky + 4, kx - L * 0.6, ky + 7.5);
+    ctx.moveTo(kx, ky + 0.8);
+    ctx.quadraticCurveTo(kx + L * 1.8, ky + 3.6, kx + L * 2.2, ky + 6.8);
+    ctx.stroke();
+    ctx.restore();
+    void l;
+  },
+  foot: [0, 27.5, 2.5],
+  ext: [-40, -70, 40, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Basket: a big clear glass tub with two loop handles.
+
+const basket: Glass = {
+  thick: [0],
+  rim: [0, -72, 56, 5],
+  front: (ctx, l, g) => {
+    for (const s of [-1, 1]) glassHandle(ctx, g, bezierPts(s * 59, -63, s * 70, -64, s * 71, -45, s * 58, -44, 14), 4.4, l.base);
+  },
+  foot: [0, 53, 2],
+  ext: [-74, -86, 74, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Saucepan: amber glass cookware with a dark clamp-on handle.
 
 function panHandle(ctx: Ctx): void {
+  const IRON = '#4E4656';
   const path = (): void => {
     ctx.beginPath();
-    ctx.moveTo(42, -42.5);
+    ctx.moveTo(44, -42.5);
     ctx.bezierCurveTo(62, -45, 80, -48, 93, -50.6);
     ctx.bezierCurveTo(100, -51.8, 103.4, -47.8, 101.6, -44.4);
     ctx.bezierCurveTo(100.4, -42.2, 97.5, -41.6, 94.5, -41.8);
-    ctx.bezierCurveTo(80, -40.4, 62, -37.2, 42, -34.5);
+    ctx.bezierCurveTo(80, -40.4, 62, -37.2, 44, -34.5);
     ctx.closePath();
-    // hanging hole
     ctx.moveTo(96.6, -46.4);
     ctx.ellipse(94.6, -46.4, 2, 1.5, -0.16, 0, TAU);
   };
-  const b: Box = { x0: 42, y0: -52, x1: 103, y1: -34 };
   path();
   ctx.fillStyle = IRON;
   ctx.fill('evenodd');
@@ -1609,482 +930,196 @@ function panHandle(ctx: Ctx): void {
   ctx.bezierCurveTo(66, -44.6, 80, -47, 90, -48.8);
   ctx.stroke();
   ctx.restore();
-  outline(ctx, path, b, lineOf(IRON), 1.2, 0.7);
+  ctx.strokeStyle = shadowOf(IRON, 0.5);
+  ctx.lineWidth = 1;
+  path();
+  ctx.stroke();
 }
 
-function saucepanBack(ctx: Ctx, l: Look): void {
-  const lining = l.v === 0 ? '#C7CCD3' : shadowOf(l.base, 0.05);
-  paintInside(ctx, PAN, {
-    inner: lining,
-    rimTop: lightOf(l.base, 0.5),
-    line: lineOf(l.base),
-    depth: 0.6,
-    gloss: 0.8,
-    extra: () => {
-      // a bright reflection on the far inner wall, metal-style
-      const g = ctx.createRadialGradient(17, -48, 0, 17, -48, 13);
-      g.addColorStop(0, rgba(lightOf(lining, 0.9), 0.6));
-      g.addColorStop(1, rgba(lightOf(lining, 0.9), 0));
-      ctx.fillStyle = g;
-      ctx.fillRect(2, -58, 30, 20);
-    },
-  });
-}
-
-function saucepanFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const line = lineOf(base);
-  panHandle(ctx);
-  const pp = (): void => vesselPath(ctx, PAN);
-  paintBody(ctx, PAN, {
-    base,
-    finish: 'metal',
-    line,
-    decorate: () => {
-      ringLine(ctx, PAN, -37.5, 0.8, shadowOf(base, 0.3));
-      ringLine(ctx, PAN, -36.6, 0.6, lightOf(base, 0.4));
-    },
-    texture: () => texPaint(ctx, pp, 'brush', { alpha: 0.5, scale: 0.2 }),
-    under: [-22, -1, 0.25],
-    spec: [[0.7, -43, -9, 2.6, 0.85]],
-    glints: [[-33, -42.5, 1.1]],
-  });
-  paintNearRim(ctx, PAN, { top: lightOf(base, 0.5), line, gloss: 0.85 });
-  // riveted bracket where the handle meets the pan
-  const plate = (): void => roundRect(ctx, 38.2, -44.5, 8.6, 12.5, 2.6);
-  plate();
-  ctx.fillStyle = shadowOf(base, 0.08);
-  ctx.fill();
-  edgeShadeL(ctx, plate, { x0: 38.2, y0: -44.5, x1: 46.8, y1: -32 }, shadowOf(base, 0.5), 2, 0.5, 'shadow', 2);
-  outline(ctx, plate, { x0: 38.2, y0: -44.5, x1: 46.8, y1: -32 }, line, 1);
-  rivet(ctx, 42.5, -41, 1.5, lightOf(base, 0.15));
-  rivet(ctx, 42.5, -35.6, 1.5, lightOf(base, 0.15));
-}
-
-// ---------------------------------------------------------------------------
-// Vase: round-shouldered, glossy, a hand-painted vine around the belly.
-
-const VASE = makeVessel('vase', [[-98, 24], [-94.5, 22.6], [-88, 21.9], [-81, 23], [-73, 26.8], [-65, 31.3], [-57, 34.9], [-47, 36.3], [-33, 35.7], [-19, 34], [-10, 32], [-5.2, 30.6]], { lip: 4.8, lipC: 1.6 });
-const VASE_PAINT = [
-  { leaf: '#F7EFE0', berry: GOLD },
-  { leaf: '#5E9A84', berry: '#E9A6A0' },
-  { leaf: '#FBF2E6', berry: '#C77B82' },
-];
-
-function vaseBack(ctx: Ctx, l: Look): void {
-  paintInside(ctx, VASE, { inner: shadowOf(l.base, 0.35), rimTop: lightOf(l.base, 0.45), line: lineOf(l.base), depth: 0.8, gloss: 0.6 });
-}
-
-function vaseFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const line = lineOf(base);
-  const pc = VASE_PAINT[l.v % VASE_PAINT.length];
-  paintBody(ctx, VASE, {
-    base,
-    finish: 'gloss',
-    line,
-    mottle: 0.22,
-    decorate: () => {
-      ringLine(ctx, VASE, -79.5, 1, pc.leaf);
-      ringLine(ctx, VASE, -14, 1.2, pc.leaf);
-      ringLine(ctx, VASE, -11.6, 0.6, pc.leaf);
-      // a wavy vine all around the belly, leaves at its crests
-      const yc = -45;
-      const r = ring(VASE, yc);
-      const n = 5;
-      const ph = hash01(l.seed, 70) * TAU;
-      const at = (t: number): [number, number] => [r.rx * Math.sin(t), yc + r.ry * Math.cos(t) + 4 * Math.sin(n * t + ph)];
-      ctx.strokeStyle = pc.leaf;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let k = 0; k <= 48; k++) {
-        const t = -Math.PI / 2 + (k / 48) * Math.PI;
-        const [x, y] = at(t);
-        if (k) ctx.lineTo(x, y);
-        else ctx.moveTo(x, y);
-      }
-      ctx.stroke();
-      ctx.fillStyle = pc.leaf;
-      for (let k = 0; k < 4 * n; k++) {
-        const t = ((k + 0.5) / (4 * n)) * TAU - Math.PI;
-        const c = Math.cos(t);
-        if (c < 0.12) continue;
-        const [x, y] = at(t);
-        const up = Math.cos(n * t + ph) > 0 ? -1 : 1;
-        ctx.globalAlpha = Math.min(1, (c - 0.12) * 3);
-        leaf(ctx, x, y, 6.2, 2.3, up * 1.1 - (k % 2 ? 0.5 : -0.5), c);
-        if (k % 2 === 0) {
-          ctx.fillStyle = pc.berry;
-          ctx.beginPath();
-          ctx.ellipse(x + 2.4 * c, y - up * 3, 1.25 * c, 1.25, 0, 0, TAU);
-          ctx.fill();
-          ctx.fillStyle = pc.leaf;
-        }
-      }
-      ctx.globalAlpha = 1;
-    },
-    under: [-30, -3, 0.3],
-    bounce: 0.14,
-    spec: [
-      [0.6, -64, -16, 3.4, 0.78],
-      [0.6, -95, -85, 1.6, 0.55],
-    ],
-    glints: [[-18, -66.5, 1.2]],
-  });
-  paintNearRim(ctx, VASE, { top: lightOf(base, 0.45), line, gloss: 0.7 });
-}
-
-// ---------------------------------------------------------------------------
-// Bucket: galvanised steel with ribs, or enamel with a navy rim; bail handle.
-
-const BUCKET = makeVessel('bucket', [[-61, 38.5], [-57.5, 38.1], [-32, 34.8], [-5, 31.2]], { lip: 2.8, lipC: 2.3 });
-const NAVY = '#4D5779';
-const BAIL = '#8F9BA8';
-
-function bucketBack(ctx: Ctx, l: Look): void {
-  const enamel = l.v === 1;
-  litFrame(ctx, () => {
-    // wire bail leaning back behind the rim, with a wooden grip
-    const wire = (): void => {
-      ctx.beginPath();
-      ctx.moveTo(-37.2, -51);
-      ctx.bezierCurveTo(-38, -91, 38, -91, 37.2, -51);
-    };
-    tube(ctx, wire, 2.2, BAIL, { spec: 0.6 });
-    tube(
-      ctx,
-      () => {
-        ctx.beginPath();
-        ctx.moveTo(-7.5, -80.5);
-        ctx.quadraticCurveTo(0, -81.5, 7.5, -80.5);
-      },
-      5.4,
-      PALETTE.oak,
-      { spec: 0.25 },
-    );
-    ctx.strokeStyle = rgba(shadowOf(PALETTE.oak, 0.5), 0.6);
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(-6, -80);
-    ctx.quadraticCurveTo(0, -80.9, 6, -80);
+const saucepan: Glass = {
+  skip: [3],
+  thick: [0],
+  rim: [0, -44, 43, 4.5],
+  front: (ctx) => panHandle(ctx),
+  frontOver: (ctx) => {
+    // the handle's steel clamp round the wall
+    const plate = (): void => roundRect(ctx, 40.5, -46.5, 9, 14, 2.4);
+    plate();
+    ctx.fillStyle = CHROME;
+    ctx.fill();
+    ctx.strokeStyle = CHROME_LINE;
+    ctx.lineWidth = 0.9;
     ctx.stroke();
-  });
-  paintInside(ctx, BUCKET, {
-    inner: enamel ? '#F2EDE6' : shadowOf(l.base, 0.12),
-    rimTop: enamel ? NAVY : lightOf(l.base, 0.4),
-    line: lineOf(l.base),
-    depth: 0.6,
-    gloss: 0.6,
-  });
-}
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillRect(41.8, -45.6, 1.4, 12);
+    rivet(ctx, 45, -42.5, 1.3, CHROME);
+    rivet(ctx, 45, -36.5, 1.3, CHROME);
+  },
+  foot: [0, 46, 2.5],
+  ext: [-52, -58, 106, 3],
+};
 
-function bucketFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const enamel = l.v === 1;
-  const line = lineOf(base);
-  const bp = (): void => vesselPath(ctx, BUCKET);
-  paintBody(ctx, BUCKET, {
-    base,
-    finish: enamel ? 'gloss' : 'metal',
-    line,
-    mottle: enamel ? 0.16 : 0,
-    decorate: () => {
-      if (enamel) {
-        ringBand(ctx, BUCKET, -62, -57.4, NAVY);
-        // a couple of chips in the enamel
-        for (let k = 0; k < 2; k++) {
-          const x = (hash01(l.seed, k + 80) - 0.5) * 36;
-          const y = k ? -10 - hash01(l.seed, 82) * 6 : -50 + hash01(l.seed, 83) * 8;
-          ctx.fillStyle = lightOf(base, 0.45);
-          ctx.beginPath();
-          ctx.ellipse(x, y, 1.6, 1.1, 0.4, 0, TAU);
-          ctx.fill();
-          ctx.fillStyle = mix(NAVY, base, 0.3);
-          ctx.beginPath();
-          ctx.ellipse(x + 0.15, y + 0.1, 0.95, 0.6, 0.4, 0, TAU);
-          ctx.fill();
-        }
+// ---------------------------------------------------------------------------
+// Vase: sea-green seeded glass.
+
+const VASE_PARTS = CONTAINERS.vase.parts as Part[];
+
+const vase: Glass = {
+  thick: [0],
+  rim: [0, -96, 19, 5],
+  frontOver: (ctx, l) => {
+    bubbles(ctx, l.seed, 70, { x0: -37, y0: -100, x1: 37, y1: -1 }, (x, y) => {
+      let d = Infinity;
+      for (const p of VASE_PARTS) {
+        if (p.k !== 'cap') continue;
+        const dx = p.bx - p.ax;
+        const dy = p.by - p.ay;
+        const t = Math.max(0, Math.min(1, ((x - p.ax) * dx + (y - p.ay) * dy) / (dx * dx + dy * dy)));
+        d = Math.min(d, Math.hypot(x - p.ax - dx * t, y - p.ay - dy * t) - p.r);
       }
-    },
-    texture: enamel
-      ? undefined
-      : () => {
-          texPaint(ctx, bp, 'plaster', { alpha: 0.32, scale: 0.22 });
-          texPaint(ctx, bp, 'brush', { alpha: 0.4, scale: 0.2 });
+      return d < -1.2;
+    });
+  },
+  foot: [0, 31, 3],
+  ext: [-40, -106, 40, 3],
+};
+
+// ---------------------------------------------------------------------------
+// Bucket: a clear glass ice bucket with a chrome bail and a chrome band.
+
+const BAIL = '#9AA6B3';
+
+const bucket: Glass = {
+  thick: [0],
+  rim: [0, -60, 34, 3.5],
+  back: (ctx) => {
+    litFrame(ctx, () => {
+      tube(
+        ctx,
+        () => {
+          ctx.beginPath();
+          ctx.moveTo(-37.2, -51);
+          ctx.bezierCurveTo(-38, -91, 38, -91, 37.2, -51);
         },
-    under: [-28, -1, 0.22],
-    after: () => {
-      rib(ctx, BUCKET, -45, base);
-      rib(ctx, BUCKET, -19, base);
-    },
-    spec: [[0.66, -56, -9, 2.8, 0.75]],
-    glints: [[-26, -54, 1]],
-  });
-  paintNearRim(ctx, BUCKET, { top: enamel ? NAVY : lightOf(base, 0.4), line, gloss: 0.7 });
-  // ears where the bail hooks in
-  litFrame(ctx, () => {
+        2.2,
+        BAIL,
+        { spec: 0.8 },
+      );
+      tube(
+        ctx,
+        () => {
+          ctx.beginPath();
+          ctx.moveTo(-7.5, -80.5);
+          ctx.quadraticCurveTo(0, -81.5, 7.5, -80.5);
+        },
+        5.4,
+        '#3F3A48',
+        { spec: 0.35 },
+      );
+    });
+  },
+  frontOver: (ctx, _l, g) => {
+    // a chrome band just under the rim, and the ears the bail hooks into
+    const y = -53.5;
+    const { cx, hw } = cavityAt(g.cav, y);
+    const R = hw + 3.8;
+    const b: Box = { x0: cx - R, y0: y - 3, x1: cx + R, y1: y + R * K + 3 };
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = CHROME_LINE;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.ellipse(cx, y, R, R * K, 0, 0, Math.PI);
+    ctx.stroke();
+    ctx.strokeStyle = lightGradient(ctx, b, [[0, '#F4F7FA'], [0.4, CHROME], [1, shadowOf(CHROME, 0.35)]], lightDir(ctx));
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.restore();
     for (const s of [-1, 1]) {
       const x = s * 36.6;
-      const ear = (): void => roundRect(ctx, x - 3, -55.5, 6, 9.5, 2.6);
+      const ear = (): void => roundRect(ctx, x - 3, -55.5, 6, 9, 2.6);
       ear();
-      ctx.fillStyle = enamel ? NAVY : shadowOf(base, 0.06);
+      ctx.fillStyle = CHROME;
       ctx.fill();
-      edgeShade(ctx, ear, { x0: x - 3, y0: -55.5, x1: x + 3, y1: -46 }, shadowOf(enamel ? NAVY : base, 0.5), 1.6, 0.5, 'shadow', 2);
-      outline(ctx, ear, { x0: x - 3, y0: -55.5, x1: x + 3, y1: -46 }, line, 1);
-      rivet(ctx, x, -48.6, 1.2, enamel ? lightOf(NAVY, 0.3) : lightOf(base, 0.2));
+      ctx.strokeStyle = CHROME_LINE;
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      rivet(ctx, x, -48.8, 1.2, lightOf(CHROME, 0.2));
       ctx.strokeStyle = BAIL;
       ctx.lineWidth = 1.6;
       ctx.beginPath();
       ctx.arc(x, -52.4, 1.6, 0, TAU);
       ctx.stroke();
     }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Slipper: plush fabric, fleece cuff, stitched cushion sole, pom-pom.
-
-const SL_CX = -16.5;
-const SL_OPEN = makeVessel('slipper.open', [[-26.6, 18.4], [-20, 18.4]], { lip: 2.8, lipC: 1.7, k: 0.2 });
-const FLEECE = '#FBF4EA';
-const SOLE_FELT = '#F1E4D2';
-
-function slipperUpper(ctx: Ctx): void {
-  ctx.beginPath();
-  ctx.moveTo(-38.8, -7);
-  ctx.bezierCurveTo(-40.8, -14, -40.4, -22, -36.4, -26.4);
-  ctx.ellipse(SL_CX, -26.6, 18.4, 18.4 * 0.2, 0, Math.PI, 0, true);
-  ctx.bezierCurveTo(3.6, -29.6, 9, -31.2, 16, -31.2);
-  ctx.bezierCurveTo(27, -31.2, 36, -27.6, 41, -20);
-  ctx.bezierCurveTo(44, -15.5, 44, -10, 43, -7);
-  ctx.closePath();
-}
-
-/** Short fibres sticking out along a polyline (a fuzzy edge). */
-function fuzz(ctx: Ctx, pts: [number, number][], color: string, seed: number, len = 1.6, outward = 1): void {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 0.6;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  let k = 0;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, ay] = pts[i];
-    const [bx, by] = pts[i + 1];
-    const d = Math.hypot(bx - ax, by - ay);
-    const nx = (-(by - ay) / d) * outward;
-    const ny = ((bx - ax) / d) * outward;
-    for (let t = 0; t < d; t += 1.05) {
-      const h = hash01(seed, k++);
-      const x = ax + ((bx - ax) * t) / d;
-      const y = ay + ((by - ay) * t) / d;
-      const l = len * (0.45 + h * 0.8);
-      ctx.moveTo(x - nx * 0.9, y - ny * 0.9);
-      ctx.lineTo(x + nx * l + (h - 0.5) * 1.2, y + ny * l + (hash01(seed, k) - 0.5) * 1.2);
-    }
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-
-function slipperBack(ctx: Ctx, l: Look): void {
-  ctx.save();
-  ctx.translate(SL_CX, 0);
-  paintInside(ctx, SL_OPEN, { inner: mix(FLEECE, l.base, 0.15), rimTop: FLEECE, line: lineOf(l.base), depth: 0.7 });
-  ctx.restore();
-}
-
-function slipperFront(ctx: Ctx, l: Look): void {
-  const base = l.base;
-  const line = lineOf(base);
-  const L = lsign(ctx);
-  // cushioned sole with a stitched welt
-  const sole = (): void => roundRect(ctx, -39.8, -8, 83.8, 8, [3.6, 4.4, 3.6, 3.6]);
-  const sb: Box = { x0: -39.8, y0: -8, x1: 44, y1: 0 };
-  sole();
-  ctx.fillStyle = SOLE_FELT;
-  ctx.fill();
-  texPaint(ctx, sole, 'weave', { alpha: 0.3, scale: 0.3 });
-  ctx.save();
-  sole();
-  ctx.clip();
-  band(ctx, sb, 'bottom', 3, shadowOf(SOLE_FELT, 0.4), 0.5);
-  ctx.restore();
-  ctx.fillStyle = shadowOf(SOLE_FELT, 0.32);
-  ctx.fillRect(-38.4, -1.6, 81, 1.6);
-  ctx.save();
-  ctx.setLineDash([1.5, 1.3]);
-  ctx.strokeStyle = rgba(shadowOf(SOLE_FELT, 0.55), 0.8);
-  ctx.lineWidth = 0.6;
-  ctx.beginPath();
-  ctx.moveTo(-37.5, -4.6);
-  ctx.lineTo(41.5, -4.6);
-  ctx.stroke();
-  ctx.restore();
-  outline(ctx, sole, sb, lineOf(SOLE_FELT), 1.1);
-  // plush upper
-  const up = (): void => slipperUpper(ctx);
-  const ub: Box = { x0: -40.5, y0: -31.5, x1: 44, y1: -7 };
-  up();
-  ctx.fillStyle = base;
-  ctx.fill();
-  texPaint(ctx, up, 'furFine', { alpha: 0.4, scale: 0.26 });
-  const g = ctx.createRadialGradient(4 - 10 * L, -31, 2, 2, -22, 46);
-  g.addColorStop(0, rgba(lightOf(base, 0.7), 0.5));
-  g.addColorStop(0.5, rgba(lightOf(base, 0.7), 0));
-  g.addColorStop(1, rgba(shadowOf(base, 0.6), 0.25));
-  up();
-  ctx.fillStyle = g;
-  ctx.fill();
-  up();
-  ctx.fillStyle = lightGradient(ctx, ub, [[0, rgba(shadowOf(base, 0.55), 0)], [0.5, rgba(shadowOf(base, 0.55), 0)], [1, rgba(shadowOf(base, 0.55), 0.42)]], lightDir(ctx));
-  ctx.fill();
-  shadeDown(ctx, up, -17, -7, base, 0.32, -42, 46);
-  // the apron seam stitched over the toe
-  ctx.save();
-  up();
-  ctx.clip();
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = rgba(shadowOf(base, 0.35), 0.5);
-  ctx.lineWidth = 1.4;
-  const seam = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(4.6, -25.6);
-    ctx.bezierCurveTo(9, -28, 25, -29.2, 33.4, -23.8);
-    ctx.bezierCurveTo(38.2, -20.6, 40, -15, 39.8, -9);
-  };
-  seam();
-  ctx.stroke();
-  ctx.setLineDash([1.3, 1.1]);
-  ctx.strokeStyle = rgba(lightOf(base, 0.6), 0.85);
-  ctx.lineWidth = 0.55;
-  ctx.translate(-0.3, -0.5);
-  seam();
-  ctx.stroke();
-  ctx.restore();
-  outline(ctx, up, ub, line, 1, 0.3);
-  // plush: a soft halo over the edge and short fibres along the top
-  ctx.save();
-  ctx.strokeStyle = rgba(lightOf(base, 0.15), 0.4);
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  up();
-  ctx.stroke();
-  ctx.restore();
-  const fib = rgba(mix(base, lightOf(base, 0.3), 0.5), 0.75);
-  fuzz(
-    ctx,
-    [
-      [-39.6, -9],
-      [-40.4, -16],
-      [-39.4, -22.5],
-      [-36.6, -26.4],
-    ],
-    fib,
-    l.seed,
-    0.9,
-    -1,
-  );
-  fuzz(
-    ctx,
-    [
-      [3, -28],
-      [8, -30.9],
-      [16, -31.4],
-      [26, -30.6],
-      [34, -27.2],
-      [40.4, -21],
-      [43.3, -14],
-      [43.4, -8.5],
-    ],
-    fib,
-    l.seed + 7,
-    0.9,
-    -1,
-  );
-  // fleece cuff around the opening (near half), rolled and fluffy
-  ctx.save();
-  ctx.translate(SL_CX, 0);
-  paintNearRim(ctx, SL_OPEN, { top: FLEECE, line: lineOf(base) });
-  ctx.restore();
-  // a soft, slightly fuzzy roll along its lower edge
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = rgba(shadowOf(FLEECE, 0.35), 0.45);
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.ellipse(SL_CX, -26.1, 18.4, 3.68, 0, 0.12, Math.PI - 0.12);
-  ctx.stroke();
-  ctx.strokeStyle = rgba(FLEECE, 0.9);
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.ellipse(SL_CX, -26.8, 18.2, 3.6, 0, 0.1, Math.PI - 0.1);
-  ctx.stroke();
-  ctx.restore();
-  const cuff: [number, number][] = [];
-  for (let k = 0; k <= 14; k++) {
-    const t = Math.PI - 0.1 - (k / 14) * (Math.PI - 0.2);
-    cuff.push([SL_CX + 18.6 * Math.cos(t), -26.2 + 3.8 * Math.sin(t)]);
-  }
-  fuzz(ctx, cuff, rgba(FLEECE, 0.8), l.seed + 3, 0.8, 1);
-  // pom-pom: a bumpy little cluster of fluff
-  const px = 25;
-  const py = -34.6;
-  const pc = mix(FLEECE, base, 0.22);
-  softShadow(ctx, px + 1.2, py + 5.8, 6.6, 2.2, 0.32);
-  const blobs: [number, number, number][] = [
-    [2.6, 2.4, 3.1],
-    [-2.4, 2.6, 3],
-    [3.2, -1.2, 3],
-    [0, 3.1, 3],
-    [-3.1, -0.8, 3],
-    [1.2, -3, 2.9],
-    [-1.4, -2.6, 2.8],
-    [0, 0, 3.4],
-  ];
-  for (const [bx, by, br] of blobs) {
-    const x = px + bx * L;
-    const y = py + by;
-    const g2 = ctx.createRadialGradient(x - 1.2 * L, y - 1.4, 0.2, x, y, br + 0.4);
-    g2.addColorStop(0, lightOf(pc, 0.55));
-    g2.addColorStop(0.55, pc);
-    g2.addColorStop(1, shadowOf(pc, 0.35 + 0.08 * (bx + by > 0 ? 1 : 0)));
-    ctx.fillStyle = g2;
-    ctx.beginPath();
-    ctx.arc(x, y, br, 0, TAU);
-    ctx.fill();
-  }
-  const pom = (): void => {
-    ctx.beginPath();
-    ctx.arc(px, py, 5.6, 0, TAU);
-  };
-  texPaint(ctx, pom, 'furFine', { alpha: 0.4, scale: 0.2 });
-  const rim: [number, number][] = [];
-  for (let k = 0; k <= 24; k++) {
-    const t = (k / 24) * TAU;
-    rim.push([px + 5.4 * Math.cos(t), py + 5.4 * Math.sin(t)]);
-  }
-  fuzz(ctx, rim, rgba(pc, 0.85), l.seed + 11, 0.9, -1);
-}
-
-// ---------------------------------------------------------------------------
-
-const ART: Record<ContainerType, Art> = {
-  teacup: { back: teacupBack, front: teacupFront, foot: [0, 45, 3], ext: [-50, -70, 56, 3] },
-  mug: { back: mugBack, front: mugFront, foot: [0, 30.5, 4.8], ext: [-36, -76, 52, 3] },
-  boot: { back: bootBack, front: bootFront, foot: [11.8, 36.5, 2], ext: [-30, -86, 52, 3] },
-  box: { back: boxBack, front: boxFront, foot: [0, 50.5, 2.2], ext: [-72, -100, 72, 3] },
-  shoebox: { back: shoeboxBack, front: shoeboxFront, foot: [0, 44, 2], ext: [-50, -70, 52, 3] },
-  fruitbowl: { back: fruitbowlBack, front: fruitbowlFront, foot: [0, 22.5, 3.5, 52], ext: [-66, -60, 66, 3] },
-  sink: { back: sinkBack, front: sinkFront, foot: [0, 23.5, 3.7, 40], ext: [-82, -190, 82, 3] },
-  pot: { back: potBack, front: potFront, foot: [0, 28, 4.4], ext: [-42, -71, 42, 3] },
-  basket: { back: basketBack, front: basketFront, foot: [0, 55, 8.5], ext: [-66, -86, 66, 3] },
-  saucepan: { back: saucepanBack, front: saucepanFront, foot: [0, 46.5, 7.3], ext: [-52, -58, 106, 3] },
-  vase: { back: vaseBack, front: vaseFront, foot: [0, 31, 4.9], ext: [-40, -106, 40, 3] },
-  bucket: { back: bucketBack, front: bucketFront, foot: [0, 31.5, 4.9], ext: [-44, -90, 44, 3] },
-  slipper: { back: slipperBack, front: slipperFront, foot: [2.2, 41.5, 2], ext: [-44, -44, 48, 3] },
-  mixingbowl: { back: mixingbowlBack, front: mixingbowlFront, foot: [0, 20, 3.1, 44], ext: [-58, -64, 58, 3] },
+  },
+  foot: [0, 30, 2.5],
+  ext: [-42, -90, 42, 3],
 };
+
+// ---------------------------------------------------------------------------
+// Slipper: a glass slipper with a little glass bow and sparkles.
+
+/** The slipper's vamp: round over the toe parts, from the throat's exact inner face. */
+function slipperVamp(c: Cavity): ShapePart {
+  const face = rightFace(c, c.y0);
+  const [fx, fy] = face[0];
+  // round the end of the toe capsule at the throat, then over the toe
+  const a0 = Math.atan2(fy + 25, fx - 2);
+  let a1 = -Math.PI / 2;
+  while (a1 < a0) a1 += TAU;
+  const pts: [number, number][] = [[fx, fy]];
+  const na = Math.max(2, Math.ceil((a1 - a0) / 0.1));
+  for (let i = 0; i <= na; i++) {
+    const a = a0 + ((a1 - a0) * i) / na;
+    pts.push([2 + 5 * Math.cos(a), -25 + 5 * Math.sin(a)]);
+  }
+  pts.push(...bezierPts(2, -30, 8, -30.5, 15, -29.6, 22, -28.2, 10).slice(1));
+  pts.push(...bezierPts(22, -28.2, 31, -26.6, 40.5, -21.5, 42.8, -14, 14).slice(1));
+  pts.push(...bezierPts(42.8, -14, 43.6, -10.5, 43.4, -7.5, 42.4, -4.5, 8).slice(1));
+  pts.push([face[face.length - 1][0], -4.5]);
+  for (let i = face.length - 1; i >= 1; i--) pts.push([face[i][0], face[i][1]]);
+  return shapePart(pts);
+}
+
+const slipper: Glass = {
+  skip: [2, 3],
+  thick: [0, 2, 3],
+  extra: (c) => [slipperVamp(c)],
+  rim: [-16.5, -24.5, 18.5, 4.5],
+  frontOver: (ctx, l) => {
+    // a glass bow on the vamp
+    const bx = 21;
+    const by = -32;
+    const wing = (s: number): void => {
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.bezierCurveTo(bx + s * 3, by - 5, bx + s * 8, by - 3.6, bx + s * 7.4, by + 0.4);
+      ctx.bezierCurveTo(bx + s * 7, by + 3.6, bx + s * 3, by + 2.4, bx, by);
+      ctx.closePath();
+    };
+    for (const s of [-1, 1]) glassShape(ctx, () => wing(s), { x0: bx - 8, y0: by - 5, x1: bx + 8, y1: by + 4 }, l.base, 0.38);
+    glassShape(
+      ctx,
+      () => {
+        ctx.beginPath();
+        ctx.ellipse(bx, by, 1.8, 2, 0, 0, TAU);
+      },
+      { x0: bx - 2, y0: by - 2, x1: bx + 2, y1: by + 2 },
+      l.base,
+      0.5,
+    );
+    const L = lsign(ctx);
+    sparkle(ctx, bx - L * 9, by - 2, 2.4, 0.9);
+    sparkle(ctx, 36 * (L > 0 ? 1 : 1), -16, 1.6, 0.75);
+    sparkle(ctx, -35, -15, 1.4, 0.7);
+  },
+  foot: [1, 40, 2],
+  ext: [-44, -42, 46, 3],
+};
+
+// ---------------------------------------------------------------------------
+
+const GLASS: Record<ContainerType, Glass> = { teacup, mug, boot, box, shoebox, fruitbowl, sink, pot, basket, saucepan, vase, bucket, slipper, mixingbowl };
 
 // A prop painted again and again (the one being dragged in the sandbox) is
 // drawn from a sprite: the first time a layer of it is seen it is painted
@@ -2103,14 +1138,16 @@ const sightings = new Map<string, number>();
 const SPRITE_MAX = 6;
 
 function paintArt(ctx: Ctx, p: Prop, which: 'back' | 'front'): void {
-  const art = ART[p.type as ContainerType];
-  if (!art) return;
+  const type = p.type as ContainerType;
+  const def = GLASS[type];
+  if (!def) return;
   const look = lookOf(p);
-  const paint = which === 'back' ? art.back : art.front;
+  const geo = geoOf(type);
+  const paint = which === 'back' ? glassBack : glassFront;
   const m = ctx.getTransform();
   const upright = Math.abs(m.b) < 1e-6 && Math.abs(m.c) < 1e-6;
   const q = resBucket(Math.abs(m.a) * p.scale);
-  const id = `${which}|${p.type}|${look.v}|${p.flip ? 1 : 0}|${p.scale}|${look.seed}|${q}`;
+  const id = `${which}|${type}|${look.v}|${p.flip ? 1 : 0}|${p.scale}|${look.seed}|${q}`;
   let sp = sprites.get(id);
   if (!sp && upright) {
     const now = performance.now();
@@ -2118,7 +1155,7 @@ function paintArt(ctx: Ctx, p: Prop, which: 'back' | 'front'): void {
     if (sightings.size > 256) sightings.clear();
     sightings.set(id, now);
     if (seen !== undefined && now - seen < 1500) {
-      const [ex0, ey0, ex1, ey1] = art.ext;
+      const [ex0, ey0, ex1, ey1] = def.ext;
       const x0 = p.flip ? -ex1 : ex0;
       const c = document.createElement('canvas');
       c.width = Math.ceil((ex1 - ex0) * q);
@@ -2126,7 +1163,7 @@ function paintArt(ctx: Ctx, p: Prop, which: 'back' | 'front'): void {
       const g = c.getContext('2d')!;
       g.setTransform(q, 0, 0, q, -x0 * q, -ey0 * q);
       if (p.flip) g.scale(-1, 1);
-      paint(g, look);
+      paint(g, look, geo);
       sp = { c, x0, y0: ey0, w: c.width / q, h: c.height / q };
       if (sprites.size >= SPRITE_MAX) sprites.delete(sprites.keys().next().value!);
     }
@@ -2140,14 +1177,14 @@ function paintArt(ctx: Ctx, p: Prop, which: 'back' | 'front'): void {
     ctx.drawImage(sp.c, sp.x0, sp.y0, sp.w, sp.h);
   } else {
     local(ctx, p);
-    paint(ctx, look);
+    paint(ctx, look, geo);
   }
   ctx.restore();
 }
 
 /** Local extent of a container's painted art (x0, y0, x1, y1), wider than its physics bounds. */
 export function containerArtExtent(type: ContainerType): [number, number, number, number] {
-  return ART[type].ext;
+  return GLASS[type].ext;
 }
 
 export function drawContainerBack(ctx: Ctx, p: Prop): void {
@@ -2158,13 +1195,13 @@ export function drawContainerFront(ctx: Ctx, p: Prop): void {
   paintArt(ctx, p, 'front');
 }
 
-/** Contact shadow under a container sitting on a surface (world space). */
+/** Contact shadow under a glass container: a light shade and the light it focuses (world space). */
 export function containerShadow(ctx: Ctx, p: Prop): void {
-  const art = ART[p.type as ContainerType];
-  if (!art) return;
-  const [cx, hw, ry, broad] = art.foot;
+  const def = GLASS[p.type as ContainerType];
+  if (!def) return;
+  const [cx, hw, ry] = def.foot;
   const s = p.scale;
   const x = p.x + (p.flip ? -cx : cx) * s;
-  if (broad) softShadow(ctx, x + broad * s * 0.12, p.y - 1, broad * s, 7 * s, 0.1);
-  restShadow(ctx, x, p.y - ry * s * 0.5, hw * s, (ry + 1) * s, 0.3);
+  restShadow(ctx, x, p.y - ry * s * 0.5, hw * s, (ry + 1) * s, 0.2);
+  caustic(ctx, x + hw * s * 0.42, p.y + 0.6 * s, hw * s * 0.5, 2.6 * s, 0.3, mix('#FFF3D6', lookOf(p).base, 0.35));
 }
