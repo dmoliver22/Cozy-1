@@ -5,7 +5,7 @@ import { CONTAINERS, FLOOR_Y, WORLD_W, type ContainerType, type Prop } from './g
 import type { RoomDef } from './game/room';
 import type { Session } from './game/session';
 import { ROOM_BOTTOM, ROOM_TOP, type Renderer } from './render/renderer';
-import { drawContainerBack, drawContainerFront } from './render/propArt';
+import { containerArtExtent, containerShadow, drawContainerBack, drawContainerFront } from './render/propArt';
 import { PALETTE } from './render/paint';
 import { prettyDate, localDateKey } from './util/date';
 
@@ -192,12 +192,14 @@ export function thingPreview(type: ContainerType, w: number, h: number): HTMLCan
   c.height = h * dpr;
   const g = c.getContext('2d')!;
   const spec = CONTAINERS[type];
-  const [bx0, by0, bx1] = spec.bounds;
+  // fit the painted art (flaps, handles and taps reach past the physics bounds)
+  const [bx0, by0, bx1, by1] = containerArtExtent(type);
   const bw = bx1 - bx0;
-  const bh = -by0;
+  const bh = by1 - by0;
   const s = Math.min((w - 8) / bw, (h - 8) / bh);
-  g.setTransform(dpr * s, 0, 0, dpr * s, dpr * (w / 2 - ((bx0 + bx1) / 2) * s), dpr * (h - 4));
+  g.setTransform(dpr * s, 0, 0, dpr * s, dpr * (w / 2 - ((bx0 + bx1) / 2) * s), dpr * (h - 4 - by1 * s));
   const fake = { type, x: 0, y: 0, flip: false, scale: 1, tint: 0, uid: 1, material: spec.material } as unknown as Prop;
+  containerShadow(g, fake);
   drawContainerBack(g, fake);
   drawContainerFront(g, fake);
   return c;
