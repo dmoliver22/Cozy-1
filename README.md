@@ -121,7 +121,8 @@ own page (the game above is untouched):
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on
   cushions, eat fish to get chonkier (more points, slower squeezing), and stay
-  ahead of the vacuum. Six breeds, plus a daily drop.
+  ahead of bath time: a wall of soap foam drizzling down from above (get caught
+  and your cat ends up soaked and sudsy). Six breeds, plus a daily drop.
 
 They share `src/proto/kit.ts` (canvas, fixed-step loop with interpolation,
 tap/drag input, a cat painter) and run on the dev server at `/jar.html` and
