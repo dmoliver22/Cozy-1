@@ -74,6 +74,8 @@ export interface TubSurface {
   surface(x: number): number;
   /** The bathroom floor (world y). */
   floor: number;
+  /** How far either side of the middle (SHAFT_W / 2) of the bath is in view. */
+  halfView: number;
   /** The cat in the bath (an obstacle), once it is in. */
   cat: SoftBody | null;
 }
@@ -160,6 +162,8 @@ export class Suds {
   readonly sa = new Float32Array(SPRAY);
   readonly sl = new Float32Array(SPRAY);
   readonly ss = new Float32Array(SPRAY);
+  /** Spray off the bath (drawn with it, framed close) rather than off the foam. */
+  readonly stub = new Uint8Array(SPRAY);
 
   // --- rings of popped bubbles ---
   rn = 0;
@@ -167,6 +171,8 @@ export class Suds {
   readonly ry = new Float64Array(RINGS);
   readonly rr = new Float32Array(RINGS);
   readonly ra = new Float32Array(RINGS);
+  /** A bubble of the bath's that popped (drawn with it, framed close). */
+  readonly rtub = new Uint8Array(RINGS);
 
   // --- splats: where a drop hit, a little flattened ring spreading along the surface ---
   kn = 0;
@@ -428,19 +434,21 @@ export class Suds {
     const y = this.y[i];
     const r = this.r[i];
     if (this.alpha[i] > 0.4 && this.visible(x, y, r)) {
+      const tub = this.tub[i];
       if (this.rn < RINGS) {
         const k = this.rn++;
         this.rx[k] = x;
         this.ry[k] = y;
         this.rr[k] = r;
         this.ra[k] = 0;
+        this.rtub[k] = tub;
       }
       const rnd = this.rnd;
       const m = 3 + Math.round(Math.min(4, r / 6));
       for (let s = 0; s < m; s++) {
         const a = rnd() * Math.PI * 2;
         const sp = 60 + rnd() * 90;
-        this.addSpray(x + Math.cos(a) * r * 0.8, y + Math.sin(a) * r * 0.8, this.vx[i] * 0.3 + Math.cos(a) * sp, this.vy[i] * 0.3 + Math.sin(a) * sp - 30, 0.22 + rnd() * 0.18, 0.6 + rnd() * 0.6);
+        this.addSpray(x + Math.cos(a) * r * 0.8, y + Math.sin(a) * r * 0.8, this.vx[i] * 0.3 + Math.cos(a) * sp, this.vy[i] * 0.3 + Math.sin(a) * sp - 30, 0.22 + rnd() * 0.18, 0.6 + rnd() * 0.6, tub);
       }
       this.onPop?.(x, y, r);
     }
@@ -861,7 +869,7 @@ export class Suds {
     this.floodA = 1;
     // what is below the screen won't be seen again (room for the bath's bubbles)
     for (let i = 0; i < this.n; i++) if (this.y[i] - this.r[i] * 1.5 > this.viewBottom) this.remove(i--);
-    this.dn = 0;
+    this.dn = this.kn = 0;
     this.addFloats(FLOATS, false);
   }
 
@@ -1040,10 +1048,12 @@ export class Suds {
           }
         }
         if (this.loose[i]) {
-          // (drifting loose: only the room's walls hold it in)
+          // (drifting loose: it stays in view)
           const m = ri * 0.85;
-          if (x[i] < m) x[i] = m;
-          else if (x[i] > SHAFT_W - m) x[i] = SHAFT_W - m;
+          const v0 = SHAFT_W / 2 - b.halfView;
+          const v1 = SHAFT_W / 2 + b.halfView;
+          if (x[i] < v0 + m) x[i] = v0 + m;
+          else if (x[i] > v1 - m) x[i] = v1 - m;
           continue;
         }
         // the suds under it hold it up
@@ -1073,7 +1083,7 @@ export class Suds {
       const side = rnd() < 0.5 ? -1 : 1;
       const at = 0.2 + rnd() * 0.75;
       const up = (260 + rnd() * 420) * (0.5 + 0.7 * k) * (1.2 - at * 0.55);
-      this.addSpray(x + side * width * at, y - 4 - rnd() * 8, side * (40 + rnd() * 240) * (0.5 + k), -up, 0.6 + rnd() * 0.5, 1.8 + rnd() * 2.4);
+      this.addSpray(x + side * width * at, y - 4 - rnd() * 8, side * (40 + rnd() * 240) * (0.5 + k), -up, 0.6 + rnd() * 0.5, 1.8 + rnd() * 2.4, 1);
     }
     // a flurry of suds thrown up (they drift back down and pop)
     const b = this.bath;
@@ -1239,10 +1249,11 @@ export class Suds {
     const m = 3 + Math.round(rnd() * 2 + sp * 2);
     const tx = -ny;
     const ty = nx;
+    const tub = this.mode === 'clear' ? 1 : 0;
     for (let s = 0; s < m; s++) {
       const out = (60 + rnd() * 100) * (0.5 + sp);
       const side = (rnd() - 0.5) * 2 * (60 + rnd() * 90) * (0.5 + sp);
-      this.addSpray(x, y, nx * out + tx * side, ny * out + ty * side, 0.28 + rnd() * 0.22, 1 + rnd() * 0.8);
+      this.addSpray(x, y, nx * out + tx * side, ny * out + ty * side, 0.28 + rnd() * 0.22, 1 + rnd() * 0.8, tub);
     }
     if (this.kn < SPLATS) {
       const k = this.kn++;
@@ -1254,7 +1265,7 @@ export class Suds {
     }
   }
 
-  private addSpray(x: number, y: number, vx: number, vy: number, life: number, size: number): void {
+  private addSpray(x: number, y: number, vx: number, vy: number, life: number, size: number, tub: number): void {
     if (this.sn >= SPRAY) return;
     const k = this.sn++;
     this.sx[k] = x;
@@ -1264,6 +1275,7 @@ export class Suds {
     this.sa[k] = 0;
     this.sl[k] = life;
     this.ss[k] = size;
+    this.stub[k] = tub;
   }
 
   private stepSpray(): void {
@@ -1274,9 +1286,10 @@ export class Suds {
       const x = (this.sx[k] += this.svx[k] * DT);
       const y = (this.sy[k] += this.svy[k] * DT);
       this.sa[k] += DT;
-      // (and nothing flies out through the house's walls)
-      let gone = this.sa[k] >= this.sl[k] || x < 0 || x > SHAFT_W;
-      if (b && !gone && this.svy[k] > 0 && ((x > b.x0 && x < b.x1 && y > b.surface(x) + 4) || y > b.floor)) gone = true;
+      // (and nothing flies out through the house's walls, or out of view of the bath)
+      const half = b && this.stub[k] ? b.halfView : SHAFT_W / 2;
+      let gone = this.sa[k] >= this.sl[k] || Math.abs(x - SHAFT_W / 2) > half;
+      if (b && this.stub[k] && !gone && this.svy[k] > 0 && ((x > b.x0 && x < b.x1 && y > b.surface(x) + 4) || y > b.floor)) gone = true;
       if (gone) {
         const j = --this.sn;
         this.sx[k] = this.sx[j];
@@ -1286,6 +1299,7 @@ export class Suds {
         this.sa[k] = this.sa[j];
         this.sl[k] = this.sl[j];
         this.ss[k] = this.ss[j];
+        this.stub[k] = this.stub[j];
         k--;
       }
     }
@@ -1309,6 +1323,7 @@ export class Suds {
         this.ry[k] = this.ry[j];
         this.rr[k] = this.rr[j];
         this.ra[k] = this.ra[j];
+        this.rtub[k] = this.rtub[j];
         k--;
       }
     }

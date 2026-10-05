@@ -309,16 +309,17 @@ function bucket(r: number): number {
  * bubble (its film at the turn its swirl has reached, then its shell), squashed
  * as the simulation says. Pass 0 draws the bubbles in the room (before the
  * glass, so foam in a tube is behind it); pass 1 the ones passing in front of
- * the geometry. World x maps to device ppu*x + ex (y likewise with ey); `t`
- * (0..1) is how far between the last two physics steps we are.
+ * the geometry. At the end, `kind` 0 draws only the foam (and its flood), 1 only
+ * the bath's bubbles (-1: all). World x maps to device ppu*x + ex (y likewise
+ * with ey); `t` (0..1) is how far between the last two physics steps we are.
  */
-export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, ey: number, camY: number, viewH: number, pass: 0 | 1): void {
+export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, ey: number, camY: number, viewH: number, pass: 0 | 1, kind: -1 | 0 | 1 = -1): void {
   const top = camY - 50;
   const bot = camY + viewH + 50;
   // the flood: solid suds behind the foam filling the screen (soft at its edges)
   let solid0 = Infinity;
   let solid1 = -Infinity;
-  if (pass === 1 && s.floodA > 0) {
+  if (pass === 1 && s.floodA > 0 && kind !== 1) {
     ctx.setTransform(ppu, 0, 0, ppu, ex, ey);
     ctx.globalAlpha = s.floodA;
     ctx.fillStyle = FLOOD;
@@ -375,6 +376,9 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
   if (!blob || s.n === 0) return;
   const n = s.n;
   const want = pass;
+  // (which of them: the bath's, the foam's, or all)
+  const tubs = kind === 1 ? 1 : 0;
+  const any = kind === -1;
   // (no need for a body behind bubbles well inside the solid flood)
   const inside = (y: number, r: number): boolean => y - r * 2.3 > solid0 && y + r * 2.3 < solid1;
   // the suds body: soft white behind packed bubbles (the bigger ones carry it), laid
@@ -387,7 +391,7 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
     const r = s.r[i];
     const y = s.y[i];
     if (s.alpha[i] > 0.5 && y - r < massTop) massTop = y - r;
-    if (s.deep[i] !== want || s.nb[i] < 2 || r < 5 || inside(y, r)) continue;
+    if (s.deep[i] !== want || (!any && s.tub[i] !== tubs) || s.nb[i] < 2 || r < 5 || inside(y, r)) continue;
     if (y - r * 2.3 < y0) y0 = y - r * 2.3;
     if (y + r * 2.3 > y1) y1 = y + r * 2.3;
   }
@@ -423,7 +427,7 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
     for (let i = 0; i < n; i++) {
       const nb = s.nb[i];
       const r = s.r[i];
-      if (s.deep[i] !== want || s.loose[i] || nb < 2 || r < 5) continue;
+      if (s.deep[i] !== want || (!any && s.tub[i] !== tubs) || s.loose[i] || nb < 2 || r < 5) continue;
       const y = s.py[i] + (s.y[i] - s.py[i]) * t;
       if (y + r * 2.3 < y0 || y - r * 2.3 > y1 || inside(y, r)) continue;
       const x = s.px[i] + (s.x[i] - s.px[i]) * t;
@@ -437,7 +441,7 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
     ctx.drawImage(body, 0, 0, bw, bh, 0, 0, bw, bh);
   }
   for (let i = 0; i < n; i++) {
-    if (s.deep[i] !== want) continue;
+    if (s.deep[i] !== want || (!any && s.tub[i] !== tubs)) continue;
     const r = s.r[i];
     const y = s.py[i] + (s.y[i] - s.py[i]) * t;
     if (y + r * 1.5 < top || y - r * 1.5 > bot) continue;
@@ -457,10 +461,21 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
   ctx.globalAlpha = 1;
 }
 
-/** Drops, splashes and the rings of popped bubbles (after the glass, over everything). */
-export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number): void {
+/**
+ * Drops, splashes and the rings of popped bubbles (after the glass, over
+ * everything). At the end, `kind` 0 draws only the foam's, 1 only the bath's
+ * (-1: all).
+ */
+export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number, kind: -1 | 0 | 1 = -1): void {
   ctx.setTransform(ppu, 0, 0, ppu, ex, ey);
   ctx.globalAlpha = 1;
+  const any = kind === -1;
+  const tubs = kind === 1 ? 1 : 0;
+  // (drops and splats at the end are all the bath's)
+  if (kind === 0) {
+    drawRingsAndSpray(ctx, s, any, tubs);
+    return;
+  }
   if (s.dn > 0) {
     ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(112,164,224,0.9)';
@@ -491,10 +506,15 @@ export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number
     ctx.ellipse(s.kx[k], s.ky[k], s.ks[k] * (0.8 + u * 2), s.ks[k] * (0.3 + u * 0.5), s.kang[k], 0, TAU);
     ctx.stroke();
   }
+  drawRingsAndSpray(ctx, s, any, tubs);
+}
+
+function drawRingsAndSpray(ctx: Ctx, s: Suds, any: boolean, tubs: number): void {
   if (s.sn > 0) {
     ctx.fillStyle = 'rgba(150,196,240,0.92)';
     ctx.beginPath();
     for (let k = 0; k < s.sn; k++) {
+      if (!any && s.stub[k] !== tubs) continue;
       const rr = s.ss[k] * (1 - (s.sa[k] / s.sl[k]) * 0.6);
       ctx.moveTo(s.sx[k] + rr, s.sy[k]);
       ctx.arc(s.sx[k], s.sy[k], rr, 0, TAU);
@@ -503,6 +523,7 @@ export function drawDrops(ctx: Ctx, s: Suds, ppu: number, ex: number, ey: number
   }
   // popped bubbles: a quick flash, and the film snapping back as a ring
   for (let k = 0; k < s.rn; k++) {
+    if (!any && s.rtub[k] !== tubs) continue;
     const u = s.ra[k] / 0.2;
     const x = s.rx[k];
     const y = s.ry[k];

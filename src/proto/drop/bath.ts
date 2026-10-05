@@ -15,7 +15,7 @@ import type { TubSurface } from './suds';
 /** When things happen (seconds since the bath came into view, under the foam). */
 export const BATH = {
   /** The cat drops in from above the screen (once the top of the screen has cleared). */
-  drop: 0.3,
+  drop: 0.42,
   /** Its speed as it comes into view (it has been falling all this time), and the most it falls at. */
   dropSpeed: 460,
   terminal: 800,
@@ -51,17 +51,30 @@ export interface TubLayout {
   tapY: number;
 }
 
+/** How far up from the bottom of the screen the bathroom floor meets the wall (world units, before any zoom). */
+export const FLOOR_GAP = 46;
+
+/** The tub's outer half-width for a cat of radius `r`: snug enough that a small cat isn't lost in it, roomy enough for the biggest. */
+export function tubHalfW(r: number): number {
+  return Math.max(84, Math.min(140, 48 + 1.6 * r));
+}
+
+/** The tub's height, rim to underside, for its half-width. */
+function tubHeight(halfW: number): number {
+  return 72 + 0.2 * halfW;
+}
+
 /**
  * The bathroom's layout for a screen `viewH` tall whose top is at world y
- * `top`: the tub stands low in the middle, sized for a cat of radius `r` (snug
- * enough that a small cat doesn't get lost in it, roomy enough for the biggest).
+ * `top`: the tub stands low in the middle, sized for a cat of radius `r`, its
+ * floor line `floorGap` up from the bottom of the screen.
  */
-export function tubLayout(top: number, viewH: number, r: number): TubLayout {
-  const floorY = top + viewH - 46;
+export function tubLayout(top: number, viewH: number, r: number, floorGap = FLOOR_GAP): TubLayout {
+  const floorY = top + viewH - floorGap;
   const footY = floorY + 15;
   const baseY = footY - 27;
-  const halfW = Math.max(96, Math.min(140, 60 + 1.5 * r));
-  const rimY = baseY - (84 + 0.24 * halfW);
+  const halfW = tubHalfW(r);
+  const rimY = baseY - tubHeight(halfW);
   const cx = SHAFT_W / 2;
   return {
     cx,
@@ -71,7 +84,7 @@ export function tubLayout(top: number, viewH: number, r: number): TubLayout {
     rimY,
     persp: 12,
     waterY: rimY + 5,
-    innerBottom: rimY + 102,
+    innerBottom: baseY - 5,
     baseY,
     footY,
     floorY,
@@ -79,6 +92,28 @@ export function tubLayout(top: number, viewH: number, r: number): TubLayout {
     tapX: cx - halfW + 51,
     tapY: rimY - 30,
   };
+}
+
+/**
+ * How close the bath is framed (zoomed in about the bottom middle of the
+ * screen): the room for this screen, and the tub and the cat in it for this
+ * cat, so the tub spans most of the width and the cat is plainly the star,
+ * while the cat's head (and the suds on it) stays clear of the card up top,
+ * whose bottom edge is `cardBottom` down the screen (world units).
+ */
+export function bathFraming(viewH: number, cardBottom: number, r: number): { room: number; tub: number; floorGap: number } {
+  const width = SHAFT_W + 16;
+  // from the bottom of the screen to the top of the cat's head, before zooming: the floor,
+  // the tub's feet and body, and the cat floating in it (its ears, and the suds on them)
+  const stack = (rr: number): number => 7 + tubHeight(tubHalfW(rr)) + Math.min(rr * 0.78, 16 + rr * 0.12) + 1.75 * rr;
+  const room0 = 40;
+  const fit = (rr: number, floor: number): number => (viewH - cardBottom - 16 - floor) / stack(rr);
+  const zoomFor = (rr: number, floor: number): number => Math.max(1, Math.min(1.9, (0.92 * width) / (2 * tubHalfW(rr) + 12), fit(rr, floor)));
+  // (the room is framed for a middling cat: it is painted long before the cat's size is known)
+  let room = zoomFor(room0, FLOOR_GAP * 1.5);
+  room = zoomFor(room0, FLOOR_GAP * room);
+  const tub = zoomFor(r, FLOOR_GAP * room);
+  return { room, tub, floorGap: (FLOOR_GAP * room) / tub };
 }
 
 /** A soft white wisp of steam rising off the bath. */
@@ -163,8 +198,11 @@ export class BathScene implements TubSurface {
     readonly top: number,
     public viewH: number,
     seed: number,
+    /** How close the tub is framed (drawn zoomed in about the bottom middle of the screen), and its floor line's height. */
+    public zoom = 1,
+    private floorGap = FLOOR_GAP,
   ) {
-    this.tub = tubLayout(top, viewH, radius);
+    this.tub = tubLayout(top, viewH, radius, floorGap);
     this.rnd = rng(seed * 31 + 7);
     this.world.substeps = 10;
     const L = this.tub;
@@ -180,11 +218,13 @@ export class BathScene implements TubSurface {
    * The screen changed height (the bath stands on its floor, at the bottom of
    * the screen): move everything with the floor. Returns how far it moved.
    */
-  relayout(viewH: number): number {
-    const dy = viewH - this.viewH;
-    if (dy === 0) return 0;
+  relayout(viewH: number, zoom: number, floorGap: number): number {
+    const dy = viewH - floorGap - (this.viewH - this.floorGap);
     this.viewH = viewH;
-    this.tub = tubLayout(this.top, viewH, this.radius);
+    this.zoom = zoom;
+    this.floorGap = floorGap;
+    if (dy === 0) return 0;
+    this.tub = tubLayout(this.top, viewH, this.radius, floorGap);
     for (const sh of this.world.statics) translateShape(sh, 0, dy);
     const c = this.cat;
     if (c) {
@@ -210,6 +250,11 @@ export class BathScene implements TubSurface {
 
   get floor(): number {
     return this.tub.footY;
+  }
+
+  /** How far either side of the middle is in view, framed close as it is. */
+  get halfView(): number {
+    return (SHAFT_W / 2 + 8) / this.zoom;
   }
 
   /** The water's level at x: a slow gentle sway, and rings spreading out from the splash. */
@@ -307,7 +352,9 @@ export class BathScene implements TubSurface {
     const h = Math.min(r * 0.78, 16 + r * 0.12);
     const under = Math.acos(Math.min(0.95, h / r)) / Math.PI;
     this.lift = GRAVITY / Math.max(0.12, under);
-    const c = new SoftBody(this.breed, L.cx + (this.rnd() - 0.5) * 24, this.top - r - 14, { radius: r });
+    // (from just over the top of the screen: framed closer, less of the room is in view)
+    const top = this.top + this.viewH - this.viewH / this.zoom;
+    const c = new SoftBody(this.breed, L.cx + (this.rnd() - 0.5) * 24, top - r - 14, { radius: r });
     for (let i = 0; i < c.n; i++) c.vy[i] = BATH.dropSpeed;
     this.cat = this.world.addBody(c);
     this.events.push({ t: 'drop' });

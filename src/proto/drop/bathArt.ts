@@ -26,54 +26,79 @@ const GOLD_LIGHT = '#F7DD92';
 /** The bathroom's colours: the house's bathroom, warmed up (a blush wall over the mint tiles, a honey floor). */
 const BATHROOM: Theme = { ...THEMES.bathroom, wall: '#F5E2D8', floor: '#D2B08C', accent: '#E39E9A' };
 
-/** The bathroom: its top, floor line and bottom (y 0 at the top of the screen), and its decor. */
+/** Zoom what is drawn next by `z` about the point (x, y). */
+export function zoomAbout(ctx: Ctx, x: number, y: number, z: number): void {
+  ctx.translate(x, y);
+  ctx.scale(z, z);
+  ctx.translate(-x, -y);
+}
+
+/**
+ * The bathroom, framed close (zoomed by `zoom` about the bottom middle of the
+ * screen, `viewH` down from its top): its floor line and decor, and how much of
+ * it is in view (all in the room's own units, before the zoom).
+ */
 export interface Bathroom {
-  top: number;
+  zoom: number;
+  viewH: number;
   floor: number;
-  bottom: number;
+  x0: number;
+  x1: number;
+  top: number;
   seed: number;
   /** In the room's own coordinates (its floor line at FLOOR_Y). */
   decor: DecorPlacement[];
 }
 
 /**
- * The bathroom around the tub (laid out round a middling one: whatever the
- * cat's size, the room stays put). A window behind the tub, as tall as the
- * wall between the card up top (its bottom at `cardBottom`) and the tub allows,
- * with bunting over it when there is room.
+ * The bathroom around the tub (laid out round a middling one, `L`: whatever
+ * the cat's size, the room stays put), framed close by `zoom`. A window behind
+ * the tub, as tall as the wall between the card up top (its bottom edge
+ * `cardBottom` down the screen) and the tub allows, bunting over it when there
+ * is room, a mirror and a towel rail either side, a plant and a bath mat.
  */
-export function bathroom(L: TubLayout, viewH: number, seed: number, cardBottom: number): Bathroom {
+export function bathroom(L: TubLayout, viewH: number, seed: number, cardBottom: number, zoom: number): Bathroom {
   const dy = L.floorY - FLOOR_Y;
   const rim = L.rimY - dy;
-  const winBottom = L.rimY - 36;
-  const winH = Math.max(110, Math.min(230, winBottom - cardBottom - 40));
+  // in view: up from the bottom of the screen, and either side of the middle
+  const top = viewH - viewH / zoom;
+  const half = (SHAFT_W / 2 + SIDE) / zoom;
+  const x0 = L.cx - half;
+  const x1 = L.cx + half;
+  const card = viewH - (viewH - cardBottom) / zoom;
+  const winBottom = L.rimY - 30;
+  const winH = Math.max(100, Math.min(220, winBottom - card - 30));
   const winTop = winBottom - winH;
   const decor: DecorPlacement[] = [];
-  if (winTop - 64 > cardBottom + 8) decor.push({ type: 'garland', x: L.cx, y: winTop - 58 - dy, w: 300 });
+  if (winTop - 60 > card + 6) decor.push({ type: 'garland', x: L.cx, y: winTop - 54 - dy, w: Math.min(300, half * 1.7) });
   decor.push(
-    { type: 'window', x: L.cx, y: winTop - dy, w: winH > 170 ? 112 : 96, h: winH, variant: 0 },
-    { type: 'mirror', x: 44, y: rim - 146, w: 38, h: 56 },
-    { type: 'towel', x: SHAFT_W - 42, y: rim - 98 },
-    { type: 'plant', x: 22, y: FLOOR_Y + 4, w: 34 },
-    { type: 'rug', x: L.cx, y: FLOOR_Y + 1, w: 210 },
+    { type: 'window', x: L.cx, y: winTop - dy, w: winH > 160 ? 108 : 96, h: winH, variant: 0 },
+    { type: 'mirror', x: x0 + 30, y: rim - 140, w: 36, h: 54 },
+    { type: 'towel', x: x1 - 36, y: rim - 94 },
+    { type: 'plant', x: x0 + 20, y: FLOOR_Y + 4, w: 30 },
+    { type: 'rug', x: L.cx, y: FLOOR_Y + 1, w: Math.min(210, half * 1.5) },
   );
-  return { top: -150, floor: L.floorY, bottom: viewH + 40, seed, decor };
+  return { zoom, viewH, floor: L.floorY, x0, x1, top, seed, decor };
 }
 
-/** Paint the bathroom's walls and floor (part 'shell'), or its decor and the house's cut sides ('decor'). */
+/**
+ * Paint the bathroom's walls and floor (part 'shell'), or its decor and the
+ * house's cut sides ('decor'), in screen space (y 0 at the top of the screen).
+ */
 export function paintBathroom(ctx: Ctx, s: Bathroom, part: 'shell' | 'decor', cssPerUnit: number): void {
   const dy = s.floor - FLOOR_Y;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(-SIDE - 2, s.top, SHAFT_W + SIDE * 2 + 4, s.bottom - s.top);
+  ctx.rect(-SIDE - 2, -10, SHAFT_W + SIDE * 2 + 4, s.viewH + 20);
   ctx.clip();
+  zoomAbout(ctx, SHAFT_W / 2, s.viewH, s.zoom);
   ctx.translate(0, dy);
-  if (part === 'shell') drawShell(ctx, BATHROOM, -SIDE, s.top - dy, SHAFT_W + SIDE, s.bottom - dy + 1, s.seed);
+  if (part === 'shell') drawShell(ctx, BATHROOM, s.x0 - 4, s.top - dy - 4, s.x1 + 4, s.viewH - dy + 4, s.seed);
   else for (const d of s.decor) drawDecor(ctx, d, BATHROOM, s.seed + d.x);
   ctx.restore();
   if (part === 'shell') return;
-  paintFrame(ctx, s.top, s.bottom);
-  paintGrain(ctx, -SIDE - 2, s.top, SHAFT_W + SIDE + 2, s.bottom, cssPerUnit);
+  paintFrame(ctx, -10, s.viewH + 10);
+  paintGrain(ctx, -SIDE - 2, -10, SHAFT_W + SIDE + 2, s.viewH + 10, cssPerUnit);
 }
 
 // --- the tub --------------------------------------------------------------------------------

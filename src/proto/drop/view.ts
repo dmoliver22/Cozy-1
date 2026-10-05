@@ -13,8 +13,8 @@ import { drawCat, type CatPose, type CatView, type Expression } from '../../rend
 import type { SoftBody } from '../../physics/softbody';
 import { CatPainter, Lerp, type Stage } from '../kit';
 import { FISH_LEN, SIDE, drawCushion, fishSprite, frontRect, hasFront, paintChunkBack, paintChunkFront, paintFrame, paintGrain, paintRoom } from './art';
-import { BathScene, tubLayout, type BathEvent } from './bath';
-import { bathroom, drawSteam, drawSudsBand, drawWater, paintBathroom, paintTubBack, paintTubFront, tubFrontSpan, type Chin } from './bathArt';
+import { BathScene, bathFraming, tubLayout, type BathEvent } from './bath';
+import { bathroom, drawSteam, drawSudsBand, drawWater, paintBathroom, paintTubBack, paintTubFront, tubFrontSpan, zoomAbout, type Chin } from './bathArt';
 import { Fx } from './fx';
 import type { DropGame } from './game';
 import { drawDrops, drawSuds, prepareFoam } from './foam';
@@ -104,6 +104,15 @@ export class DropView {
   /** The top of the screen when the bath came into view (the camera stays put). */
   private sceneTop = 0;
   /**
+   * How close the bath is framed: the tub and the cat in it are drawn zoomed in
+   * this much about the bottom middle of the screen (the clearing foam isn't),
+   * as device px per world unit and offsets, like the world's.
+   */
+  bathZoom = 1;
+  private bPpu = 1;
+  private bEx = 0;
+  private bEy = 0;
+  /**
    * The bathroom (painted ahead, while there is time to spare) and the tub
    * (once bath time has the cat, sized for it), in screen-relative coordinates.
    */
@@ -133,8 +142,17 @@ export class DropView {
       this.storeys.clear();
       this.fronts.clear();
     }
-    // (the bath stands at the bottom of the screen)
-    if (this.bath) this.suds.shiftBath(this.bath.relayout(this.viewH));
+    // (the bath stands at the bottom of the screen, framed for it)
+    if (this.bath) {
+      const f = this.framing(this.bath.radius);
+      this.bathZoom = f.tub;
+      this.suds.shiftBath(this.bath.relayout(this.viewH, f.tub, f.floorGap));
+    }
+  }
+
+  /** How close to frame the bath for a cat of radius `r` (with the end card up top). */
+  private framing(r: number): { room: number; tub: number; floorGap: number } {
+    return bathFraming(this.viewH, CARD_BOTTOM / this.scale, r);
   }
 
   /** A new run: forget the old house (and the old bath). */
@@ -151,6 +169,7 @@ export class DropView {
     }
     this.ending = 'none';
     this.bath = null;
+    this.bathZoom = 1;
     this.bathEvents.length = 0;
     this.cover = 0;
     this.bathSeeded = false;
@@ -189,7 +208,9 @@ export class DropView {
       return;
     }
     const b = this.bath!;
-    b.clearedTo = this.suds.mode === 'clear' && this.suds.floodA > 0 ? this.suds.floodTop : Infinity;
+    // (how far the foam has cleared, in the bath's own framing)
+    const ay = this.sceneTop + this.viewH;
+    b.clearedTo = this.suds.mode === 'clear' && this.suds.floodA > 0 ? ay + (this.suds.floodTop - ay) / this.bathZoom : Infinity;
     b.step();
     for (const e of b.events) {
       if (e.t === 'splash') this.suds.splashAt(e.x, e.y, e.speed, e.size);
@@ -215,7 +236,9 @@ export class DropView {
     this.ending = 'bath';
     this.sceneTop = this.camY;
     this.camV = 0;
-    const b = new BathScene(game.breed, game.cat.p.radius, this.camY, this.viewH, game.seed);
+    const f = this.framing(game.cat.p.radius);
+    this.bathZoom = f.tub;
+    const b = new BathScene(game.breed, game.cat.p.radius, this.camY, this.viewH, game.seed, f.tub, f.floorGap);
     this.bath = b;
     this.suds.beginClear(this.camY, this.viewH, b);
     this.bathEvents.push({ t: 'clear' });
@@ -301,20 +324,31 @@ export class DropView {
    */
   private paintBath(now: boolean, r: number | null, budgetMs = 0, t0 = 0): void {
     if (!this.bathRoom || this.bathRoom.key !== this.key) {
-      // (the end card sits up top, about this tall in css px)
-      const s = bathroom(tubLayout(0, this.viewH, 40), this.viewH, 77, CARD_BOTTOM / this.scale);
+      // (framed for a middling cat: the room is painted before the cat's size is known)
+      const zoom = this.framing(40).room;
+      const s = bathroom(tubLayout(0, this.viewH, 40), this.viewH, 77, CARD_BOTTOM / this.scale, zoom);
       const css = this.scale;
-      const layer = this.newLayer(s.top, s.bottom, (l) => [named('bath room', () => paintBathroom(l.ctx, s, 'shell', css)), named('bath decor', () => paintBathroom(l.ctx, s, 'decor', css))]);
+      const layer = this.newLayer(-10, this.viewH + 10, (l) => [named('bath room', () => paintBathroom(l.ctx, s, 'shell', css)), named('bath decor', () => paintBathroom(l.ctx, s, 'decor', css))]);
       this.bathRoom = { key: this.key, layer };
     }
     const layers = [this.bathRoom.layer];
     if (r !== null) {
       const key = `${this.key}|${r.toFixed(2)}`;
       if (!this.bathTub || this.bathTub.key !== key) {
-        const L = tubLayout(0, this.viewH, r);
+        // the tub, framed close for this cat (zoomed in about the bottom middle of the screen)
+        const f = this.framing(r);
+        const L = tubLayout(0, this.viewH, r, f.floorGap);
         const span = tubFrontSpan(L);
-        const back = this.newLayer(span.y0 - 70, span.y1, (l) => [named('tub back', () => paintTubBack(l.ctx, L))]);
-        const front = this.newLayer(span.y0, span.y1, (l) => [named('tub front', () => paintTubFront(l.ctx, L))]);
+        const ay = this.viewH;
+        const sy = (y: number): number => ay + f.tub * (y - ay);
+        const zoomed = (g: Ctx, paint: () => void): void => {
+          g.save();
+          zoomAbout(g, SHAFT_W / 2, ay, f.tub);
+          paint();
+          g.restore();
+        };
+        const back = this.newLayer(sy(span.y0 - 70), sy(span.y1), (l) => [named('tub back', () => zoomed(l.ctx, () => paintTubBack(l.ctx, L)))]);
+        const front = this.newLayer(sy(span.y0), sy(span.y1), (l) => [named('tub front', () => zoomed(l.ctx, () => paintTubFront(l.ctx, L)))]);
         this.bathTub = { key, back, front };
       }
       layers.push(this.bathTub.back, this.bathTub.front);
@@ -426,6 +460,18 @@ export class DropView {
     this.ctx.setTransform(this.ppu, 0, 0, this.ppu, this.oxDev, -this.camRow + this.shakeOffset());
   }
 
+  /** The bath's transform for live drawing: the world, framed close (see bathZoom). */
+  private bathWorld(): void {
+    this.ctx.setTransform(this.bPpu, 0, 0, this.bPpu, this.bEx, this.bEy);
+  }
+
+  /** Where a point in the bath shows on screen (css px), framed close. */
+  bathToScreen(x: number, y: number): { x: number; y: number } {
+    const z = this.bathZoom;
+    const ay = this.sceneTop + this.viewH;
+    return { x: this.ox + (SHAFT_W / 2 + z * (x - SHAFT_W / 2)) * this.scale, y: (ay + z * (y - ay) - this.camY) * this.scale };
+  }
+
   private shakeOffset(): number {
     return this.shake > 0.05 ? Math.sin(this.time * 70) * this.shake * this.ppu : 0;
   }
@@ -449,6 +495,11 @@ export class DropView {
     const originPx = Math.round(this.ox * stage.dpr - (SIDE + PADX) * this.ppu);
     this.oxDev = originPx + (SIDE + PADX) * this.ppu;
     this.camRow = Math.round(this.camY * this.ppu);
+    // (the bath, framed close: zoomed in about the bottom middle of the screen)
+    const z = this.bathZoom;
+    this.bPpu = this.ppu * z;
+    this.bEx = this.oxDev + this.ppu * (SHAFT_W / 2) * (1 - z);
+    this.bEy = this.ppu * (this.sceneTop + this.viewH) * (1 - z) - this.camRow;
     this.pump(game, 6);
     this.painter.tick(dt);
 
@@ -465,6 +516,13 @@ export class DropView {
     const sd = this.suds;
     const y0 = sd.mode === 'fill' && sd.floodA >= 1 ? Math.max(this.camY - 4, sd.floodBot - 1) : this.camY - 4;
     const y1 = sd.mode === 'clear' && sd.floodA > 0 ? Math.min(this.camY + this.viewH + 4, sd.solidTop() + 1) : this.camY + this.viewH + 4;
+    // (the bath, framed close, stays inside the house)
+    const inBath = this.ending === 'bath';
+    if (inBath) {
+      ctx.save();
+      this.world();
+      clipRect(ctx, -SIDE - PADX, this.camY - 4, SHAFT_W + (SIDE + PADX) * 2, this.viewH + 8);
+    }
     if (y1 > y0) {
       const clip = y0 > this.camY - 4 || y1 < this.camY + this.viewH + 4;
       if (clip) {
@@ -476,15 +534,28 @@ export class DropView {
       else this.drawHouse(game, alpha, catX, catY, ey);
       if (clip) ctx.restore();
     }
-    // foam passing in front of the geometry (and filling the screen, and clearing off it),
-    // then drops and spray
-    if (this.showSuds) {
-      drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH, 1);
-      drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey);
+    if (this.ending === 'bath') {
+      // the bath's own loose bubbles, drops and spray, then the foam clearing off the screen
+      // over it all (as it was when it filled the screen: not framed close)
+      const zt = this.sceneTop + this.viewH - this.viewH / this.bathZoom;
+      if (this.showSuds) {
+        drawSuds(ctx, this.suds, alpha, this.bPpu, this.bEx, this.bEy, zt, this.viewH / this.bathZoom, 1, 1);
+        drawDrops(ctx, this.suds, this.bPpu, this.bEx, this.bEy, 1);
+        drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH, 1, 0);
+        drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey, 0);
+      }
+      this.bathWorld();
+    } else {
+      // foam passing in front of the geometry (and filling the screen), then drops and spray
+      if (this.showSuds) {
+        drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, ey, this.camY, this.viewH, 1);
+        drawDrops(ctx, this.suds, this.ppu, this.oxDev, ey);
+      }
+      this.world();
     }
-    this.world();
     this.fx.update(dt);
     this.fx.draw(ctx);
+    if (inBath) ctx.restore();
     this.lerp.end();
   }
 
@@ -545,9 +616,10 @@ export class DropView {
     const tub = this.bathTub!;
     this.blitScene(this.bathRoom!.layer);
     this.blitScene(tub.back);
-    this.world();
+    this.bathWorld();
+    const ppu = this.bPpu;
     drawWater(ctx, b);
-    drawSudsBand(ctx, b, false, this.ppu, null);
+    drawSudsBand(ctx, b, false, ppu, null);
     const c = b.cat;
     let chin: Chin | null = null;
     let pose: CatPose | null = null;
@@ -558,13 +630,14 @@ export class DropView {
       const v = view;
       const p = pose;
       withBreed(c, wetBreed(c.breed), () => drawCat(ctx, c, v, p, 1, 'body'));
-      drawSoaked(ctx, c, v, this.time, this.ppu);
+      drawSoaked(ctx, c, v, this.time, ppu);
       chin = { x: v.fx, halfW: c.p.radius * 0.85, y: v.fy + 8 * v.fs };
     }
-    drawSudsBand(ctx, b, true, this.ppu, chin);
-    if (this.showSuds) drawSuds(ctx, this.suds, alpha, this.ppu, this.oxDev, -this.camRow + this.shakeOffset(), this.camY, this.viewH, 0);
+    drawSudsBand(ctx, b, true, ppu, chin);
+    const zt = this.sceneTop + this.viewH - this.viewH / this.bathZoom;
+    if (this.showSuds) drawSuds(ctx, this.suds, alpha, ppu, this.bEx, this.bEy, zt, this.viewH / this.bathZoom, 0, 1);
     this.blitScene(tub.front);
-    this.world();
+    this.bathWorld();
     if (c && pose && view) {
       const v = view;
       const p = pose;
