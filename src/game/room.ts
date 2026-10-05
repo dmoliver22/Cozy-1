@@ -70,6 +70,9 @@ export interface PlanStep {
   wy?: number;
   /** 'drag' or 'boop' (tap). */
   kind: 'drag' | 'boop';
+  /** Frames per leg of the drag, and how near the opening's middle to let go (share of its width). */
+  move?: number;
+  tol?: number;
 }
 
 export interface RoomDef {

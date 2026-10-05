@@ -28,27 +28,54 @@ Tension is the skin's constant line tension; viscosity damps deformation only.
 
 **Held by the scruff.** Every cat can be picked up, in puzzles, the photo room
 and at home alike, and goes where the finger takes it: a pinch of five ring
-nodes near the touch (never the underside) is pinned to the finger. The world
-moves the hand to the finger in even steps across a frame's substeps, so it
-doesn't jerk; the pinch moves as one piece, at most 3 units per constraint
-pass (less than the thinnest glass is thick, so nothing is ever pulled through
-a wall), sliding along whatever it or the skin round it is pressed against,
-and easing off to a creep while pressed (so the skin can slide round a rim
-instead of folding). The edges split their corrections by how free each end
-is, so a hanging body pulls on its own skin, not the finger. Once off the
-ground the body dangles: its rest shape eases into a hanging one (taller than
-wide by `hang`, narrow at the pinch, fuller below), which even shapeless
-breeds take through a small shape stiffness while held; its swing and wobble
-are damped relative to the pinch, and it drifts sideways to hang right under
-the pinch, so a cat dragged off an edge doesn't stay draped over it. A few
-rules keep it sensible: standing on something under the pinch, the pinch
-won't descend (a finger pushing down slides the cat to the edge, then it steps
-off and hangs); skin right at the pinch resting on a rim lifts the pinch over
-it; and a guard keeps the skin beside the pinch from creasing into a hairpin
-(while held and for a moment after). Startled when scooped up, a held cat goes
-calm after a moment held still, like a real scruffed cat; a few soft folds
-show the gathered skin. A test drags cats of every size into the sides of
-containers at floor level and checks the skin never folds or passes through.
+nodes near the touch is pinned to the finger, picked from skin that faces up
+(never the underside, even on a cat squashed into a dent). The world moves the
+hand to the finger in even steps across a frame's substeps, so it doesn't
+jerk; the pinch moves as one piece, at most 3 units per constraint pass (less
+than the thinnest glass is thick, so nothing is ever pulled through a wall).
+The pinched skin is only kept gathered, never held in a fixed pattern: fingers
+turn with the cat, so when it swings round or flops over the hand the pinch
+turns too (a pinch that kept its layout crossed the skin over itself whenever
+the body ended up above the hand). The edges split their corrections by how
+free each end is, so a hanging body pulls on its own skin, not the finger.
+
+Once off the ground the body dangles: its rest shape eases into a hanging one
+(taller than wide by `hang`, narrow at the pinch, fuller below), which even
+shapeless breeds take through a small shape stiffness while held. The hanging
+shape is built turned to wherever the pinch sits in the cat's own rest shape:
+most cats roll freely, so the scruff can be anywhere round them, and easing
+between two shapes turned far apart passes through a collapsed, mirrored
+outline. Its swing and wobble are damped relative to the pinch, and it drifts
+sideways to hang right under the pinch, so a cat dragged off an edge doesn't
+stay draped over it.
+
+What keeps a held cat from being crushed, or crushing anything:
+- **Tethers.** No node may hang further from the pinch than its distance in
+  the hanging shape (x1.25, plus a little): a flick of the finger swings the
+  whole cat along instead of drawing it out into a strand that folds over
+  itself. Tethers pull along whatever the skin is pressed against, not into it.
+- **Snags.** A part caught on something (skin hooked over a rim, a cat wedged
+  in a vase) that has been drawn out 1.3 times past its tether holds the pinch
+  back: the finger can't pull a cat apart, it oozes out like toothpaste.
+- **Pushing.** Moving the pinch into the cat moves the whole cat, pinch and
+  all (skin can't be pushed in through a body), unless something blocks it
+  that way. No part of the cat is pushed into furniture it's pressed against
+  (it slides along instead), and the pinch eases off to a creep while the skin
+  round it is pressed, so the skin can slide round a rim instead of folding.
+- **Standing.** Standing on furniture under the pinch, or resting on another
+  cat anywhere, the pinch won't descend: a finger pushing down slides the cat
+  to the edge of a shelf and it steps off and hangs, and never squashes the
+  cat underneath. Another cat it bumps into gets pushed, but not by its head.
+- Skin right at the pinch resting on a rim lifts the pinch over it, and a
+  guard keeps the skin beside the pinch from creasing into a hairpin (while
+  held and for a moment after).
+
+Startled when scooped up, a held cat goes calm after a moment held still, like
+a real scruffed cat; a few soft folds show the gathered skin. A test drags
+cats of every size into the sides of containers at floor level and checks the
+skin never folds or passes through; another carries every cat round the house,
+over the furniture and through the others, with quick shakes, and checks no
+cat ever ends a frame knotted or inside out.
 
 The solver carries cats the same way, holding them so their dangling bottom
 clears the rim, and steps a cat off its own perch, down, then in under it.
@@ -107,6 +134,18 @@ with the wall inside it. The skin is now solid between nodes too:
 - **Self-contact.** Every node keeps a skin's width (`2 * NODE_RADIUS`) from the
   ring two or more nodes away, once per substep. That stops pinched necks from
   passing through each other and creases from folding into hairpins.
+- **Untangling.** Squeezed harder than the solver keeps up with (a cat crushed
+  into a corner, dragged hard over a rim, a pile in Cat Jar), skin can still
+  cross over itself, and nothing above undoes a crossing once it's made: the
+  self-contact only keeps skin apart and can't tell which side is out, so it
+  holds a knot in place for good. So every frame each ring is checked, and a
+  stretch of skin between two crossing edges is turned the right way round
+  (its nodes trade places end for end, a 2-opt move): always the loop that is
+  wound inside out, and a ring wound backwards all over is traced the other
+  way. The outline goes through the very same points, so nothing jumps; it
+  just no longer crosses. A held cat is then eased back toward its rest shape
+  for a few frames. A rest shape that crept into a knot (copying a knotted
+  body while seated) starts over from clean.
 
 `tests/physics.test.ts` drags cats hard into a shoebox, a saucepan and the
 crevice under a teacup and checks every frame for crossed edges and skin inside

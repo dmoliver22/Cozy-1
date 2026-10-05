@@ -338,7 +338,7 @@ export class App {
       runGesture(
         this.session,
         step.cat,
-        { kind: step.kind, gx: cat.body.cx + step.gx, gy: cat.body.cy + step.gy, tx: step.tx, ty: step.ty, move: 24, hold: step.hold, tol: 0.3, wx: step.wx, wy: step.wy },
+        { kind: step.kind, gx: cat.body.cx + step.gx, gy: cat.body.cy + step.gy, tx: step.tx, ty: step.ty, move: step.move ?? 24, hold: step.hold, tol: step.tol ?? 0.3, wx: step.wx, wy: step.wy },
         step.container,
       );
       // Physics is chaotic: if the replay missed, play it like the solver would.

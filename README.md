@@ -116,14 +116,18 @@ it really doesn't fit, just perch. Cozy points come from how full the cavity is
 and how much of the cat is in it; a loaf poking out is perfect.
 
 **The finger.** A drag picks the cat up by the scruff: a pinch of five ring
-nodes near the touch (from the top half, so you never dangle a cat by its
-tummy) is pinned to the finger, moving as one piece and a few units per
+nodes near the touch (from skin that faces up, so you never dangle a cat by
+its tummy) is pinned to the finger, moving as one piece and a few units per
 constraint pass at most, so it slides along glass instead of being pulled
-through it. The rest of the cat hangs from the pinch and takes a dangling
-shape (each breed has its own droop, `hang`), with its swing damped relative
-to the pinch. A cat standing on something isn't pushed down into it: drag one
-down off a shelf and it slides to the edge and steps off. Undo snapshots
-everything.
+through it, and turning with the cat as it swings. The rest of the cat hangs
+from the pinch and takes a dangling shape (each breed has its own droop,
+`hang`), with its swing damped relative to the pinch, and can't be drawn out
+much past it: a flick swings the whole cat. Nothing gets squashed: a cat isn't
+pushed down into what it stands on (drag one down off a shelf and it slides to
+the edge and steps off) or into another cat, a part caught on a rim holds the
+finger back rather than tearing over it, and any skin that still ends up
+crossed over itself is turned the right way round the same frame (see
+docs/DESIGN.md). Undo snapshots everything.
 
 **Mornings.** The date seeds an integer RNG. The generator composes the room
 from tested vignettes (a shelf over a cup, a counter beside a stool, a cabinet

@@ -185,11 +185,15 @@ export function runGesture(session: Session, catIndex: number, g: Gesture, k: nu
       return onPerch <= 1 && maxY < op.y + b.p.radius * 0.6;
     };
     session.beginGrab(cat, g.gx, g.gy);
+    // Aim the scruff, not the finger: the cat hangs under the pinch, which
+    // can sit a little to one side of where it was touched.
+    const ox = cat.body.grab ? cat.body.grab.midX : 0;
+    const tx = g.tx - ox;
     const legs: Array<[number, number, number, number, number, boolean]> = [];
     if (g.wx !== undefined && g.wy !== undefined) {
       const m1 = Math.max(10, Math.round(g.move * 0.55));
-      legs.push([g.gx, g.gy, g.wx, g.wy, m1, false], [g.wx, g.wy, g.tx, g.ty, Math.max(10, g.move - m1), true]);
-    } else legs.push([g.gx, g.gy, g.tx, g.ty, g.move, true]);
+      legs.push([g.gx, g.gy, g.wx - ox, g.wy, m1, false], [g.wx - ox, g.wy, tx, g.ty, Math.max(10, g.move - m1), true]);
+    } else legs.push([g.gx, g.gy, tx, g.ty, g.move, true]);
     let released = false;
     for (const [ax, ay, bx, by, mv, check] of legs) {
       for (let f = 1; f <= mv && !released; f++) {
@@ -204,7 +208,7 @@ export function runGesture(session: Session, catIndex: number, g: Gesture, k: nu
       }
     }
     for (let f = 0; f < g.hold && !released; f++) {
-      session.moveGrab(g.tx, g.ty, 0, 0);
+      session.moveGrab(tx, g.ty, 0, 0);
       session.step();
       frames++;
       if (ready()) released = true;
@@ -289,7 +293,7 @@ function attempt(def: RoomDef, assignment: number[], order: number[], maxFrames:
         frames += runGesture(session, ci, g, target);
         const ok = cat.seat && (!strict || cat.seat.container === target) && plan.every((p) => session.cats[p.cat].seat);
         if (ok) {
-          plan.push({ cat: ci, container: cat.seat!.container, gx: g.gx - ox, gy: g.gy - oy, tx: g.tx, ty: g.ty, hold: g.hold, kind: g.kind, wx: g.wx, wy: g.wy });
+          plan.push({ cat: ci, container: cat.seat!.container, gx: g.gx - ox, gy: g.gy - oy, tx: g.tx, ty: g.ty, hold: g.hold, kind: g.kind, wx: g.wx, wy: g.wy, move: g.move, tol: g.tol });
           done = true;
           break outer;
         }

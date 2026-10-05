@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { BREED_ORDER, BREEDS, type BreedId } from '../src/physics/breeds';
-import { SoftBody } from '../src/physics/softbody';
+import { SoftBody, crossingAt } from '../src/physics/softbody';
 import { World } from '../src/physics/world';
 import { CONTAINER_TYPES, buildContainer, roomShell } from '../src/game/props';
 import { Session } from '../src/game/session';
+import { homeRoom } from '../src/house/homeRoom';
+import { ALL_CATS } from '../src/house/house';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 import type { StaticShape } from '../src/physics/shapes';
 
@@ -230,6 +232,150 @@ describe('soft-body cats', () => {
         }
         expect(deepest, `${type}/${breed} frame ${f}`).toBeLessThan(0.5);
       }
+    }
+  });
+
+  it('skin that crossed over itself comes undone at once, drawn through the very same points', () => {
+    const { body } = dropInto('tabby');
+    const n = body.n;
+    const before = (): string[] => Array.from({ length: n }, (_, i) => `${body.x[i].toFixed(6)},${body.y[i].toFixed(6)}`).sort();
+    // a stretch of skin flipped over (a figure 8), then the whole cat turned inside out
+    for (const [from, to] of [
+      [3, 9],
+      [0, n - 1],
+    ]) {
+      for (let a = from, b = to; a < b; a++, b--) {
+        for (const arr of [body.x, body.y]) {
+          const t = arr[a];
+          arr[a] = arr[b];
+          arr[b] = t;
+        }
+      }
+      expect(crossingAt(body.x, body.y, n) >= 0 || polygonArea(body.x, body.y, n) < 0).toBe(true);
+      const points = before();
+      body.frameUpdate(1 / 60);
+      expect(crossingAt(body.x, body.y, n)).toBe(-1);
+      expect(polygonArea(body.x, body.y, n)).toBeGreaterThan(0);
+      expect(before()).toEqual(points);
+    }
+  });
+
+  it('a cat that has rolled over is picked up without its shape collapsing or turning inside out', () => {
+    for (const breed of ['kitten', 'persian', 'chonk', 'sphynx'] as const) {
+      const world = new World();
+      for (const s of roomShell()) world.addStatic(s);
+      const body = world.addBody(new SoftBody(breed, 180, 500));
+      // upside down (cats roll; most have no sense of up of their own)
+      body.computeCentroid();
+      for (let i = 0; i < body.n; i++) {
+        body.x[i] = body.px[i] = 2 * body.cx - body.x[i];
+        body.y[i] = body.py[i] = 2 * body.cy - body.y[i];
+      }
+      for (let f = 0; f < 90; f++) world.step();
+      body.computeCentroid();
+      const g = body.startGrab(body.cx, body.cy - body.p.radius * 0.8);
+      for (let f = 0; f < 150; f++) {
+        g.tx = 180;
+        g.ty = Math.max(200, g.ty - 4);
+        world.step();
+        // the rest shape it eases toward stays a proper, right-way-round cat
+        const n = body.n;
+        const tx = new Float64Array(n);
+        const ty = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+          const rx = body.roundX[i] + (body.loafX[i] - body.roundX[i]) * body.loafiness;
+          const ry = body.roundY[i] + (body.loafY[i] - body.roundY[i]) * body.loafiness;
+          tx[i] = rx + (body.hangX[i] - rx) * body.hang;
+          ty[i] = ry + (body.hangY[i] - ry) * body.hang;
+        }
+        expect(polygonArea(tx, ty, n) / body.area0, `${breed} frame ${f}`).toBeGreaterThan(0.6);
+        expect(crossingAt(body.qx, body.qy, n), `${breed} frame ${f}`).toBe(-1);
+        expect(crossingAt(body.x, body.y, n), `${breed} frame ${f}`).toBe(-1);
+      }
+      expect(body.hang).toBeGreaterThan(0.9);
+    }
+  });
+
+  it('a held cat lowered onto a cat below rests on it instead of squashing it', () => {
+    for (const [held, under, grip] of [
+      ['chonk', 'mainecoon', 0.9],
+      ['persian', 'kitten', 0],
+      ['tabby', 'void', -0.9],
+    ] as const) {
+      const s = new Session(
+        {
+          id: 'stack',
+          name: 'stack',
+          theme: 'kitchen',
+          furniture: [],
+          decor: [],
+          containers: [],
+          cats: [
+            { breed: under, x: 190, y: 560, name: 'u' },
+            { breed: held, x: 190, y: 330, name: 'h' },
+          ],
+        },
+        { settleFrames: 0, mode: 'sandbox' },
+      );
+      const [low, cat] = s.cats;
+      for (let f = 0; f < 60; f++) s.step();
+      const b = cat.body;
+      b.computeCentroid();
+      const r = b.p.radius;
+      s.beginGrab(cat, b.cx + grip * r, b.cy - r * 0.4);
+      const y0 = b.cy - r * 0.4;
+      for (let f = 0; f < 240; f++) {
+        // pressed right down through the cat underneath, to the floor
+        s.moveGrab(190 + grip * r, Math.min(552, y0 + f * 3), 0, 180);
+        s.step();
+        const area = polygonArea(low.body.x, low.body.y, low.body.n) / low.body.area0;
+        expect(area, `${held} on ${under} frame ${f}`).toBeGreaterThan(0.6);
+        expect(crossingAt(low.body.x, low.body.y, low.body.n), `${held} on ${under} frame ${f}`).toBe(-1);
+      }
+      // still on top of it
+      low.body.computeCentroid();
+      b.computeCentroid();
+      expect(b.cy).toBeLessThan(low.body.cy);
+    }
+  });
+
+  it('carrying cats round the house never leaves one knotted or inside out', () => {
+    const s = new Session(homeRoom(ALL_CATS), { mode: 'sandbox' });
+    for (let f = 0; f < 90; f++) s.step();
+    // pick each cat up and carry it a lap: up, through the room past the
+    // furniture and the other cats, down into the box, quick shakes, and off
+    const lap: [number, number][] = [
+      [190, 120],
+      [330, 260],
+      [60, 300],
+      [196, 520],
+      [120, 450],
+      [300, 420],
+    ];
+    for (const cat of s.cats) {
+      const b = cat.body;
+      b.computeCentroid();
+      let fx = b.cx;
+      let fy = b.cy - b.p.radius * 0.6;
+      s.beginGrab(cat, fx, fy);
+      for (const [wx, wy] of lap) {
+        for (let f = 0; f < 40; f++) {
+          const k = 1 / (40 - f);
+          fx += (wx - fx) * k;
+          fy += (wy - fy) * k;
+          const shake = f > 30 ? Math.sin(f * 1.7) * 40 : 0;
+          s.moveGrab(fx + shake, fy, 0, 0);
+          s.step();
+          for (const c of s.cats) {
+            const area = polygonArea(c.body.x, c.body.y, c.body.n) / c.body.area0;
+            expect(crossingAt(c.body.x, c.body.y, c.body.n), `${c.breed} (holding ${cat.breed})`).toBe(-1);
+            expect(area, `${c.breed} (holding ${cat.breed})`).toBeGreaterThan(0.5);
+            expect(area, `${c.breed} (holding ${cat.breed})`).toBeLessThan(1.6);
+          }
+        }
+      }
+      s.endGrab();
+      for (let f = 0; f < 60; f++) s.step();
     }
   });
 

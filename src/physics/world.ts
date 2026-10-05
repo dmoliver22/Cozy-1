@@ -96,6 +96,9 @@ export class World {
           b.solveInternal(h, first);
           if (first) b.applyAssist(h);
         }
+        // (which cats touch which is worked out afresh each substep, after
+        // the finger has read last substep's)
+        if (first) for (const b of bodies) b.bodyTouch.fill(0);
         for (let i = 0; i < bodies.length; i++) {
           for (let j = i + 1; j < bodies.length; j++) collideBodies(bodies[i], bodies[j]);
         }
@@ -435,6 +438,16 @@ function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number;
     const lambda = (depth / denom) * 0.8;
     a.bodyContacts++;
     b.bodyContacts++;
+    // (which way is out, for a finger holding either cat)
+    a.bodyTouch[i] = 1;
+    a.bodyNx[i] = nX;
+    a.bodyNy[i] = nY;
+    b.bodyTouch[j0] = 1;
+    b.bodyNx[j0] = -nX;
+    b.bodyNy[j0] = -nY;
+    b.bodyTouch[j1] = 1;
+    b.bodyNx[j1] = -nX;
+    b.bodyNy[j1] = -nY;
     a.x[i] += nX * lambda * wa;
     a.y[i] += nY * lambda * wa;
     b.x[j0] -= nX * lambda * w0;
