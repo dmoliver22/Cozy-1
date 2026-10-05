@@ -161,7 +161,12 @@ are what they are:
   woken (`dozeFrames`, shorter as the game goes on, shown by the kitchen's
   light warming toward evening). The bottom of the jar slowly fills with
   sleepers, faster for loose play; careful play and well-spent boops last
-  longer.
+  longer. Bots at a human pace: random drops fill the jar in ~240 drops (the
+  old short jar: ~80); aiming and booping sleepers awake lasts past 800.
+- **Performance.** A cat that's been truly still for 3/4 s is put to sleep in
+  the physics (deep in a pile the engine's own test never fires), pictures of
+  still cats are reused until their shape drifts, and off-screen cats aren't
+  drawn: a frame with ~25 cats costs a few ms.
 - **Breeds** differ through physics numbers (`TIERS` in `config.ts`) plus two
   behaviours in `game.ts`: kittens hop and scoot to a twin; a chonk pops small
   cats up when it arrives or lands. The Little Void is a wildcard drop.

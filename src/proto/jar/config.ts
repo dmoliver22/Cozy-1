@@ -127,8 +127,9 @@ export const SNUGGLE_FRAMES = 30;
  * cats get sleepier (from DOZE_FIRST frames down to DOZE_LAST by the drop
  * DOZE_RAMP, then slowly on to half that), so even a tall jar slowly fills
  * with sleepers, quicker when cats are left lying about, and boops are worth
- * saving. (Bots dropping at random end after ~360 drops; one that aims and
- * boops sleepers awake lasts past 600.)
+ * saving. (Bots at a human pace: dropping at random fills the jar in ~240
+ * drops, about four minutes; aiming and booping sleepers awake lasts past
+ * 800. The short jar this replaced: ~80 and ~170.)
  */
 export const DOZE_FIRST = 1800;
 export const DOZE_LAST = 300;
