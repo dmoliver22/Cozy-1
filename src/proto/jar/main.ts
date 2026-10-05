@@ -15,8 +15,8 @@ import { BREEDS } from '../../physics/breeds';
 import { PALETTE } from '../../render/paint';
 import { clamp } from '../../util/math';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
-import { CHAIN_MAX, CX, JAR, LAST_TIER, TIERS } from './config';
-import { JarGame, type JarCat, type JarEvent, type Mode } from './game';
+import { CHAIN_MAX, CX, HOLD_Y, JAR, LAST_TIER, TIERS } from './config';
+import { JarGame, outlineDistance, type JarCat, type JarEvent, type Mode } from './game';
 import { JarUI } from './ui';
 import { JarView } from './view';
 
@@ -123,34 +123,75 @@ function gameOver(): void {
 // ---------------------------------------------------------------------------
 // Input
 
-let aiming = false;
+// One finger: drag sideways to aim and let go to drop; tap a cat to boop it.
+// A tap never drops a cat (a boop that misses must not send the next one
+// falling), except a tap on the waiting cat itself, which lets it go.
+
+/** A press that moves less than this (CSS px) is a tap, however long it lasts. */
+const SLOP = 10;
+/** How far (CSS px) outside a cat's outline a tap still boops it (ears, fur, a fat finger). */
+const TAP_REACH = 30;
+
+let gesture: 'press' | 'aim' | 'none' = 'none';
+let downX = 0;
+let downY = 0;
+/** Drops made by dragging (after a few, a tap on nothing stops showing the hint). */
+let dragDrops = 0;
+let hintAt = -1e9;
 
 bindPointer(canvas, {
   down(x, y) {
-    if (phase !== 'play') return;
-    aiming = true;
-    game.aim(view.toWorld(x, y).x);
+    gesture = phase === 'play' ? 'press' : 'none';
+    downX = x;
+    downY = y;
   },
   move(x, y) {
-    if (phase !== 'play' || !aiming) return;
-    game.aim(view.toWorld(x, y).x);
+    if (phase !== 'play') return;
+    // sideways becomes aiming (up and down is left for looking around)
+    if (gesture === 'press' && Math.abs(x - downX) > SLOP && Math.abs(x - downX) >= Math.abs(y - downY)) gesture = 'aim';
+    else if (gesture === 'press' && Math.hypot(x - downX, y - downY) > SLOP) gesture = 'none';
+    if (gesture === 'aim') game.aim(view.toWorld(x, y).x);
   },
   up(x, y, info) {
-    if (phase !== 'play') return;
-    aiming = false;
-    const w = view.toWorld(x, y);
-    // a tap on a cat in the jar boops it (out of boops: the paws say so)
-    if (info.tap) {
-      const cat = game.catAt(w.x, w.y);
-      if (cat) {
-        if (!game.boop(cat, w.x)) ui.noBoops();
-        return;
-      }
-    }
-    game.aim(w.x);
-    game.drop();
+    const g = gesture;
+    gesture = 'none';
+    if (phase !== 'play' || info.cancel) return;
+    if (g === 'aim') {
+      game.aim(view.toWorld(x, y).x);
+      if (game.drop()) dragDrops++;
+    } else if (g === 'press') tap(x, y);
   },
 });
+
+/** A tap: let the waiting cat go, or boop the cat nearest the finger. */
+function tap(x: number, y: number): void {
+  const w = view.toWorld(x, y);
+  const reach = TAP_REACH / view.scale;
+  const cat = game.catAt(w.x, w.y, reach);
+  const held = game.waiting;
+  if (held) {
+    // right on the waiting cat (and nearer it than any cat in the jar): drop it here
+    const r = TIERS[held.tier].r;
+    const d = Math.hypot(w.x - game.holdX, w.y - HOLD_Y) - r;
+    if (d < 4 && (!cat || d < outlineDistance(cat.body, w.x, w.y))) {
+      game.drop();
+      return;
+    }
+  }
+  if (cat) {
+    if (game.boop(cat, w.x)) return;
+    // out of boops: say so where the finger is, and shake the paws
+    ui.noBoops();
+    view.fx.label(w.x, w.y - 12, 'no boops left', '#A39BB0', 12);
+    audio.click();
+    return;
+  }
+  // a tap on nothing: maybe they expect a tap to drop, so show how
+  if (dragDrops < 3 && performance.now() - hintAt > 2500) {
+    hintAt = performance.now();
+    view.fx.label(w.x, w.y - 12, 'drag sideways to drop', '#8E86A3', 12);
+  }
+}
 
 const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {

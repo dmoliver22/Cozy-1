@@ -264,10 +264,10 @@ export class JarGame {
 
   // --- Boops -----------------------------------------------------------------
 
-  /** The jar cat under a world point (a little forgiving), topmost first. */
-  catAt(x: number, y: number): JarCat | null {
+  /** The jar cat nearest a world point, if its outline is within `reach` (a point inside a cat is nearest). */
+  catAt(x: number, y: number, reach = 7): JarCat | null {
     let best: JarCat | null = null;
-    let bestD = 7;
+    let bestD = reach;
     for (const c of this.cats) {
       const d = outlineDistance(c.body, x, y);
       if (d < bestD) {
@@ -287,14 +287,43 @@ export class JarGame {
     // a hop about 1.2 radii (+16) high: a kitten springs, a chonk heaves
     const vy = Math.sqrt(2 * GRAVITY * (r * 1.2 + 16));
     const side = clamp((b.cx - fromX) / r, -1, 1);
-    b.kick(side * vy * 0.3, -vy);
+    // A cat buried in the pile heaves up everything piled on it (sleeping
+    // cats on top would otherwise hold it down like a lid), so a boop always
+    // shows: the stack rises with it, and it pushes up a little harder.
+    const stack = this.stackAbove(cat);
+    for (const o of stack) {
+      o.body.kick(0, -vy);
+      o.booped = this.frame;
+      o.rest = 0;
+    }
+    b.kick(side * vy * 0.3, -vy * (stack.length ? 1.25 : 1));
     cat.booped = this.frame;
     cat.rest = 0;
     this.boops--;
-    // the hop shoves its neighbours awake; the ones resting on them follow (watchSleep)
+    // the hop shoves its neighbours awake (the ones resting on them follow: watchSleep)
     this.wakeNear(b, 8);
+    for (const o of stack) this.wakeNear(o.body, 8);
     this.events.push({ t: 'boop', cat });
     return true;
+  }
+
+  /** The cats piled on a cat: those touching it from above, those on them, and so on. */
+  stackAbove(cat: JarCat): JarCat[] {
+    const out: JarCat[] = [];
+    const seen = new Set<JarCat>([cat]);
+    const todo = [cat];
+    for (const c of this.cats) c.body.computeCentroid();
+    while (todo.length) {
+      const c = todo.pop()!;
+      for (const o of this.cats) {
+        if (seen.has(o) || o.removed || o.body.cy >= c.body.cy) continue;
+        if (!bodiesTouch(c.body, o.body, NODE_RADIUS * 2 + 4)) continue;
+        seen.add(o);
+        out.push(o);
+        todo.push(o);
+      }
+    }
+    return out;
   }
 
   // --- The frame ----------------------------------------------------------------

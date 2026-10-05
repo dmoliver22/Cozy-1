@@ -162,6 +162,8 @@ export class Lerp {
 export interface PointerInfo {
   /** Short press without much movement. */
   tap: boolean;
+  /** The browser took the pointer away (a system gesture): not a real release. */
+  cancel: boolean;
   /** Seconds the pointer was down. */
   dur: number;
   /** Largest distance (CSS px) from where it went down. */
@@ -207,7 +209,7 @@ export function bindPointer(el: HTMLElement, h: PointerHandlers): void {
     const [x, y] = pos(e);
     far = Math.max(far, Math.hypot(x - x0, y - y0));
     const dur = (performance.now() - t0) / 1000;
-    h.up?.(x, y, { tap: e.type === 'pointerup' && dur < 0.28 && far < 10, dur, dist: far });
+    h.up?.(x, y, { tap: e.type === 'pointerup' && dur < 0.28 && far < 10, cancel: e.type === 'pointercancel', dur, dist: far });
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
