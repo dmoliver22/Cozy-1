@@ -17,6 +17,7 @@ const BLURB: Partial<Record<BreedId, string>> = {
   chonk: 'Heavy pudding',
 };
 
+const HOUSE = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.5 11.2 12 4l8.5 7.2" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10.2V19a1 1 0 0 0 1 1h3.4v-5.2h3.2V20H17a1 1 0 0 0 1-1v-8.8" fill="currentColor"/></svg>`;
 const FISH_ICON = `<svg viewBox="0 0 24 16" width="22" height="15" aria-hidden="true"><path d="M3 8c3-5 10-6 15-2l4-3-1 5 1 5-4-3c-5 4-12 3-15-2Z" fill="#8FB3D9" stroke="#55739A" stroke-width="1.2" stroke-linejoin="round"/><circle cx="15.5" cy="7" r="1.2" fill="#3E3A4F"/></svg>`;
 /** Soap bubbles, white with a rainbow sheen (a pile of suds). */
 const SUDS = `<defs><radialGradient id="dSud" cx="36%" cy="32%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#F5F1FC"/><stop offset="1" stop-color="#D6CCEE"/></radialGradient><linearGradient id="dSheen" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#F6A8C4"/><stop offset=".35" stop-color="#FADE8C"/><stop offset=".65" stop-color="#96E2BE"/><stop offset="1" stop-color="#8CBEF6"/></linearGradient></defs>`;
@@ -31,6 +32,8 @@ export interface UiHandlers {
   menu(): void;
   toggleMusic(): boolean;
   toggleSound(): boolean;
+  /** Back to the house (absent on a page of its own). */
+  home?: () => void;
 }
 
 export class DropUi {
@@ -69,6 +72,7 @@ export class DropUi {
       <div class="drop-best" id="dBest"></div>
       <div class="drop-toast" id="dToast"></div>
       <div class="drop-btns">
+        ${h.home ? `<button class="round drop-home" id="dHome" aria-label="Home">${HOUSE}</button>` : ''}
         <button class="round" id="dMusic" aria-label="Music" aria-pressed="${music}">♪</button>
         <button class="round" id="dSound" aria-label="Sound" aria-pressed="${sound}">${soundIcon(sound)}</button>
       </div>
@@ -80,6 +84,7 @@ export class DropUi {
         <div class="row">
           <button class="btn" id="dPlay">Play</button>
           <button class="btn soft" id="dDaily">Daily drop</button>
+          ${h.home ? '<button class="btn soft" data-home>Home</button>' : ''}
         </div>
         <div class="bestline" id="dStartBest"></div>
       </div>
@@ -94,6 +99,7 @@ export class DropUi {
         <div class="row">
           <button class="btn" id="dAgain">Again</button>
           <button class="btn soft" id="dMenu">Change cat</button>
+          ${h.home ? '<button class="btn soft" data-home>Home</button>' : ''}
         </div>
       </div>`;
     const $ = (id: string): HTMLElement => root.querySelector(`#${id}`) as HTMLElement;
@@ -119,6 +125,10 @@ export class DropUi {
     $('dDaily').addEventListener('click', () => h.play(this.breed, true));
     $('dAgain').addEventListener('click', () => h.again());
     $('dMenu').addEventListener('click', () => h.menu());
+    if (h.home) {
+      const home = h.home;
+      for (const b of root.querySelectorAll<HTMLElement>('#dHome, [data-home]')) b.addEventListener('click', () => home());
+    }
     $('dMusic').addEventListener('click', (e) => {
       const on = h.toggleMusic();
       (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(on));

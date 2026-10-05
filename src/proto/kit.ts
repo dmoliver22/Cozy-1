@@ -25,10 +25,13 @@ export interface Stage {
   world(scale: number, ox: number, oy: number): void;
   /** Draw in CSS pixels. */
   screen(): void;
+  /** Stop listening for window resizes (the game is leaving the page). */
+  dispose(): void;
 }
 
 export function makeStage(canvas: HTMLCanvasElement, onResize?: () => void): Stage {
   const ctx = canvas.getContext('2d')!;
+  const onWindowResize = (): void => stage.resize();
   const stage: Stage = {
     canvas,
     ctx,
@@ -52,10 +55,34 @@ export function makeStage(canvas: HTMLCanvasElement, onResize?: () => void): Sta
       const d = stage.dpr;
       ctx.setTransform(d, 0, 0, d, 0, 0);
     },
+    dispose() {
+      window.removeEventListener('resize', onWindowResize);
+    },
   };
   stage.resize();
-  window.addEventListener('resize', () => stage.resize());
+  window.addEventListener('resize', onWindowResize);
   return stage;
+}
+
+/**
+ * Listeners on the window or document that a game adds while it's on screen,
+ * all taken off again when it leaves (see Listeners.off).
+ */
+export class Listeners {
+  private list: { target: EventTarget; type: string; fn: EventListener; opts?: AddEventListenerOptions | boolean }[] = [];
+
+  on<K extends keyof WindowEventMap>(target: Window, type: K, fn: (e: WindowEventMap[K]) => void, opts?: AddEventListenerOptions | boolean): void;
+  on(target: EventTarget, type: string, fn: (e: Event) => void, opts?: AddEventListenerOptions | boolean): void;
+  on(target: EventTarget, type: string, fn: (e: never) => void, opts?: AddEventListenerOptions | boolean): void {
+    const f = fn as unknown as EventListener;
+    target.addEventListener(type, f, opts);
+    this.list.push({ target, type, fn: f, opts });
+  }
+
+  off(): void {
+    for (const l of this.list) l.target.removeEventListener(l.type, l.fn, l.opts);
+    this.list = [];
+  }
 }
 
 // ---------------------------------------------------------------------------

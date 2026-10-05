@@ -8,9 +8,12 @@ import type { JarGame, Mode } from './game';
 export interface UiHandlers {
   play(mode: Mode): void;
   music(on: boolean): void;
+  /** Back to the house (absent on a page of its own). */
+  home?: () => void;
 }
 
 const PAW = `<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="15.6" rx="5.6" ry="4.6"/><ellipse cx="5.4" cy="9.6" rx="2.2" ry="2.7"/><ellipse cx="9.6" cy="5.6" rx="2.2" ry="2.8"/><ellipse cx="14.4" cy="5.6" rx="2.2" ry="2.8"/><ellipse cx="18.6" cy="9.6" rx="2.2" ry="2.7"/></svg>`;
+export const HOUSE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11.2 12 4l8.5 7.2" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10.2V19a1 1 0 0 0 1 1h3.4v-5.2h3.2V20H17a1 1 0 0 0 1-1v-8.8"/></svg>`;
 const NOTE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 17.5V6.2l10-2.4v11.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="6.6" cy="17.6" rx="3" ry="2.4"/><ellipse cx="16.6" cy="15.4" rx="3" ry="2.4"/></svg>`;
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
@@ -40,6 +43,7 @@ export class JarUI {
   ) {
     root.innerHTML = `
       <div class="hud jar-hud" id="hud">
+        ${h.home ? `<button class="jar-music jar-home" id="homeBtn" aria-label="Home">${HOUSE_ICON}</button>` : ''}
         <div class="pill jar-score"><span class="jar-score-n" id="score">0</span><small id="best">best 0</small><small class="jar-mode" id="mode"></small></div>
         <div class="jar-boops" id="boops" aria-label="Boops left"></div>
         <div class="spacer"></div>
@@ -54,7 +58,7 @@ export class JarUI {
           .join('<span class="jar-arrow">›</span>')}</div>
         <p class="jar-wild"><span class="jar-wild-face">${faceSVG('void', { size: 22, mood: 'happy' })}</span>A Little Void melts into any cat and makes it one size bigger.</p>
         <p class="jar-tip">Cats left alone doze off (zzz) and won't melt: tap one to boop it awake (paws at the top). Swipe up and down to look around the tall jar.</p>
-        <div class="jar-buttons"><button class="btn" id="playBtn">Play</button><button class="btn soft" id="dailyBtn">Daily jar</button></div>
+        <div class="jar-buttons"><button class="btn" id="playBtn">Play</button><button class="btn soft" id="dailyBtn">Daily jar</button>${h.home ? '<button class="btn soft" data-home>Home</button>' : ''}</div>
         <p class="jar-small" id="startBest"></p>
       </div>
       <div class="card jar-card" id="end" role="dialog" aria-labelledby="endTitle">
@@ -63,7 +67,7 @@ export class JarUI {
         <div class="jar-final" id="final">0</div>
         <p class="jar-small" id="endBest"></p>
         <div class="jar-biggest" id="biggest"></div>
-        <div class="jar-buttons"><button class="btn" id="againBtn">Again</button><button class="btn soft" id="otherBtn">Daily jar</button></div>
+        <div class="jar-buttons"><button class="btn" id="againBtn">Again</button><button class="btn soft" id="otherBtn">Daily jar</button>${h.home ? '<button class="btn soft" data-home>Home</button>' : ''}</div>
       </div>`;
     const $ = (id: string): HTMLElement => root.querySelector(`#${id}`) as HTMLElement;
     this.hud = $('hud');
@@ -76,6 +80,10 @@ export class JarUI {
     this.startCard = $('start');
     this.endCard = $('end');
     $('playBtn').addEventListener('click', () => h.play('play'));
+    if (h.home) {
+      const home = h.home;
+      for (const b of root.querySelectorAll<HTMLElement>('#homeBtn, [data-home]')) b.addEventListener('click', () => home());
+    }
     $('dailyBtn').addEventListener('click', () => h.play('daily'));
     this.musicBtn.addEventListener('click', () => {
       const on = this.musicBtn.getAttribute('aria-pressed') !== 'true';

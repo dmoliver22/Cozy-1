@@ -285,3 +285,8 @@ body::after {
   justify-content: center;
   flex-wrap: wrap;
 }
+
+.jar-home {
+  color: var(--ginger);
+  fill: var(--ginger);
+}
