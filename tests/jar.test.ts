@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DOZE_FRAMES, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER } from '../src/proto/jar/config';
+import { DOZE_FIRST, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER } from '../src/proto/jar/config';
 import { JarGame } from '../src/proto/jar/game';
 import { polygonArea } from '../src/util/math';
 import type { SoftBody } from '../src/physics/softbody';
@@ -100,14 +100,14 @@ describe('Cat Jar', () => {
   it('a cat left still too long dozes off and won\'t melt till a boop wakes it', () => {
     const g = new JarGame('play', 1);
     const sleeper = g.place(3, 130, F - 40);
-    for (let f = 0; f < DOZE_FRAMES + 30; f++) g.step();
-    expect(JarGame.dozing(sleeper)).toBe(true);
+    for (let f = 0; f < DOZE_FIRST + 30; f++) g.step();
+    expect(g.dozing(sleeper)).toBe(true);
     // a twin settles against it: they don't melt
     g.place(3, 130 + 37 * 2 + 5.5, F - 40);
     for (let f = 0; f < 200; f++) g.step();
     expect(g.cats.map((c) => c.tier)).toEqual([3, 3]);
     expect(g.boop(sleeper, 120)).toBe(true);
-    expect(JarGame.dozing(sleeper)).toBe(false);
+    expect(g.dozing(sleeper)).toBe(false);
   });
 
   describe('breeds have their ways', () => {

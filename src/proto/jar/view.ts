@@ -12,7 +12,7 @@ import { rgba, type Ctx } from '../../render/paint';
 import { clamp, easeOutBack } from '../../util/math';
 import { CatPainter, Lerp, type CatLook, type Stage } from '../kit';
 import { CAV, FRONT_RECT, floorShadow, paintBack, paintFront } from './art';
-import { CX, HOLD_Y, JAR, LINE_Y, TIERS, WILD, WORLD_BOTTOM, WORLD_TOP } from './config';
+import { CX, DOZE_RAMP, HOLD_Y, JAR, LINE_Y, TIERS, WILD, WORLD_BOTTOM, WORLD_TOP } from './config';
 import { Effects, heart } from './fx';
 import { JarGame, airborne, type Ghost, type JarCat } from './game';
 
@@ -99,6 +99,8 @@ export class JarView {
   time = 0;
   /** 0..1 white flash (two voids vanishing). */
   flash = 0;
+  /** 0..1 how far toward evening the light has gone (see drawEvening). */
+  private dusk = 0;
   /** No flashes or swaying for people who asked for less motion. */
   readonly calmMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   private back: HTMLCanvasElement | null = null;
@@ -288,6 +290,7 @@ export class JarView {
     this.squashes.clear();
     this.fx.clear();
     this.flash = 0;
+    this.dusk = 0;
     this.purrCat = null;
   }
 
@@ -345,6 +348,7 @@ export class JarView {
     if (!inJar && !this.skip.has('waiting')) this.drawWaiting(ctx, game);
     if (!this.skip.has('fx')) this.fx.draw(ctx, dt);
     stage.screen();
+    this.drawEvening(ctx, game);
     this.drawOffscreenWarning(ctx, game);
     if (!this.skip.has('gauge')) this.drawGauge(ctx, game);
     if (this.flash > 0.01 && !this.calmMotion) {
@@ -431,7 +435,7 @@ export class JarView {
     else if (!c.dropped && age < 100) expression = 'happy';
     else if (game.danger && top < LINE_Y + 4) expression = 'wide';
     // eyes shut means dozing (it won't melt till woken); awake cats keep their eyes open
-    else if (JarGame.dozing(c)) expression = 'sleepy';
+    else if (game.dozing(c)) expression = 'sleepy';
     if (expression === 'open' && game.waiting) {
       // look toward the next cat (left, ahead or right, with a little
       // hysteresis so a still cat's picture isn't repainted on every wiggle)
@@ -592,6 +596,21 @@ export class JarView {
       ctx.lineTo(x1, LINE_Y + 1.4);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  /**
+   * The afternoon wears on as the game does (and the cats get sleepier): the
+   * kitchen's light warms toward evening, slowly, over the sleepiness ramp.
+   */
+  private drawEvening(ctx: Ctx, game: JarGame): void {
+    const t = clamp(game.drops / DOZE_RAMP, 0, 1);
+    this.dusk += (t - this.dusk) * 0.02;
+    if (this.dusk < 0.01) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = `rgba(255,196,140,${(this.dusk * 0.32).toFixed(3)})`;
+    ctx.fillRect(0, 0, this.stage.w, this.stage.h);
     ctx.restore();
   }
 

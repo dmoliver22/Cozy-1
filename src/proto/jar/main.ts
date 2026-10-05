@@ -445,7 +445,7 @@ function tickSnores(dt: number): void {
   if (phase !== 'play') return;
   const period = 2.4;
   for (const c of game.cats) {
-    if (!JarGame.dozing(c)) continue;
+    if (!game.dozing(c)) continue;
     // each on its own beat
     const at = ((c.id * 0.37) % 1) * period;
     if (Math.floor((zTimer - at) / period) === Math.floor((zTimer - dt - at) / period)) continue;

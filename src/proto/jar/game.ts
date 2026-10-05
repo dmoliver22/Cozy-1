@@ -20,7 +20,6 @@ import {
   CHAIN_FRAMES,
   CHAIN_MAX,
   CX,
-  DOZE_FRAMES,
   DROP_GAP,
   DROP_WEIGHTS,
   FULL_FRAMES,
@@ -37,6 +36,7 @@ import {
   WILD_AFTER,
   WILD_CHANCE,
   WILD_GAP,
+  dozeFrames,
   mergePoints,
 } from './config';
 import { buildStatics } from './jarShape';
@@ -592,12 +592,12 @@ export class JarGame {
    */
   private kittenPull(cat: JarCat): number {
     const b = cat.body;
-    if (cat.falling || airborne(b) > 0 || JarGame.dozing(cat)) return 0;
+    if (cat.falling || airborne(b) > 0 || this.dozing(cat)) return 0;
     const r = TIERS[cat.tier].r;
     let push = 0;
     let near = r * 3.6;
     for (const o of this.cats) {
-      if (o === cat || o.removed || o.tier !== cat.tier || JarGame.dozing(o)) continue;
+      if (o === cat || o.removed || o.tier !== cat.tier || this.dozing(o)) continue;
       const dx = o.body.cx - b.cx;
       const d = Math.hypot(dx, o.body.cy - b.cy);
       if (d >= near || Math.abs(o.body.cy - b.cy) > r) continue;
@@ -701,10 +701,10 @@ export class JarGame {
     // twins melt once they've snuggled a moment (both awake)
     for (let i = 0; i < cats.length; i++) {
       const a = cats[i];
-      if (a.removed || a.tier === WILD || this.frame < a.lockUntil || JarGame.dozing(a)) continue;
+      if (a.removed || a.tier === WILD || this.frame < a.lockUntil || this.dozing(a)) continue;
       for (let j = i + 1; j < cats.length; j++) {
         const b = cats[j];
-        if (b.removed || b.tier !== a.tier || this.frame < b.lockUntil || JarGame.dozing(b)) continue;
+        if (b.removed || b.tier !== a.tier || this.frame < b.lockUntil || this.dozing(b)) continue;
         if (!bodiesTouch(a.body, b.body)) continue;
         const key = a.id < b.id ? a.id * 65536 + b.id : b.id * 65536 + a.id;
         const s = this.snug.get(key) ?? { a, b, n: 0, seen: 0 };
@@ -809,8 +809,8 @@ export class JarGame {
   // --- Full jar -----------------------------------------------------------------
 
   /** Dozed off: lying still too long to snuggle up (a boop or a bump wakes it). */
-  static dozing(c: JarCat): boolean {
-    return c.rest > DOZE_FRAMES;
+  dozing(c: JarCat): boolean {
+    return c.rest > dozeFrames(this.drops);
   }
 
   /** Top of a cat's skin. */
