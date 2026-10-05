@@ -138,3 +138,30 @@ Par is the number of gestures in the first full solution.
 - Tipping containers (pouring a cat out of a cup) isn't in the first playable.
 - Purrs, glorps and music are synthesized; recorded purrs would sell the reveal
   even more.
+
+## Cat Jar (prototype)
+
+A Suika game on the same soft cats (`src/proto/jar/`). Notes on why the rules
+are what they are:
+
+- **Taps never drop.** A tap boops the cat nearest the finger (no time limit,
+  ~30 px of reach past the outline); dropping takes a sideways drag and
+  release, or a tap on the waiting cat itself. A boop on a buried cat heaves
+  up everything piled on it, or the sleeping cats on top hold it down.
+- **The tall jar** is about two screens tall. The next cat hangs `DROP_GAP`
+  over the top of the pile (so every drop falls about as far, and the view can
+  stay on the pile); the camera follows that line and the player can look
+  around (drag, wheel, the gauge).
+- **Balance.** Soft cats pack and find their twins so well that the jar settles
+  into an equilibrium: random drops into a tall jar kept about ten cats in the
+  bottom third forever (bots, hundreds of drops, no game over). Bigger drops
+  don't help (they just make Voids sooner, and two Voids vanish). What does:
+  twins melt only after snuggling a moment (`SNUGGLE_FRAMES`), so a passing
+  bump doesn't count, and cats that lie still doze off and won't melt until
+  woken (`dozeFrames`, shorter as the game goes on, shown by the kitchen's
+  light warming toward evening). The bottom of the jar slowly fills with
+  sleepers, faster for loose play; careful play and well-spent boops last
+  longer.
+- **Breeds** differ through physics numbers (`TIERS` in `config.ts`) plus two
+  behaviours in `game.ts`: kittens hop and scoot to a twin; a chonk pops small
+  cats up when it arrives or lands. The Little Void is a wildcard drop.
