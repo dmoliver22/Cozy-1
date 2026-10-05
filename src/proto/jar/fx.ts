@@ -212,7 +212,7 @@ export class Effects {
 const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
 const fade = (k: number, inn: number): number => (k < inn ? k / inn : 1 - (k - inn) / (1 - inn));
 
-function heart(ctx: Ctx, x: number, y: number, s: number, color: string): void {
+export function heart(ctx: Ctx, x: number, y: number, s: number, color: string): void {
   ctx.beginPath();
   ctx.moveTo(x, y + s * 0.9);
   ctx.bezierCurveTo(x - s * 1.4, y - s * 0.1, x - s * 0.6, y - s * 1.1, x, y - s * 0.35);

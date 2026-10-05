@@ -15,7 +15,7 @@ import { BREEDS } from '../../physics/breeds';
 import { PALETTE } from '../../render/paint';
 import { clamp } from '../../util/math';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
-import { CHAIN_MAX, CX, HOLD_Y, JAR, LAST_TIER, TIERS } from './config';
+import { CHAIN_MAX, CX, JAR, LAST_TIER, TIERS, WILD } from './config';
 import { JarGame, outlineDistance, type JarCat, type JarEvent, type Mode } from './game';
 import { JarUI } from './ui';
 import { JarView } from './view';
@@ -45,6 +45,12 @@ let topTier = 0;
 let zTimer = 0;
 
 const bestKey = (g: JarGame): string => (g.mode === 'daily' ? `catjar.daily.${g.seed}` : 'catjar.best');
+
+/** Games started in this browser: the first few say what each breed does as it first turns up. */
+const GAMES_KEY = 'catjar.games';
+let gamesPlayed = loadBest(GAMES_KEY);
+/** Tiers already introduced this game. */
+const introduced = new Set<number>();
 
 const ui = new JarUI(
   root,
@@ -84,9 +90,13 @@ function startGame(mode: Mode, seed?: number): void {
   audio.click();
   game.restart(mode, seed ?? (mode === 'daily' ? todaySeed() : undefined));
   view.reset();
+  view.snapHome(game);
   best = loadBest(bestKey(game));
   newBest = false;
   topTier = 0;
+  introduced.clear();
+  gamesPlayed++;
+  saveBest(GAMES_KEY, gamesPlayed);
   phase = 'play';
   ui.hideCards();
   audio.stopAllPurrs();
@@ -97,6 +107,7 @@ function startGame(mode: Mode, seed?: number): void {
 function attract(): void {
   game.restart('play', 20261004);
   view.reset();
+  view.snapHome(game);
   const drops: [number, number, number][] = [
     [5, CX + 40, -80],
     [3, CX - 70, -250],
@@ -123,18 +134,25 @@ function gameOver(): void {
 // ---------------------------------------------------------------------------
 // Input
 
-// One finger: drag sideways to aim and let go to drop; tap a cat to boop it.
-// A tap never drops a cat (a boop that misses must not send the next one
-// falling), except a tap on the waiting cat itself, which lets it go.
+// One finger: drag sideways to aim and let go to drop; drag up or down to look
+// around the tall jar; tap a cat to boop it. A tap never drops a cat (a boop
+// that misses must not send the next one falling), except a tap on the
+// waiting cat itself, which lets it go.
 
 /** A press that moves less than this (CSS px) is a tap, however long it lasts. */
 const SLOP = 10;
 /** How far (CSS px) outside a cat's outline a tap still boops it (ears, fur, a fat finger). */
 const TAP_REACH = 30;
 
-let gesture: 'press' | 'aim' | 'none' = 'none';
+let gesture: 'press' | 'aim' | 'look' | 'none' = 'none';
+/** The press started on the waiting cat: any drag moves it (you've picked it up). */
+let onHeld = false;
 let downX = 0;
 let downY = 0;
+let lastY = 0;
+let lastT = 0;
+/** Finger speed while looking around (CSS px / s), for the fling. */
+let lookVel = 0;
 /** Drops made by dragging (after a few, a tap on nothing stops showing the hint). */
 let dragDrops = 0;
 let hintAt = -1e9;
@@ -143,18 +161,46 @@ bindPointer(canvas, {
   down(x, y) {
     gesture = phase === 'play' ? 'press' : 'none';
     downX = x;
-    downY = y;
+    downY = lastY = y;
+    lastT = performance.now();
+    lookVel = 0;
+    const held = game.waiting;
+    const w = view.toWorld(x, y);
+    onHeld = held !== null && Math.hypot(w.x - game.holdX, w.y - game.holdY(held.tier)) < TIERS[held.tier].r + 10;
   },
   move(x, y) {
     if (phase !== 'play') return;
-    // sideways becomes aiming (up and down is left for looking around)
-    if (gesture === 'press' && Math.abs(x - downX) > SLOP && Math.abs(x - downX) >= Math.abs(y - downY)) gesture = 'aim';
-    else if (gesture === 'press' && Math.hypot(x - downX, y - downY) > SLOP) gesture = 'none';
+    if (gesture === 'press') {
+      const dx = Math.abs(x - downX);
+      const dy = Math.abs(y - downY);
+      if ((dx > SLOP && dx >= dy) || (onHeld && Math.max(dx, dy) > SLOP)) {
+        // sideways: aim (and look back at the waiting cat)
+        gesture = 'aim';
+        view.lookHome();
+      } else if (dy > SLOP) {
+        gesture = 'look';
+        view.lookStart();
+        lastY = downY;
+      }
+    }
     if (gesture === 'aim') game.aim(view.toWorld(x, y).x);
+    else if (gesture === 'look') {
+      const now = performance.now();
+      const dt = Math.max(1, now - lastT) / 1000;
+      lookVel = lookVel * 0.6 + ((y - lastY) / dt) * 0.4;
+      view.lookBy(y - lastY);
+      lastY = y;
+      lastT = now;
+    }
   },
   up(x, y, info) {
     const g = gesture;
     gesture = 'none';
+    if (g === 'look') {
+      // a pause before letting go means no fling
+      view.lookEnd(performance.now() - lastT > 80 ? 0 : lookVel);
+      return;
+    }
     if (phase !== 'play' || info.cancel) return;
     if (g === 'aim') {
       game.aim(view.toWorld(x, y).x);
@@ -163,16 +209,37 @@ bindPointer(canvas, {
   },
 });
 
+// a mouse wheel or trackpad looks around too
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (phase !== 'play') return;
+    e.preventDefault();
+    view.lookStart();
+    view.lookBy(-e.deltaY * (e.deltaMode === 1 ? 16 : 1));
+    view.lookEnd(0);
+  },
+  { passive: false },
+);
+
 /** A tap: let the waiting cat go, or boop the cat nearest the finger. */
 function tap(x: number, y: number): void {
   const w = view.toWorld(x, y);
-  const reach = TAP_REACH / view.scale;
-  const cat = game.catAt(w.x, w.y, reach);
+  const cat = game.catAt(w.x, w.y, TAP_REACH / view.scale);
+  // the gauge by the jar (unless the finger is right by a cat): look at that part of the jar
+  const gr = view.gaugeRect();
+  const byCat = cat !== null && outlineDistance(cat.body, w.x, w.y) * view.scale < 12;
+  if (!byCat && Math.abs(x - gr.x) < 14 && y > gr.y0 - 8 && y < gr.y1 + 8) {
+    view.lookStart();
+    view.setCam(view.gaugeToCam(y));
+    view.lookEnd(0);
+    return;
+  }
   const held = game.waiting;
   if (held) {
     // right on the waiting cat (and nearer it than any cat in the jar): drop it here
     const r = TIERS[held.tier].r;
-    const d = Math.hypot(w.x - game.holdX, w.y - HOLD_Y) - r;
+    const d = Math.hypot(w.x - game.holdX, w.y - game.holdY(held.tier)) - r;
     if (d < 4 && (!cat || d < outlineDistance(cat.body, w.x, w.y))) {
       game.drop();
       return;
@@ -198,9 +265,17 @@ window.addEventListener('keydown', (e) => {
   if (phase !== 'play') return;
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     keys.add(e.key);
+    view.lookHome();
     e.preventDefault();
   } else if ((e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowDown') && !e.repeat) {
     game.drop();
+    view.lookHome();
+    e.preventDefault();
+  } else if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'ArrowUp') {
+    // look up or down the jar by most of a screen
+    view.lookStart();
+    view.lookBy((e.key === 'PageDown' ? -0.7 : 0.7) * (canvas.clientHeight - view.hudPx));
+    view.lookEnd(0);
     e.preventDefault();
   }
 });
@@ -209,11 +284,49 @@ window.addEventListener('keyup', (e) => keys.delete(e.key));
 // ---------------------------------------------------------------------------
 // Sounds and effects for what happened
 
-const sizeOf = (tier: number): number => clamp(tier / LAST_TIER, 0, 1);
+/** 0 (a kitten) .. 1 (the Void), for how big a sound is. */
+const sizeOf = (tier: number): number => clamp((TIERS[tier].r - TIERS[0].r) / (TIERS[LAST_TIER].r - TIERS[0].r), 0, 1);
+
+const TRAIT_INK = '#8C7FA8';
+
+/**
+ * Say what a breed does the first time it turns up in a game (in a player's
+ * first few games; the Little Void, every time).
+ */
+function introduce(tier: number, x: number, y: number): void {
+  if (introduced.has(tier)) return;
+  introduced.add(tier);
+  const T = TIERS[tier];
+  if (tier === WILD) view.fx.label(x, y, 'Little Void: melts into any cat!', '#5B4E86', 12);
+  else if (gamesPlayed <= 3) view.fx.label(x, y, `${T.name} · ${T.trait}`, TRAIT_INK, 12);
+}
 
 function handle(events: JarEvent[]): void {
   for (const e of events) {
     switch (e.t) {
+      case 'spawn': {
+        const T = TIERS[e.tier];
+        if (phase === 'play') introduce(e.tier, game.holdX, game.holdY(e.tier) - T.r * 1.5 - 14);
+        break;
+      }
+      case 'hop': {
+        audio.boop(BREEDS[TIERS[e.cat.tier].breed].voice.pitch * 1.2);
+        break;
+      }
+      case 'pop': {
+        // the chonk flops: a thud, a puff under it, and the little ones squeak
+        const b = e.cat.body;
+        let maxY = -Infinity;
+        for (let i = 0; i < b.n; i++) maxY = Math.max(maxY, b.y[i]);
+        audio.impact('wall', 900, 1);
+        view.fx.puff(b.cx, maxY, 5, TIERS[e.cat.tier].r * 1.5);
+        for (const c of e.popped) {
+          const h = view.painter.head(c.body);
+          view.fx.note(h.x + TIERS[c.tier].r * 0.4, h.y - 6, '!');
+        }
+        audio.boop(BREEDS[TIERS[e.popped[0].tier].breed].voice.pitch);
+        break;
+      }
       case 'drop': {
         const b = BREEDS[TIERS[e.cat.tier].breed];
         audio.grab(b.voice.pitch, false);
@@ -271,8 +384,9 @@ function onMerge(e: Extract<JarEvent, { t: 'merge' }>): void {
   }
   const T = TIERS[e.tier + 1];
   const b = BREEDS[T.breed];
+  const wild = e.ghosts.some((g) => g.tier === WILD);
   audio.glorp(b.voice.pitch, sizeOf(e.tier + 1), clamp(b.physics.viscosity / 26, 0, 1));
-  audio.seat(e.tier + 1 >= 5 ? 96 : e.tier + 1 >= 3 ? 75 : 50);
+  audio.seat(wild || e.tier + 1 >= 5 ? 96 : e.tier + 1 >= 3 ? 75 : 50);
   fx.ring(e.x, e.y, T.r * 1.3);
   fx.sparkles(e.x, e.y, 5 + e.tier, T.r);
   fx.hearts(e.x, e.y - T.r * 0.6, e.tier >= 3 ? 3 : e.tier >= 1 ? 2 : 1, PALETTE.rose, T.r * 0.5);
@@ -280,8 +394,12 @@ function onMerge(e: Extract<JarEvent, { t: 'merge' }>): void {
   fx.label(e.x, e.y - T.r - 8, `+${e.points}`, color, 13 + Math.min(4, e.tier));
   if (e.chain > 1) fx.label(e.x, e.y - T.r - 8, `chain ×${Math.min(e.chain, CHAIN_MAX)}!`, '#B07AA8', 12);
   if (e.earned) fx.label(e.x, e.y - T.r - 8, '+1 boop', '#7FA877', 12);
-  // the first of a new kind this game: say hello
-  if (e.tier + 1 > topTier) fx.label(e.x, e.y - T.r - 8, `${T.name}!`, '#6F8FB8', 13);
+  if (wild) fx.label(e.x, e.y - T.r - 8, 'one size up!', '#5B4E86', 12);
+  // the first of a new kind this game: say hello (and, the first few games, what it does)
+  if (e.tier + 1 > topTier) {
+    introduced.add(e.tier + 1);
+    fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 4 ? `${T.name} · ${T.trait}!` : `${T.name}!`, '#6F8FB8', 13);
+  }
   topTier = Math.max(topTier, e.tier + 1);
   if (e.cat && e.tier + 1 >= 3) setPurrCat(e.cat);
 }
@@ -321,12 +439,12 @@ function step(): void {
   handle(game.drain());
 }
 
-/** Now and then a long-sleeping cat snores a little z. */
+/** Now and then a dozing cat snores a little z (they won't melt till they're woken). */
 function tickSnores(dt: number): void {
   zTimer += dt;
-  if (zTimer < 1.7 || phase !== 'play') return;
+  if (zTimer < 0.9 || phase !== 'play') return;
   zTimer = 0;
-  const sleepers = game.cats.filter((c) => c.body.asleep && c.rest > 600);
+  const sleepers = game.cats.filter((c) => JarGame.dozing(c));
   if (!sleepers.length) return;
   const c = sleepers[Math.floor(Math.random() * sleepers.length)];
   const h = view.painter.head(c.body);
@@ -334,6 +452,7 @@ function tickSnores(dt: number): void {
 }
 
 function draw(alpha: number, dt: number): void {
+  view.follow(game, dt);
   view.draw(game, alpha, dt);
   ui.update(game, best, dt);
   tickPurr();

@@ -45,7 +45,7 @@ const ROOM_X0 = -10;
 const ROOM_X1 = WORLD_W + 10;
 
 export const RIM: Rim = { cx: CX, y: JAR.rimY, rxm: (WALL_R - WALL_L) / 2, r: JAR.wall + 0.6 };
-export const CAV: Cavity = scanCavity(ALL_PARTS, CX, JAR.rimY);
+export const CAV: Cavity = scanCavity(ALL_PARTS, CX, JAR.rimY, JAR.floorY - JAR.rimY + 20);
 
 /** Wall decor, in the room's own (unshifted) coordinates. */
 const WALL_DECOR: DecorPlacement[] = [
@@ -72,6 +72,7 @@ export function paintBack(ctx: Ctx, r: Rect, cssPerUnit: number): void {
   for (const d of WALL_DECOR) drawDecor(ctx, d, THEME, SEED + d.x);
   drawSunbeams(ctx, WALL_DECOR);
   ctx.restore();
+  paintUpperWall(ctx);
   // tiles behind the worktop
   drawDecor(ctx, { type: 'backsplash', x: ROOM_X0, y: COUNTER_Y - 62, w: ROOM_X1 - ROOM_X0, h: 62 }, THEME, SEED + 3);
   paintCounter(ctx, r);
@@ -80,6 +81,30 @@ export function paintBack(ctx: Ctx, r: Rect, cssPerUnit: number): void {
   jarBack(ctx);
   paintFrame(ctx, r);
   paintPaper(ctx, r, cssPerUnit);
+}
+
+/** A wall shelf from x0 to x1 with its top at y (things stand on y). */
+function wallShelf(ctx: Ctx, x0: number, x1: number, y: number, uid: number): void {
+  const prop = { uid, kind: 'furniture', type: 'shelf', x0, x1, y } as unknown as Prop;
+  drawFurniture(ctx, prop, THEME);
+}
+
+/**
+ * Up the tall wall, for the eye to find while the jar fills: bunting along
+ * the top, shelves of jars, books and a teapot on the right, pictures on
+ * the left (the jar's glass shows the wall behind it too).
+ */
+function paintUpperWall(ctx: Ctx): void {
+  const top = JAR.rimY;
+  drawDecor(ctx, { type: 'garland', x: CX, y: top - 168, w: 430 }, THEME, SEED + 41);
+  drawDecor(ctx, { type: 'picture', x: 30, y: top - 104, w: 42, h: 54, variant: 1 }, THEME, SEED + 43);
+  drawDecor(ctx, { type: 'picture', x: 34, y: top + 66, w: 36, h: 30, variant: 2 }, THEME, SEED + 44);
+  wallShelf(ctx, 300, 400, top + 4, 7);
+  drawDecor(ctx, { type: 'books', x: 318, y: top + 4, w: 5 }, THEME, SEED + 45);
+  drawDecor(ctx, { type: 'teapot', x: 370, y: top + 4 }, THEME, SEED + 46);
+  wallShelf(ctx, 296, 400, top + 150, 8);
+  drawDecor(ctx, { type: 'jars', x: 322, y: top + 150, w: 3 }, THEME, SEED + 47);
+  drawDecor(ctx, { type: 'plant', x: 380, y: top + 150, w: 22 }, THEME, SEED + 48);
 }
 
 /** The worktop and cabinets, reaching past the bottom of the screen. */
@@ -173,28 +198,19 @@ function paintFrame(ctx: Ctx, r: Rect): void {
   ctx.restore();
 }
 
-/** Paper grain and a soft vignette over the whole back layer. */
+/**
+ * Paper grain over the whole back layer. (The soft vignette round the screen
+ * is a CSS overlay, jar.css, since the back is taller than the screen.)
+ */
 function paintPaper(ctx: Ctx, r: Rect, cssPerUnit: number): void {
   const grain = ctx.createPattern(paperGrain(), 'repeat');
+  if (!grain) return;
   ctx.save();
-  if (grain) {
-    const s = 1 / cssPerUnit;
-    grain.setTransform?.({ a: s, b: 0, c: 0, d: s, e: 0, f: 0 });
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = 0.2;
-    ctx.fillStyle = grain;
-    ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
-  }
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  const cx = (r.x0 + r.x1) / 2;
-  const cy = (r.y0 + r.y1) / 2;
-  const wv = (r.x1 - r.x0) / 2;
-  const hv = (r.y1 - r.y0) / 2;
-  const vg = ctx.createRadialGradient(cx, cy, Math.min(wv, hv) * 0.9, cx, cy, Math.max(wv, hv) * 1.6);
-  vg.addColorStop(0, 'rgba(62,58,79,0)');
-  vg.addColorStop(1, 'rgba(62,58,79,0.12)');
-  ctx.fillStyle = vg;
+  const s = 1 / cssPerUnit;
+  grain.setTransform?.({ a: s, b: 0, c: 0, d: s, e: 0, f: 0 });
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = grain;
   ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
   ctx.restore();
 }
@@ -213,8 +229,8 @@ export function paintFront(ctx: Ctx): void {
   ctx.beginPath();
   ctx.moveTo(RIM.cx - ro, RIM.y);
   ctx.ellipse(RIM.cx, RIM.y, ro, ro * K, 0, Math.PI, 0, true);
-  ctx.lineTo(RIM.cx + ro, RIM.y + 600);
-  ctx.lineTo(RIM.cx - ro, RIM.y + 600);
+  ctx.lineTo(RIM.cx + ro, JAR.footY + 40);
+  ctx.lineTo(RIM.cx - ro, JAR.footY + 40);
   ctx.closePath();
   ctx.clip();
   ctx.globalAlpha = 0.85;

@@ -113,11 +113,19 @@ checks the index still matches).
 Two quick game prototypes built on the same cats, physics and paint, each its
 own page (the game above is untouched):
 
-- **Cat Jar** (`jar.html`, `src/proto/jar/`): drag to aim, let go to drop
-  cats into a glass jar. Two of the same kind touching melt into the next
-  (kitten, sphynx, tabby, Persian, Maine Coon, chonk, the Void). Tap a cat in
-  the jar to boop it (a few per game). The game ends when the pile stays above
-  the dashed line. Free play and a daily jar.
+- **Cat Jar** (`jar.html`, `src/proto/jar/`): drag sideways to aim, let go
+  to drop cats into a tall glass jar. The next cat hangs a set height over the
+  pile and the view follows the pile up; swipe up and down (or tap the gauge
+  by the jar) to look around. Two of the same kind that snuggle up for a
+  moment melt into the next (kitten, sphynx, tabby, Persian, Maine Coon,
+  chonk, the Void; cats that only brush past each other don't), and each
+  breed has its ways: kittens hop about before they settle, a sphynx is firm
+  and plugs holes, a Persian oozes into gaps, a Maine Coon squashes down to
+  fit, and a chonk pops small cats up. Now and then a Little Void drops: it
+  melts into any cat and makes it one size bigger. Tap a cat to boop it (a
+  few per game; a buried one heaves up the cats on top of it). A tap never
+  drops a cat. The game ends when the pile stays above the dashed line by the
+  rim. Free play and a daily jar.
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on
   cushions, eat fish to get chonkier (more points, slower squeezing), and stay

@@ -1,8 +1,10 @@
-// Cat Jar rules: a "Suika" game with soft cats. The next cat waits above the
-// jar; you aim and drop it. Two cats of the same tier that touch melt into one
+// Cat Jar rules: a "Suika" game with soft cats. The next cat waits over the
+// pile; you aim and drop it. Two cats of the same tier that touch melt into one
 // of the next tier (spawned small between them, growing in so the pile makes
-// room instead of exploding). Boops make a cat hop to jiggle the pile. A cat
-// resting above the full line for two seconds ends the game.
+// room instead of exploding); a Little Void melts into any cat. Boops make a
+// cat hop to jiggle the pile. Each breed has its ways (config.ts): kittens
+// hop about before settling, a chonk pops small cats up. A cat resting above
+// the full line for two seconds ends the game.
 //
 // Everything here runs in fixed 1/60 s frames and is deterministic for a given
 // seed and inputs (no DOM, no wall clock), so tests can drive it frame by frame.
@@ -18,6 +20,8 @@ import {
   CHAIN_FRAMES,
   CHAIN_MAX,
   CX,
+  DOZE_FRAMES,
+  DROP_GAP,
   DROP_WEIGHTS,
   FULL_FRAMES,
   GRACE_BOOP,
@@ -27,7 +31,12 @@ import {
   LAST_TIER,
   LINE_Y,
   RELOAD_FRAMES,
+  SNUGGLE_FRAMES,
   TIERS,
+  WILD,
+  WILD_AFTER,
+  WILD_CHANCE,
+  WILD_GAP,
   mergePoints,
 } from './config';
 import { buildStatics } from './jarShape';
@@ -48,9 +57,18 @@ export interface JarCat {
   grow: { from: number; to: number; t0: number; frames: number } | null;
   /** Can't melt again before this frame (lets the pop register). */
   lockUntil: number;
-  /** Still falling from its drop (for the landing thump and the 'wide' face). */
+  /** In the air from a drop, or a hop or a boop (for the landing thump and the face), since this frame. */
   falling: boolean;
+  fallKind: 'drop' | 'air';
+  fallFrom: number;
   prevVy: number;
+  /** It was off the ground last frame (a hop's landing is a touch-down, not a thump). */
+  wasAir: boolean;
+  /** Frame of its last landing. */
+  landedAt: number;
+  /** Hops a kitten has left before it settles, and the frame of its last one. */
+  hops: number;
+  lastHop: number;
   /** Neighbours (and where they were) when it fell asleep: it wakes if any of them moves or leaves. */
   sleepRefs: { b: SoftBody; x: number; y: number }[] | null;
   /** Frames spent at rest (for faces and paws). */
@@ -76,6 +94,8 @@ export type JarEvent =
   | { t: 'clink'; cat: JarCat; speed: number }
   | { t: 'merge'; tier: number; cat: JarCat | null; ghosts: Ghost[]; x: number; y: number; points: number; chain: number; earned: boolean }
   | { t: 'boop'; cat: JarCat }
+  | { t: 'hop'; cat: JarCat }
+  | { t: 'pop'; cat: JarCat; popped: JarCat[] }
   | { t: 'danger'; on: boolean }
   | { t: 'over' };
 
@@ -87,6 +107,9 @@ export interface Waiting {
 }
 
 let nextCatId = 1;
+
+/** How hard a kitten scoots toward a twin (a sideways acceleration, units/s^2). */
+const KITTEN_PULL = 320;
 
 // In a jar most cats rest on other cats, not on the glass: let that count as
 // contact, so the whole pile gets the engine's rest damping and can doze off.
@@ -104,6 +127,11 @@ export class JarGame {
   /** Where the player aims (x of the waiting cat's centre), and where it is now. */
   aimX = CX;
   holdX = CX;
+  /**
+   * The line the waiting cat's bottom hangs on: DROP_GAP over the top of the
+   * pile (it follows the pile up and down, unhurried). See holdY.
+   */
+  holdBase = JAR.floorY - DROP_GAP;
   score = 0;
   boops = BOOPS_START;
   over = false;
@@ -115,6 +143,8 @@ export class JarGame {
   merges = 0;
   events: JarEvent[] = [];
   private rand: () => number = rng(1);
+  /** Drop number of the last Little Void put in the queue. */
+  private lastWild = -1e9;
   private silent = new Set<number>();
   private reloadAt = 0;
 
@@ -135,6 +165,8 @@ export class JarGame {
     this.queue = [];
     this.waiting = null;
     this.aimX = this.holdX = CX;
+    this.holdBase = JAR.floorY - DROP_GAP;
+    this.easing = false;
     this.score = 0;
     this.boops = BOOPS_START;
     this.over = false;
@@ -145,6 +177,8 @@ export class JarGame {
     this.merges = 0;
     this.events = [];
     this.reloadAt = 0;
+    this.lastWild = -1e9;
+    this.snug.clear();
     this.fillQueue();
     this.spawnWaiting();
   }
@@ -153,6 +187,14 @@ export class JarGame {
 
   private fillQueue(): void {
     while (this.queue.length < 3) {
+      // now and then a Little Void (never two close together)
+      const n = this.drops + this.queue.length;
+      const w = this.rand();
+      if (n >= WILD_AFTER && n - this.lastWild >= WILD_GAP && w < WILD_CHANCE) {
+        this.queue.push(WILD);
+        this.lastWild = n;
+        continue;
+      }
       const u = this.rand();
       let acc = 0;
       let t = DROP_WEIGHTS.length - 1;
@@ -169,7 +211,7 @@ export class JarGame {
 
   /** Force the upcoming tiers (tests and tutorials); the waiting cat is replaced. */
   setQueue(tiers: number[]): void {
-    this.queue = tiers.map((t) => clamp(Math.round(t), 0, LAST_TIER));
+    this.queue = tiers.map((t) => clamp(Math.round(t), 0, WILD));
     this.fillQueue();
     if (this.waiting) this.spawnWaiting();
   }
@@ -179,9 +221,24 @@ export class JarGame {
     const T = TIERS[t];
     const x = this.clampAim(this.aimX, t);
     this.holdX = x;
-    const body = new SoftBody(T.breed, x, HOLD_Y, { ...T.phys, radius: T.r, nodes: T.nodes });
+    const body = new SoftBody(T.breed, x, this.holdY(t), { ...T.phys, radius: T.r, nodes: T.nodes });
     this.waiting = { tier: t, body, since: this.frame };
     this.events.push({ t: 'spawn', tier: t });
+  }
+
+  /** Where a waiting cat of tier t hangs (its centre): on holdBase, but never above HOLD_Y. */
+  holdY(t: number): number {
+    return Math.max(HOLD_Y, this.holdBase - TIERS[t].r);
+  }
+
+  /** Top of the settled pile (cats not falling or hopping), or the floor. */
+  pileTop(): number {
+    let top: number = JAR.floorY;
+    for (const c of this.cats) {
+      if (c.falling || this.frame - c.booped < 50) continue;
+      top = Math.min(top, JarGame.top(c.body));
+    }
+    return top;
   }
 
   /** Aim range for a cat of tier t: its whole body must clear the opening. */
@@ -204,7 +261,7 @@ export class JarGame {
     this.aimX = x;
     if (this.waiting) {
       this.holdX = this.clampAim(x, this.waiting.tier);
-      this.waiting.body.placeAt(this.holdX, HOLD_Y);
+      this.waiting.body.placeAt(this.holdX, this.holdY(this.waiting.tier));
     }
   }
 
@@ -218,10 +275,11 @@ export class JarGame {
     const w = this.waiting;
     if (!w || this.over) return false;
     const b = w.body;
-    b.placeAt(this.holdX, HOLD_Y);
+    b.placeAt(this.holdX, this.clearDrop(this.holdX, this.holdY(w.tier), TIERS[w.tier].r));
     b.kick(0, 40);
     this.world.addBody(b);
     const cat = this.addCat(w.tier, b, true);
+    if (TIERS[w.tier].breed === 'kitten') cat.hops = 3;
     this.waiting = null;
     this.queue.shift();
     this.fillQueue();
@@ -229,6 +287,28 @@ export class JarGame {
     this.drops++;
     this.events.push({ t: 'drop', cat });
     return true;
+  }
+
+  /** Lift a drop point clear of any cat in the way (one that just hopped up there). */
+  private clearDrop(x: number, y: number, r: number): number {
+    const R = r + NODE_RADIUS * 2 + 3;
+    for (let pass = 0; pass < 3; pass++) {
+      let moved = false;
+      for (const c of this.cats) {
+        const b = c.body;
+        for (let i = 0; i < b.n; i++) {
+          const dx = b.x[i] - x;
+          if (dx <= -R || dx >= R) continue;
+          const reach = Math.sqrt(R * R - dx * dx);
+          if (Math.abs(b.y[i] - y) < reach) {
+            y = b.y[i] - reach;
+            moved = true;
+          }
+        }
+      }
+      if (!moved) break;
+    }
+    return y;
   }
 
   private addCat(tier: number, body: SoftBody, dropped: boolean): JarCat {
@@ -242,22 +322,29 @@ export class JarGame {
       grow: null,
       lockUntil: 0,
       falling: dropped,
+      fallKind: 'drop',
+      fallFrom: this.frame,
       prevVy: 0,
+      wasAir: false,
+      landedAt: -1e9,
+      hops: 0,
+      lastHop: -1e9,
       sleepRefs: null,
       rest: 0,
       removed: false,
       chain: 0,
     };
     this.cats.push(cat);
-    if (tier > this.biggest) this.biggest = tier;
+    if (tier > this.biggest && tier <= LAST_TIER) this.biggest = tier;
     return cat;
   }
 
   /** Put a cat of a tier straight into the jar (tests, the attract screen). */
   place(tier: number, x: number, y: number): JarCat {
-    const T = TIERS[clamp(Math.round(tier), 0, LAST_TIER)];
+    const t = clamp(Math.round(tier), 0, WILD);
+    const T = TIERS[t];
     const b = this.world.addBody(new SoftBody(T.breed, x, y, { ...T.phys, radius: T.r, nodes: T.nodes }));
-    const cat = this.addCat(TIERS.indexOf(T), b, false);
+    const cat = this.addCat(t, b, false);
     cat.born = this.frame - GRACE_DROP;
     return cat;
   }
@@ -299,6 +386,7 @@ export class JarGame {
     b.kick(side * vy * 0.3, -vy * (stack.length ? 1.25 : 1));
     cat.booped = this.frame;
     cat.rest = 0;
+    this.takeOff(cat);
     this.boops--;
     // the hop shoves its neighbours awake (the ones resting on them follow: watchSleep)
     this.wakeNear(b, 8);
@@ -331,12 +419,13 @@ export class JarGame {
   step(): void {
     this.frame++;
     const f = this.frame;
+    this.followPile();
     // the waiting cat follows the aim (quickly, but not instantly)
     if (this.waiting) {
       const tx = this.clampAim(this.aimX, this.waiting.tier);
       this.holdX += (tx - this.holdX) * 0.4;
       if (Math.abs(tx - this.holdX) < 0.05) this.holdX = tx;
-      this.waiting.body.placeAt(this.holdX, HOLD_Y);
+      this.waiting.body.placeAt(this.holdX, this.holdY(this.waiting.tier));
     } else if (!this.over && f >= this.reloadAt) this.spawnWaiting();
     this.growCats();
     this.world.step();
@@ -351,6 +440,24 @@ export class JarGame {
     this.checkFull();
   }
 
+  /**
+   * Keep the waiting cat's line DROP_GAP over the pile: it eases toward a new
+   * height once the pile has grown (or melted down) by more than a little,
+   * so the view isn't nudged by every settling wobble.
+   */
+  private followPile(): void {
+    const want = this.pileTop() - DROP_GAP;
+    const d = want - this.holdBase;
+    if (Math.abs(d) > 10 || this.easing) {
+      this.easing = Math.abs(d) > 0.5;
+      this.holdBase += d * 0.05;
+    }
+  }
+
+  private easing = false;
+  /** Twins touching now: how many frames they've snuggled, and the last frame they touched. */
+  private snug = new Map<number, { a: JarCat; b: JarCat; n: number; seen: number }>();
+
   private growCats(): void {
     for (const cat of this.cats) {
       const g = cat.grow;
@@ -361,7 +468,11 @@ export class JarGame {
       cat.body.resize(g.from + (g.to - g.from) * e);
       // the pile has to make room: neighbours wake up and get pushed
       this.wakeNear(cat.body, 12);
-      if (t >= 1) cat.grow = null;
+      if (t >= 1) {
+        cat.grow = null;
+        // a new chonk settles in with a flop
+        if (TIERS[cat.tier].breed === 'chonk') this.chonkPop(cat);
+      }
     }
   }
 
@@ -383,13 +494,24 @@ export class JarGame {
     // landing: a sharp stop while falling
     if (cat.falling) {
       const vy = b.vcy;
-      if (this.frame - cat.born > 3 && cat.prevVy > 140 && cat.prevVy - vy > 110) {
+      // a sharp stop (a drop's thump), or touching down after a hop or a boop
+      const thump = cat.prevVy > 140 && cat.prevVy - vy > 110;
+      const down = cat.fallKind === 'air' && cat.wasAir && b.airborneFrames === 0;
+      if (this.frame - cat.fallFrom > 3 && (thump || down)) {
         cat.falling = false;
+        cat.landedAt = this.frame;
         // the glass reports its own clink; this is the soft thump on a cat
-        if (b.impactShape === -1) this.events.push({ t: 'land', cat, speed: cat.prevVy });
-      } else if (this.frame - cat.born > 240) cat.falling = false;
+        if (thump && b.impactShape === -1) this.events.push({ t: 'land', cat, speed: cat.prevVy });
+        // a chonk landing on small cats pops them up
+        if (TIERS[cat.tier].breed === 'chonk' && cat.prevVy > 200) this.chonkPop(cat);
+      } else if (this.frame - cat.fallFrom > 240) cat.falling = false;
       cat.prevVy = vy;
+      cat.wasAir = b.airborneFrames > 2;
     }
+    // kittens scoot over to a twin sitting close by
+    if (TIERS[cat.tier].breed === 'kitten') b.assistAx = this.kittenPull(cat);
+    // a kitten hops about a little before it settles (once it's had a moment on its feet)
+    if (cat.hops > 0 && !cat.falling && this.frame - cat.landedAt > 16 && b.airborneFrames === 0 && Math.abs(b.vcy) < 60 && !cat.grow) this.kittenHop(cat);
     const still = b.asleep || (b.emaVx * b.emaVx + b.emaVy * b.emaVy < 20 * 20 && b.airborneFrames < 3);
     cat.rest = still ? cat.rest + 1 : 0;
     // A resting cat curls into a loaf (the rest shape only matters for the
@@ -397,6 +519,122 @@ export class JarGame {
     if (cat.rest > 20) b.loafiness = Math.min(1, b.loafiness + 0.02);
     else if (b.energy > 900) b.loafiness = Math.max(0, b.loafiness - 0.05);
     this.watchSleep(cat);
+  }
+
+  /** The cat leaves the ground (a boop, a hop): watch for its landing. */
+  private takeOff(cat: JarCat): void {
+    cat.falling = true;
+    cat.fallKind = 'air';
+    cat.fallFrom = this.frame;
+    cat.prevVy = 0;
+    cat.wasAir = false;
+  }
+
+  /**
+   * A kitten's hop: over to another kitten if one is near (they like to play;
+   * it lands right beside it), else down the slope it sits on (on the level,
+   * toward the middle). Not from under other cats, nor away from a twin it's
+   * already snuggled up to.
+   */
+  private kittenHop(cat: JarCat): void {
+    const b = cat.body;
+    cat.hops--;
+    if (this.stackAbove(cat).length) {
+      cat.hops = 0;
+      return;
+    }
+    b.computeCentroid();
+    const r = TIERS[cat.tier].r;
+    let twin: JarCat | null = null;
+    let near = r * 6;
+    for (const o of this.cats) {
+      if (o === cat || o.removed || o.tier !== cat.tier) continue;
+      const d = Math.hypot(o.body.cx - b.cx, o.body.cy - b.cy);
+      if (d < near) {
+        near = d;
+        twin = o;
+      }
+    }
+    if (twin && bodiesTouch(b, twin.body)) return;
+    let dx: number;
+    if (twin) {
+      // (just short of it: the last bit it scoots, see kittenPull)
+      const side = twin.body.cx < b.cx ? 1 : -1;
+      dx = twin.body.cx + side * r * 2.5 - b.cx;
+    } else {
+      const left = this.surfaceAt(b.cx - r * 1.8, r, cat);
+      const right = this.surfaceAt(b.cx + r * 1.8, r, cat);
+      const dir = Math.abs(left - right) >= 4 ? (left > right ? -1 : 1) : b.cx > CX ? -1 : 1;
+      dx = dir * 30;
+    }
+    // (not into the glass)
+    dx = clamp(b.cx + dx, JAR.inL + r + 3, JAR.inR - r - 3) - b.cx;
+    const vy = Math.sqrt(2 * GRAVITY * 26);
+    const vx = clamp(dx / ((2 * vy) / GRAVITY), -200, 200);
+    // a fresh hop, whatever it was doing
+    b.kick(vx - b.vcx, -vy - b.vcy);
+    cat.lastHop = this.frame;
+    cat.rest = 0;
+    this.takeOff(cat);
+    this.wakeNear(b, 6);
+    this.events.push({ t: 'hop', cat });
+  }
+
+  /**
+   * A kitten on its feet scoots toward a twin sitting near it, about level,
+   * till they touch (they like to play): a sideways push, 0 if none.
+   */
+  private kittenPull(cat: JarCat): number {
+    const b = cat.body;
+    if (cat.falling || b.airborneFrames > 0 || JarGame.dozing(cat)) return 0;
+    const r = TIERS[cat.tier].r;
+    let push = 0;
+    let near = r * 3.6;
+    for (const o of this.cats) {
+      if (o === cat || o.removed || o.tier !== cat.tier || JarGame.dozing(o)) continue;
+      const dx = o.body.cx - b.cx;
+      const d = Math.hypot(dx, o.body.cy - b.cy);
+      if (d >= near || Math.abs(o.body.cy - b.cy) > r) continue;
+      near = d;
+      push = bodiesTouch(b, o.body) ? 0 : dx < 0 ? -KITTEN_PULL : KITTEN_PULL;
+    }
+    return push;
+  }
+
+  /** Top of the pile (or the floor) under a column at x, for a cat of radius r (the glass: very high). */
+  private surfaceAt(x: number, r: number, except: JarCat): number {
+    if (x < JAR.inL + 4 || x > JAR.inR - 4) return -Infinity;
+    let best: number = JAR.floorY;
+    for (const c of this.cats) {
+      if (c === except || c.removed) continue;
+      const b = c.body;
+      for (let i = 0; i < b.n; i++) {
+        if (Math.abs(b.x[i] - x) > r) continue;
+        if (b.y[i] < best) best = b.y[i];
+      }
+    }
+    return best;
+  }
+
+  /** A chonk flops down: the small cats it touches (kittens, sphynxes, tabbies) pop up and away. */
+  private chonkPop(chonk: JarCat): void {
+    const b = chonk.body;
+    b.computeCentroid();
+    const popped: JarCat[] = [];
+    for (const c of this.cats) {
+      if (c === chonk || c.removed || c.tier > 2) continue;
+      if (!bodiesTouch(b, c.body, NODE_RADIUS * 2 + 6)) continue;
+      c.body.computeCentroid();
+      const r = TIERS[c.tier].r;
+      const side = clamp((c.body.cx - b.cx) / TIERS[chonk.tier].r, -1, 1);
+      c.body.kick(side * 140, -Math.sqrt(2 * GRAVITY * (r * 1.4 + 26)));
+      c.booped = this.frame;
+      c.rest = 0;
+      this.takeOff(c);
+      this.wakeNear(c.body, 8);
+      popped.push(c);
+    }
+    if (popped.length) this.events.push({ t: 'pop', cat: chonk, popped });
   }
 
   /**
@@ -443,29 +681,59 @@ export class JarGame {
 
   private findMerges(): void {
     const cats = this.cats;
+    // a Little Void melts into the biggest cat it touches
+    for (const w of cats) {
+      if (w.tier !== WILD || w.removed || this.frame < w.lockUntil) continue;
+      let best: JarCat | null = null;
+      for (const o of cats) {
+        if (o === w || o.removed || o.tier === WILD || this.frame < o.lockUntil) continue;
+        if (best && o.tier <= best.tier) continue;
+        if (bodiesTouch(w.body, o.body)) best = o;
+      }
+      if (best) this.merge(best, w, best.tier);
+    }
+    // twins melt once they've snuggled a moment (both awake)
     for (let i = 0; i < cats.length; i++) {
       const a = cats[i];
-      if (a.removed || this.frame < a.lockUntil) continue;
+      if (a.removed || a.tier === WILD || this.frame < a.lockUntil || JarGame.dozing(a)) continue;
       for (let j = i + 1; j < cats.length; j++) {
         const b = cats[j];
-        if (b.removed || b.tier !== a.tier || this.frame < b.lockUntil) continue;
+        if (b.removed || b.tier !== a.tier || this.frame < b.lockUntil || JarGame.dozing(b)) continue;
         if (!bodiesTouch(a.body, b.body)) continue;
-        this.merge(a, b);
+        const key = a.id < b.id ? a.id * 65536 + b.id : b.id * 65536 + a.id;
+        const s = this.snug.get(key) ?? { a, b, n: 0, seen: 0 };
+        s.n++;
+        s.seen = this.frame;
+        this.snug.set(key, s);
+        if (s.n < SNUGGLE_FRAMES) continue;
+        this.merge(a, b, a.tier);
         break;
       }
     }
+    // a snuggle forgets once they've been apart a moment (a bump and back doesn't count), or one of them melted
+    for (const [key, s] of this.snug) if (this.frame - s.seen > 12 || s.a.removed || s.b.removed) this.snug.delete(key);
   }
 
-  private merge(a: JarCat, b: JarCat): void {
-    const tier = a.tier;
+  /** Twins snuggling right now, and how far along (0..1) to melting. */
+  snuggles(): { a: JarCat; b: JarCat; t: number }[] {
+    const out: { a: JarCat; b: JarCat; t: number }[] = [];
+    for (const s of this.snug.values()) if (!s.a.removed && !s.b.removed && this.frame - s.seen <= 1) out.push({ a: s.a, b: s.b, t: Math.min(1, s.n / SNUGGLE_FRAMES) });
+    return out;
+  }
+
+  /** Two cats of a tier melt into one of the next (or a Little Void melts into a cat of that tier). */
+  private merge(a: JarCat, b: JarCat, tier: number): void {
     const A = a.body;
     const B = b.body;
     A.computeCentroid();
     B.computeCentroid();
-    const x = (A.cx + B.cx) / 2;
-    const y = (A.cy + B.cy) / 2;
-    const vx = (A.vcx + B.vcx) / 2;
-    const vy = (A.vcy + B.vcy) / 2;
+    // the new cat appears between them, nearer the bigger one
+    const wa = A.p.radius * A.p.radius;
+    const wb = B.p.radius * B.p.radius;
+    const x = (A.cx * wa + B.cx * wb) / (wa + wb);
+    const y = (A.cy * wa + B.cy * wb) / (wa + wb);
+    const vx = (A.vcx * wa + B.vcx * wb) / (wa + wb);
+    const vy = (A.vcy * wa + B.vcy * wb) / (wa + wb);
     a.removed = b.removed = true;
     this.world.removeBody(A);
     this.world.removeBody(B);
@@ -503,8 +771,8 @@ export class JarGame {
       tier,
       cat,
       ghosts: [
-        { body: A, tier, tx: x, ty: y },
-        { body: B, tier, tx: x, ty: y },
+        { body: A, tier: a.tier, tx: x, ty: y },
+        { body: B, tier: b.tier, tx: x, ty: y },
       ],
       x,
       y,
@@ -533,6 +801,11 @@ export class JarGame {
   }
 
   // --- Full jar -----------------------------------------------------------------
+
+  /** Dozed off: lying still too long to snuggle up (a boop or a bump wakes it). */
+  static dozing(c: JarCat): boolean {
+    return c.rest > DOZE_FRAMES;
+  }
 
   /** Top of a cat's skin. */
   static top(b: SoftBody): number {

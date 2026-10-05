@@ -2,7 +2,7 @@
 // next cat's face, a music toggle) and the cards (start, jar's full).
 
 import { faceSVG } from '../../ui/faces';
-import { BOOPS_MAX, TIERS } from './config';
+import { BOOPS_MAX, LAST_TIER, TIERS, WILD } from './config';
 import type { JarGame, Mode } from './game';
 
 export interface UiHandlers {
@@ -48,9 +48,12 @@ export class JarUI {
       </div>
       <div class="card jar-card" id="start" role="dialog" aria-labelledby="startTitle">
         <h2 id="startTitle">Cat Jar</h2>
-        <p>Drag to aim, let go to drop. Two of the same cat melt into a bigger one!</p>
-        <div class="jar-chain">${TIERS.map((t, i) => `<span class="jar-chain-cat" title="${t.name}">${faceSVG(t.breed, { size: 21 + i * 3.4, mood: i === TIERS.length - 1 ? 'happy' : 'open' })}</span>`).join('<span class="jar-arrow">›</span>')}</div>
-        <p class="jar-tip">Tap a cat in the jar to boop it (paws at the top).</p>
+        <p>Drag sideways to aim, let go to drop. Two of the same cat that snuggle up melt into a bigger one!</p>
+        <div class="jar-chain">${TIERS.slice(0, LAST_TIER + 1)
+          .map((t, i) => `<span class="jar-chain-cat" title="${t.name}">${faceSVG(t.breed, { size: 21 + i * 3.4, mood: i === LAST_TIER ? 'happy' : 'open' })}<small>${t.trait}</small></span>`)
+          .join('<span class="jar-arrow">›</span>')}</div>
+        <p class="jar-wild"><span class="jar-wild-face">${faceSVG('void', { size: 22, mood: 'happy' })}</span>A Little Void melts into any cat and makes it one size bigger.</p>
+        <p class="jar-tip">Tap a cat to boop it (paws at the top). Swipe up and down to look around the tall jar.</p>
         <div class="jar-buttons"><button class="btn" id="playBtn">Play</button><button class="btn soft" id="dailyBtn">Daily jar</button></div>
         <p class="jar-small" id="startBest"></p>
       </div>
@@ -156,8 +159,9 @@ export class JarUI {
     const next = game.over ? -1 : (game.queue[1] ?? -1);
     if (next !== s.next) {
       s.next = next;
-      this.nextEl.innerHTML = next >= 0 ? faceSVG(TIERS[next].breed, { size: 22 + next * 4 }) : '';
+      this.nextEl.innerHTML = next >= 0 ? faceSVG(TIERS[next].breed, { size: next === WILD ? 26 : 22 + next * 4, mood: next === WILD ? 'happy' : undefined }) : '';
       this.nextEl.title = next >= 0 ? TIERS[next].name : '';
+      this.nextEl.classList.toggle('jar-next-wild', next === WILD);
       (this.nextEl.parentElement as HTMLElement).style.visibility = next >= 0 ? '' : 'hidden';
     }
   }

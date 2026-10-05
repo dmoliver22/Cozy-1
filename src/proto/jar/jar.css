@@ -4,6 +4,16 @@ body {
   background: #e9d7bd;
 }
 
+/* a soft vignette round the screen, over the canvas and under the HUD */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(ellipse 85% 75% at 50% 48%, rgba(62, 58, 79, 0) 55%, rgba(62, 58, 79, 0.12) 100%);
+}
+
 .jar-hud {
   align-items: flex-start;
   left: 50%;
@@ -190,6 +200,39 @@ body {
 
 .jar-chain-cat {
   display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.jar-chain-cat small {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.jar-wild {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12.5px;
+  margin: 4px 0 4px !important;
+  color: #5b4e86 !important;
+  font-weight: 700;
+}
+
+.jar-wild-face {
+  display: inline-flex;
+  flex: none;
+  filter: drop-shadow(0 0 4px rgba(140, 111, 208, 0.7));
+}
+
+.jar-next-wild {
+  box-shadow: inset 0 -3px 0 rgba(62, 58, 79, 0.08), 0 0 0 2px rgba(140, 111, 208, 0.55), 0 0 16px rgba(140, 111, 208, 0.55);
 }
 
 .jar-arrow {
@@ -197,7 +240,7 @@ body {
   font-weight: 800;
   color: var(--ink-soft);
   opacity: 0.5;
-  padding-bottom: 4px;
+  padding-bottom: 14px;
 }
 
 .jar-tip {

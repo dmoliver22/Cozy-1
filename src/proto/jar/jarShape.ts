@@ -43,8 +43,17 @@ export const FOOT_PART: Part = box(inL + rc * 0.45, floorY + wall * 0.6, inR - r
 
 export const ALL_PARTS: Part[] = [...GLASS_PARTS, FOOT_PART];
 
+/**
+ * Friction of the glass: the floor holds the bottom of the pile still, but
+ * the straight walls are slippery, or two big cats squeezed side by side can
+ * wedge between them and hang there like a bridge over the cats below.
+ */
+const FLOOR_FRICTION = 0.35;
+export const WALL_FRICTION = 0.05;
+
 function toShape(p: Part): StaticShape {
-  const o = { material: 'glass' as const, friction: 0.35, container: true };
+  const upright = p.k === 'cap' && p.ax === p.bx;
+  const o = { material: 'glass' as const, friction: upright ? WALL_FRICTION : FLOOR_FRICTION, container: true };
   return p.k === 'cap' ? capsule(p.ax, p.ay, p.bx, p.by, p.r, o) : roundedBox(p.x0, p.y0, p.x1 - p.x0, p.y1 - p.y0, p.r, o);
 }
 
@@ -63,11 +72,11 @@ export function buildStatics(): JarStatics {
     silent.add(s.id);
   };
   // the jar's sides carry on (invisibly) above the rim
-  quiet(capsule(WALL_L, rimY, WALL_L, -600, wall, { material: 'glass', friction: 0.2 }));
-  quiet(capsule(WALL_R, rimY, WALL_R, -600, wall, { material: 'glass', friction: 0.2 }));
+  quiet(capsule(WALL_L, rimY, WALL_L, rimY - 900, wall, { material: 'glass', friction: WALL_FRICTION }));
+  quiet(capsule(WALL_R, rimY, WALL_R, rimY - 900, wall, { material: 'glass', friction: WALL_FRICTION }));
   // a counter top and room walls, just in case
   quiet(roundedBox(-400, footY, 1180, 300, 4, { material: 'wood' }));
-  quiet(roundedBox(-600, -800, 400, 1800, 4, { material: 'wall' }));
-  quiet(roundedBox(580, -800, 400, 1800, 4, { material: 'wall' }));
+  quiet(roundedBox(-600, rimY - 1000, 400, 2400, 4, { material: 'wall' }));
+  quiet(roundedBox(580, rimY - 1000, 400, 2400, 4, { material: 'wall' }));
   return { shapes, silent };
 }

@@ -204,7 +204,7 @@ function simplifyLine(xs: readonly number[], ys: readonly number[], tol: number)
 }
 
 /** Scan the inner faces of the walls from the parts, starting at (cx, yTop) inside the hollow. */
-export function scanCavity(parts: readonly Part[], cx: number, yTop: number): Cavity {
+export function scanCavity(parts: readonly Part[], cx: number, yTop: number, maxDepth = 400): Cavity {
   const step = 0.5;
   const d = (x: number, y: number): number => sdParts(parts, x, y);
   const face = (y: number, dir: number): number => {
@@ -225,7 +225,7 @@ export function scanCavity(parts: readonly Part[], cx: number, yTop: number): Ca
   const xl: number[] = [];
   const xr: number[] = [];
   let y = yTop;
-  while (y < yTop + 400 && d(cx, y) > 0) {
+  while (y < yTop + maxDepth && d(cx, y) > 0) {
     xl.push(face(y, -1));
     xr.push(face(y, 1));
     y += step;
