@@ -122,10 +122,13 @@ own page (the game above is untouched):
   breed has its ways: kittens hop about before they settle, a sphynx is firm
   and plugs holes, a Persian oozes into gaps, a Maine Coon squashes down to
   fit, and a chonk pops small cats up. Now and then a Little Void drops: it
-  melts into any cat and makes it one size bigger. Tap a cat to boop it (a
-  few per game; a buried one heaves up the cats on top of it). A tap never
-  drops a cat. The game ends when the pile stays above the dashed line by the
-  rim. Free play and a daily jar.
+  melts into any cat and makes it one size bigger. A cat left lying still
+  dozes off (zzz) and won't melt till it's woken, and as the afternoon wears
+  on (the kitchen's light warms toward evening) the cats doze off sooner, so
+  the bottom of the jar slowly fills with sleepers. Tap a cat to boop it awake
+  (a few boops per game; a buried cat heaves up the ones on top of it). A tap
+  never drops a cat. The game ends when the pile stays above the dashed line
+  by the rim. Free play and a daily jar.
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on
   cushions, eat fish to get chonkier (more points, slower squeezing), and stay
