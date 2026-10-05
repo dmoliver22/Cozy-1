@@ -71,8 +71,10 @@ export interface JarCat {
   lastHop: number;
   /** Neighbours (and where they were) when it fell asleep: it wakes if any of them moves or leaves. */
   sleepRefs: { b: SoftBody; x: number; y: number }[] | null;
-  /** Frames spent at rest (for faces and paws). */
+  /** Frames spent at rest (for faces and paws, and dozing off). */
   rest: number;
+  /** Frames spent truly still (it's put to sleep in the physics after a while). */
+  calm: number;
   /** Melted into another cat this frame. */
   removed: boolean;
   /** Links in the chain reaction that made it (0 = dropped). */
@@ -113,6 +115,9 @@ let nextCatId = 1;
  * count running when it lies on other cats, but a sleeper is at rest.)
  */
 export const airborne = (b: SoftBody): number => (b.asleep ? 0 : b.airborneFrames);
+
+/** Frames a cat must be truly still before it's put to sleep in the physics. */
+const SETTLE_FRAMES = 45;
 
 /** How hard a kitten scoots toward a twin (a sideways acceleration, units/s^2). */
 const KITTEN_PULL = 320;
@@ -337,6 +342,7 @@ export class JarGame {
       lastHop: -1e9,
       sleepRefs: null,
       rest: 0,
+      calm: 0,
       removed: false,
       chain: 0,
     };
@@ -520,6 +526,11 @@ export class JarGame {
     if (cat.hops > 0 && !cat.falling && this.frame - cat.landedAt > 16 && airborne(b) === 0 && Math.abs(b.vcy) < 60 && !cat.grow) this.kittenHop(cat);
     const still = b.asleep || (b.emaVx * b.emaVx + b.emaVy * b.emaVy < 20 * 20 && airborne(b) < 3);
     cat.rest = still ? cat.rest + 1 : 0;
+    // Settled cats sleep in the physics (they cost nothing then, and a tall
+    // pile stays smooth); the engine's own test is too strict for a pile.
+    const calm = !cat.falling && !cat.grow && cat.hops === 0 && b.assistAx === 0 && airborne(b) === 0 && b.emaVx * b.emaVx + b.emaVy * b.emaVy < 3 * 3;
+    cat.calm = calm ? cat.calm + 1 : 0;
+    if (!b.asleep && cat.calm > SETTLE_FRAMES) b.sleepNow();
     // A resting cat curls into a loaf (the rest shape only matters for the
     // jelly and pudding breeds); a moving one rounds out.
     if (cat.rest > 20) b.loafiness = Math.min(1, b.loafiness + 0.02);

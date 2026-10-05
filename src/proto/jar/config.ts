@@ -125,8 +125,10 @@ export const SNUGGLE_FRAMES = 30;
  * A cat left lying still a while dozes off and won't snuggle up or melt till
  * something wakes it: a boop, a bump, a Little Void. As the game goes on the
  * cats get sleepier (from DOZE_FIRST frames down to DOZE_LAST by the drop
- * DOZE_RAMP), so even a tall jar slowly fills with sleepers, quicker when
- * cats are left lying about, and boops are worth saving.
+ * DOZE_RAMP, then slowly on to half that), so even a tall jar slowly fills
+ * with sleepers, quicker when cats are left lying about, and boops are worth
+ * saving. (Bots dropping at random end after ~360 drops; one that aims and
+ * boops sleepers awake lasts past 600.)
  */
 export const DOZE_FIRST = 1800;
 export const DOZE_LAST = 300;
@@ -134,8 +136,9 @@ export const DOZE_RAMP = 250;
 
 /** How long a cat lies still before it dozes off, after this many drops. */
 export function dozeFrames(drops: number): number {
-  const t = Math.min(1, drops / DOZE_RAMP);
-  return Math.round(DOZE_FIRST + (DOZE_LAST - DOZE_FIRST) * t);
+  if (drops <= DOZE_RAMP) return Math.round(DOZE_FIRST + (DOZE_LAST - DOZE_FIRST) * (drops / DOZE_RAMP));
+  const t = Math.min(1, (drops - DOZE_RAMP) / DOZE_RAMP);
+  return Math.round(DOZE_LAST * (1 - 0.5 * t));
 }
 /** A merged cat melting again within this many frames (after its snuggle) is a chain reaction... */
 export const CHAIN_FRAMES = SNUGGLE_FRAMES + 50;

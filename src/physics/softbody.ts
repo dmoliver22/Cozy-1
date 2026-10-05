@@ -271,6 +271,15 @@ export class SoftBody {
     this.stillFrames = 0;
   }
 
+  /**
+   * Fall asleep now: the game knows the cat has settled (deep in a pile a cat
+   * keeps creeping a hair under the weight above it, so it never qualifies by
+   * itself, and every awake cat costs collisions each substep).
+   */
+  sleepNow(): void {
+    if (!this.asleep) this.sleep();
+  }
+
   private sleep(): void {
     this.asleep = true;
     for (let i = 0; i < this.n; i++) {
