@@ -439,16 +439,19 @@ function step(): void {
   handle(game.drain());
 }
 
-/** Now and then a dozing cat snores a little z (they won't melt till they're woken). */
+/** Every dozing cat snores a little z now and then (they won't melt till they're woken). */
 function tickSnores(dt: number): void {
   zTimer += dt;
-  if (zTimer < 0.9 || phase !== 'play') return;
-  zTimer = 0;
-  const sleepers = game.cats.filter((c) => JarGame.dozing(c));
-  if (!sleepers.length) return;
-  const c = sleepers[Math.floor(Math.random() * sleepers.length)];
-  const h = view.painter.head(c.body);
-  view.fx.add('note', h.x + TIERS[c.tier].r * 0.55, h.y - 2, { vy: -14, vx: 5, life: 1.8, size: 12, color: 'rgba(62,58,79,0.55)', text: 'z' });
+  if (phase !== 'play') return;
+  const period = 2.4;
+  for (const c of game.cats) {
+    if (!JarGame.dozing(c)) continue;
+    // each on its own beat
+    const at = ((c.id * 0.37) % 1) * period;
+    if (Math.floor((zTimer - at) / period) === Math.floor((zTimer - dt - at) / period)) continue;
+    const h = view.painter.head(c.body);
+    view.fx.add('note', h.x + TIERS[c.tier].r * 0.55, h.y - 2, { vy: -14, vx: 5, life: 1.8, size: 10 + TIERS[c.tier].r * 0.08, color: 'rgba(62,58,79,0.55)', text: 'z' });
+  }
 }
 
 function draw(alpha: number, dt: number): void {

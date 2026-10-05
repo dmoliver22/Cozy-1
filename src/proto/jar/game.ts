@@ -108,6 +108,12 @@ export interface Waiting {
 
 let nextCatId = 1;
 
+/**
+ * Frames a cat has been off the ground. (The engine leaves a sleeping cat's
+ * count running when it lies on other cats, but a sleeper is at rest.)
+ */
+export const airborne = (b: SoftBody): number => (b.asleep ? 0 : b.airborneFrames);
+
 /** How hard a kitten scoots toward a twin (a sideways acceleration, units/s^2). */
 const KITTEN_PULL = 320;
 
@@ -496,7 +502,7 @@ export class JarGame {
       const vy = b.vcy;
       // a sharp stop (a drop's thump), or touching down after a hop or a boop
       const thump = cat.prevVy > 140 && cat.prevVy - vy > 110;
-      const down = cat.fallKind === 'air' && cat.wasAir && b.airborneFrames === 0;
+      const down = cat.fallKind === 'air' && cat.wasAir && airborne(b) === 0;
       if (this.frame - cat.fallFrom > 3 && (thump || down)) {
         cat.falling = false;
         cat.landedAt = this.frame;
@@ -506,13 +512,13 @@ export class JarGame {
         if (TIERS[cat.tier].breed === 'chonk' && cat.prevVy > 200) this.chonkPop(cat);
       } else if (this.frame - cat.fallFrom > 240) cat.falling = false;
       cat.prevVy = vy;
-      cat.wasAir = b.airborneFrames > 2;
+      cat.wasAir = airborne(b) > 2;
     }
     // kittens scoot over to a twin sitting close by
     if (TIERS[cat.tier].breed === 'kitten') b.assistAx = this.kittenPull(cat);
     // a kitten hops about a little before it settles (once it's had a moment on its feet)
-    if (cat.hops > 0 && !cat.falling && this.frame - cat.landedAt > 16 && b.airborneFrames === 0 && Math.abs(b.vcy) < 60 && !cat.grow) this.kittenHop(cat);
-    const still = b.asleep || (b.emaVx * b.emaVx + b.emaVy * b.emaVy < 20 * 20 && b.airborneFrames < 3);
+    if (cat.hops > 0 && !cat.falling && this.frame - cat.landedAt > 16 && airborne(b) === 0 && Math.abs(b.vcy) < 60 && !cat.grow) this.kittenHop(cat);
+    const still = b.asleep || (b.emaVx * b.emaVx + b.emaVy * b.emaVy < 20 * 20 && airborne(b) < 3);
     cat.rest = still ? cat.rest + 1 : 0;
     // A resting cat curls into a loaf (the rest shape only matters for the
     // jelly and pudding breeds); a moving one rounds out.
@@ -586,7 +592,7 @@ export class JarGame {
    */
   private kittenPull(cat: JarCat): number {
     const b = cat.body;
-    if (cat.falling || b.airborneFrames > 0 || JarGame.dozing(cat)) return 0;
+    if (cat.falling || airborne(b) > 0 || JarGame.dozing(cat)) return 0;
     const r = TIERS[cat.tier].r;
     let push = 0;
     let near = r * 3.6;

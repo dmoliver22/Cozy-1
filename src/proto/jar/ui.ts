@@ -53,7 +53,7 @@ export class JarUI {
           .map((t, i) => `<span class="jar-chain-cat" title="${t.name}">${faceSVG(t.breed, { size: 21 + i * 3.4, mood: i === LAST_TIER ? 'happy' : 'open' })}<small>${t.trait}</small></span>`)
           .join('<span class="jar-arrow">›</span>')}</div>
         <p class="jar-wild"><span class="jar-wild-face">${faceSVG('void', { size: 22, mood: 'happy' })}</span>A Little Void melts into any cat and makes it one size bigger.</p>
-        <p class="jar-tip">Tap a cat to boop it (paws at the top). Swipe up and down to look around the tall jar.</p>
+        <p class="jar-tip">Cats left alone doze off (zzz) and won't melt: tap one to boop it awake (paws at the top). Swipe up and down to look around the tall jar.</p>
         <div class="jar-buttons"><button class="btn" id="playBtn">Play</button><button class="btn soft" id="dailyBtn">Daily jar</button></div>
         <p class="jar-small" id="startBest"></p>
       </div>

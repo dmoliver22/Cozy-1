@@ -14,7 +14,7 @@ import { CatPainter, Lerp, type CatLook, type Stage } from '../kit';
 import { CAV, FRONT_RECT, floorShadow, paintBack, paintFront } from './art';
 import { CX, HOLD_Y, JAR, LINE_Y, TIERS, WILD, WORLD_BOTTOM, WORLD_TOP } from './config';
 import { Effects, heart } from './fx';
-import { JarGame, type Ghost, type JarCat } from './game';
+import { JarGame, airborne, type Ghost, type JarCat } from './game';
 
 /** World columns that are always on screen (the jar plus a little wall). */
 const NEED_X0 = CX - 160;
@@ -426,12 +426,12 @@ export class JarView {
     if (game.over) expression = top < LINE_Y + 6 ? 'wide' : 'open';
     else if (f - c.lastHop < 34) expression = 'happy';
     else if (this.snuggling.has(c)) expression = 'content';
-    else if (c.falling || b.airborneFrames > 8) expression = 'wide';
+    else if (c.falling || airborne(b) > 8) expression = 'wide';
     else if (f - c.booped < 40) expression = 'squint';
     else if (!c.dropped && age < 100) expression = 'happy';
     else if (game.danger && top < LINE_Y + 4) expression = 'wide';
+    // eyes shut means dozing (it won't melt till woken); awake cats keep their eyes open
     else if (JarGame.dozing(c)) expression = 'sleepy';
-    else if (c.rest > 200 && (c.id % 3 === 0 || TIERS[c.tier].breed === 'chonk')) expression = 'content';
     if (expression === 'open' && game.waiting) {
       // look toward the next cat (left, ahead or right, with a little
       // hysteresis so a still cat's picture isn't repainted on every wiggle)
@@ -467,7 +467,7 @@ export class JarView {
       return;
     }
     // flying cats (dropped, hopping) are quick and their faces trail behind: paint them live
-    const flying = c.falling || b.airborneFrames > 2 || f - c.booped < 30;
+    const flying = c.falling || airborne(b) > 2 || f - c.booped < 30;
     if (flying || purr > 0 || glow > 0 || this.skip.has('sprites')) {
       this.sprites.delete(c);
       this.lives++;

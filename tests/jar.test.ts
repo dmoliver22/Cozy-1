@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DROP_GAP, JAR, TIERS, WILD, WILD_AFTER } from '../src/proto/jar/config';
+import { DOZE_FRAMES, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER } from '../src/proto/jar/config';
 import { JarGame } from '../src/proto/jar/game';
 import { polygonArea } from '../src/util/math';
 import type { SoftBody } from '../src/physics/softbody';
@@ -80,6 +80,34 @@ describe('Cat Jar', () => {
       // at least a third of the hop it makes on its own (1.2 radii + 16)
       expect(rise).toBeGreaterThan((TIERS[c.tier].r * 1.2 + 16) / 3);
     }
+  });
+
+  it('twins melt once they have snuggled a moment, not on a passing bump', () => {
+    const g = new JarGame('play', 1);
+    const a = g.place(2, 150, F - 32);
+    const b = g.place(2, 214.5, F - 32);
+    let touched = -1;
+    let merged = -1;
+    for (let f = 0; f < 200 && merged < 0; f++) {
+      g.step();
+      if (touched < 0 && g.snuggles().length) touched = f;
+      for (const e of g.drain()) if (e.t === 'merge') merged = f;
+    }
+    expect(a.removed && b.removed).toBe(true);
+    expect(merged - touched).toBeGreaterThanOrEqual(SNUGGLE_FRAMES - 1);
+  });
+
+  it('a cat left still too long dozes off and won\'t melt till a boop wakes it', () => {
+    const g = new JarGame('play', 1);
+    const sleeper = g.place(3, 130, F - 40);
+    for (let f = 0; f < DOZE_FRAMES + 30; f++) g.step();
+    expect(JarGame.dozing(sleeper)).toBe(true);
+    // a twin settles against it: they don't melt
+    g.place(3, 130 + 37 * 2 + 5.5, F - 40);
+    for (let f = 0; f < 200; f++) g.step();
+    expect(g.cats.map((c) => c.tier)).toEqual([3, 3]);
+    expect(g.boop(sleeper, 120)).toBe(true);
+    expect(JarGame.dozing(sleeper)).toBe(false);
   });
 
   describe('breeds have their ways', () => {
