@@ -1,6 +1,6 @@
 // Cat Drop: the HUD (depth, fish and size, score, how far above bath time
 // is), a toast naming each room as the cat drops into it, and the start and
-// end cards.
+// end cards (the end card sits up top, over the bath the cat ends up in).
 
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { faceSVG } from '../../ui/faces';
@@ -24,18 +24,6 @@ function sud(x: number, y: number, r: number): string {
   return `<circle cx="${x}" cy="${y}" r="${r}" fill="url(#dSud)" stroke="#B8ACDA" stroke-width="${Math.max(0.35, r * 0.09)}"/><path d="M${x - r * 0.72} ${y + r * 0.1}A${r * 0.74} ${r * 0.74} 0 0 1 ${x + r * 0.05} ${y - r * 0.72}" stroke="url(#dSheen)" stroke-width="${r * 0.16}" fill="none" stroke-linecap="round" opacity=".75"/><ellipse cx="${x - r * 0.36}" cy="${y - r * 0.38}" rx="${r * 0.2}" ry="${r * 0.12}" transform="rotate(-40 ${x - r * 0.36} ${y - r * 0.38})" fill="#fff"/>`;
 }
 const BATH_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${SUDS}${sud(8.6, 14.2, 6)}${sud(16.6, 15.6, 4.6)}${sud(14.4, 7.4, 3.6)}${sud(20.4, 7.8, 1.8)}</svg>`;
-
-/** A cat's face just out of the bath: damp and droopy, suds on its head, drips under its chin. */
-function soakedFace(breed: BreedId, size: number): string {
-  const drip = (x: number, y: number, s: number): string => `<path d="M${x} ${y}q${s * 0.9} ${s * 1.5} 0 ${s * 2.1}q-${s * 0.9} -${s * 0.6} 0 -${s * 2.1}Z" fill="#A6CCF0"/>`;
-  const overlay = `<svg class="suds" width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true">${SUDS}
-    <path d="M6.2 12.4q.4-2.4 2.2-3.6M5.6 16.8q-.3-1.2 0-2.2" stroke="#fff" stroke-width=".9" fill="none" stroke-linecap="round" opacity=".7"/>
-    ${drip(9.6, 24.6, 1.1)}${drip(18.6, 24.9, 0.9)}${drip(14, 25.4, 0.7)}
-    ${sud(10.6, 6.6, 2.9)}${sud(17.4, 6.8, 2.6)}${sud(14, 5.1, 3.5)}${sud(12.2, 2.4, 2)}${sud(15.9, 2.6, 1.7)}
-    ${sud(24.4, 20.6, 2.1)}${sud(25.6, 17.9, 1.3)}${sud(3.6, 21.2, 1.6)}
-  </svg>`;
-  return `<div class="soaked" style="width:${size}px;height:${size}px">${faceSVG(breed, { mood: 'sleepy', size })}${overlay}</div>`;
-}
 
 export interface UiHandlers {
   play(breed: BreedId, daily: boolean): void;
@@ -97,7 +85,6 @@ export class DropUi {
       </div>
       <div class="card drop-card" id="dOver" role="dialog" aria-label="Bath time">
         <h2>Bath time!</h2>
-        <div class="face" id="dOverFace"></div>
         <div class="stats">
           <div><b id="dOverDepth">0</b><small>metres</small></div>
           <div><b id="dOverFish">0</b><small>fish</small></div>
@@ -173,7 +160,6 @@ export class DropUi {
     $('dOverScore').textContent = String(s.score);
     $('dOverBest').textContent = newBest ? 'New best!' : `Best ${best}`;
     $('dOverBest').classList.toggle('new', newBest);
-    $('dOverFace').innerHTML = soakedFace(s.breed, 64);
     this.overCard.classList.add('show');
     this.root.classList.add('menu');
   }

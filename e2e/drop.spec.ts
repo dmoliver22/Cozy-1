@@ -53,23 +53,44 @@ test('eating a fish makes the cat chonkier and scores', async ({ page }) => {
   expect(res.s1.score).toBeGreaterThan(res.s0.score);
 });
 
-test('bath time catches the cat, soaks it, and the run ends', async ({ page }) => {
+test('bath time catches the cat, its foam fills the screen, and the run ends in the bath', async ({ page }) => {
   await boot(page);
   const end = await page.evaluate(() => {
-    const d = (window as unknown as { __drop: { pause(on: boolean): void; restart(seed?: number): DropState; bathTo(gap: number): void; step(n: number): DropState; state: DropState } }).__drop;
+    const d = (
+      window as unknown as {
+        __drop: {
+          pause(on: boolean): void;
+          restart(seed?: number): DropState;
+          bathTo(gap: number): void;
+          step(n: number): DropState;
+          state: DropState;
+          ending: { stage: string; cover: number; inBath: boolean; card: boolean };
+        };
+      }
+    ).__drop;
     d.pause(true);
     d.restart(99);
     const phases = new Set<string>();
-    for (let i = 0; i < 600 && !d.state.over; i++) {
+    const stages = new Set<string>();
+    let maxCover = 0;
+    for (let i = 0; i < 900 && !d.ending.card; i++) {
       if (d.state.phase === 'play') d.bathTo(30);
       d.step(1);
       phases.add(d.state.phase);
+      stages.add(d.ending.stage);
+      maxCover = Math.max(maxCover, d.ending.cover);
     }
-    return { ...d.state, soaked: phases.has('soak') };
+    return { ...d.state, caught: phases.has('soak'), maxCover, filled: stages.has('fill'), bath: stages.has('bath'), inBath: d.ending.inBath, card: d.ending.card };
   });
-  expect(end.soaked).toBe(true);
+  // the foam filled the whole screen, then the bath came into view and the cat landed in it
+  expect(end.caught).toBe(true);
+  expect(end.filled).toBe(true);
+  expect(end.maxCover).toBeGreaterThan(0.98);
+  expect(end.bath).toBe(true);
+  expect(end.inBath).toBe(true);
   expect(end.over).toBe(true);
-  await expect(page.locator('#dOver')).toHaveClass(/show/, { timeout: 5000 });
+  expect(end.card).toBe(true);
+  await expect(page.locator('#dOver')).toHaveClass(/show/);
   await expect(page.getByRole('heading', { name: 'Bath time!' })).toBeVisible();
   await page.getByRole('button', { name: 'Again' }).click();
   await expect(page.locator('#dOver')).not.toHaveClass(/show/);

@@ -3,14 +3,16 @@
 // each one, a window-shaped highlight up on the left with a small glint below
 // on the right, and a faint darker edge low on the right; each is squashed and
 // stretched as the simulation says. Behind densely packed bubbles goes a soft
-// white suds body, so the mass reads as foam rather than loose marbles. All of
-// it is cached per radius bucket (the film in a ring of turns its swirl steps
-// through), so every draw is a plain scaled sprite and a few hundred are cheap. Also: drops, splashes and the rings of popped bubbles, and the
-// opaque white suds that cling to a soaked cat.
+// white suds body, so the mass reads as foam rather than loose marbles, and
+// behind the foam that fills the screen at the end, a solid flood of suds. All
+// of it is cached per radius bucket (the film in a ring of turns its swirl
+// steps through), so every draw is a plain scaled sprite and a few hundred are
+// cheap. Also: drops, splashes and the rings of popped bubbles, and the opaque
+// white suds that cling to a soaked cat (and pile up on the bath).
 
 import { rgba, type Ctx } from '../../render/paint';
 import { SHAFT_W } from './level';
-import type { Suds } from './suds';
+import { FLOOD_BACK, FLOOD_EDGE, type Suds } from './suds';
 
 const TAU = Math.PI * 2;
 /** Radius the opaque suds are painted at (world units). */
@@ -100,6 +102,9 @@ export function drawBubble(ctx: Ctx, x: number, y: number, r: number, v: number,
 
 
 // --- Soap bubbles -------------------------------------------------------------------------
+
+/** The solid suds of the flood. */
+const FLOOD = '#FCFAFF';
 
 /** Radii the bubble sprites are painted at; a bubble uses the smallest one at least its size. */
 const BUCKETS = [4, 6, 9, 13, 18, 24, 30];
@@ -308,11 +313,70 @@ function bucket(r: number): number {
  * (0..1) is how far between the last two physics steps we are.
  */
 export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, ey: number, camY: number, viewH: number, pass: 0 | 1): void {
-  if (!blob || s.n === 0) return;
   const top = camY - 50;
   const bot = camY + viewH + 50;
+  // the flood: solid suds behind the foam filling the screen (soft at its edges)
+  let solid0 = Infinity;
+  let solid1 = -Infinity;
+  if (pass === 1 && s.floodA > 0) {
+    ctx.setTransform(ppu, 0, 0, ppu, ex, ey);
+    ctx.globalAlpha = s.floodA;
+    ctx.fillStyle = FLOOD;
+    const x0 = -14;
+    const x1 = SHAFT_W + 14;
+    if (s.mode === 'clear') {
+      // clearing: solid from just under its billowing top edge on down, softer at the edge
+      const deep = FLOOD_EDGE * 0.6;
+      const edge = (dy: number, down: boolean): void => {
+        if (down) for (let x = x0; x <= x1; x += 12) ctx.lineTo(x, Math.min(bot, Math.max(top, s.clearLine(x) + dy)));
+        else for (let x = x1; x >= x0; x -= 12) ctx.lineTo(x, Math.min(bot, Math.max(top, s.clearLine(x) + dy)));
+      };
+      if (s.floodTop - 20 < bot) {
+        ctx.beginPath();
+        edge(deep, true);
+        ctx.lineTo(x1, bot);
+        ctx.lineTo(x0, bot);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = s.floodA * 0.5;
+        ctx.beginPath();
+        edge(0, true);
+        edge(deep, false);
+        ctx.closePath();
+        ctx.fill();
+        solid0 = Math.max(top, s.solidTop());
+        solid1 = bot;
+      }
+    } else if (s.floodBot + FLOOD_BACK > top) {
+      // filling: solid from the top of the screen to just behind the front, following its
+      // billows (the bubbles at the front make its edge), and a softer band below that
+      const edge = (dy: number): void => {
+        for (let x = x1; x >= x0; x -= 12) ctx.lineTo(x, Math.min(bot, Math.max(top, s.line(x) - FLOOD_BACK + dy)));
+      };
+      ctx.beginPath();
+      ctx.moveTo(x0, top);
+      ctx.lineTo(x1, top);
+      edge(0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = s.floodA * 0.5;
+      ctx.beginPath();
+      for (let x = x0; x <= x1; x += 12) ctx.lineTo(x, Math.min(bot, Math.max(top, s.line(x) - FLOOD_BACK)));
+      edge(24);
+      ctx.closePath();
+      ctx.fill();
+      if (s.floodA >= 1) {
+        solid0 = top;
+        solid1 = Math.min(bot, s.floodBot);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (!blob || s.n === 0) return;
   const n = s.n;
   const want = pass;
+  // (no need for a body behind bubbles well inside the solid flood)
+  const inside = (y: number, r: number): boolean => y - r * 2.3 > solid0 && y + r * 2.3 < solid1;
   // the suds body: soft white behind packed bubbles (the bigger ones carry it), laid
   // at low resolution over just the foam's extent, then scaled up in one draw
   let y0 = Infinity;
@@ -323,12 +387,12 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
     const r = s.r[i];
     const y = s.y[i];
     if (s.alpha[i] > 0.5 && y - r < massTop) massTop = y - r;
-    if (s.deep[i] !== want || s.nb[i] < 2 || r < 5) continue;
+    if (s.deep[i] !== want || s.nb[i] < 2 || r < 5 || inside(y, r)) continue;
     if (y - r * 2.3 < y0) y0 = y - r * 2.3;
     if (y + r * 2.3 > y1) y1 = y + r * 2.3;
   }
   // (where the mass stops short of the top of the screen, more suds above it)
-  const topFill = pass === 0 && massTop < Infinity && massTop > camY + 20 && s.front > camY + 40;
+  const topFill = pass === 0 && s.mode === 'chase' && massTop < Infinity && massTop > camY + 20 && s.front > camY + 40;
   if (topFill) y0 = camY - 10;
   y0 = Math.max(y0, top);
   y1 = Math.min(y1, bot);
@@ -361,7 +425,7 @@ export function drawSuds(ctx: Ctx, s: Suds, t: number, ppu: number, ex: number, 
       const r = s.r[i];
       if (s.deep[i] !== want || s.loose[i] || nb < 2 || r < 5) continue;
       const y = s.py[i] + (s.y[i] - s.py[i]) * t;
-      if (y + r * 2.3 < y0 || y - r * 2.3 > y1) continue;
+      if (y + r * 2.3 < y0 || y - r * 2.3 > y1 || inside(y, r)) continue;
       const x = s.px[i] + (s.x[i] - s.px[i]) * t;
       const k = (r * 2.2) / 32 / BODY_RES;
       g.globalAlpha = s.alpha[i] * Math.min(1, (nb - 1) / 4) * 0.78;

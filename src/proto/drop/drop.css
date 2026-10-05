@@ -206,29 +206,19 @@
   transform: translate(-50%, 0) scale(1);
 }
 
-/* the end card sits low too, so the soggy cat shows above it */
+/* the end card sits up top, over the bathroom wall, so the cat in the tub shows below it */
 #dOver {
-  top: auto;
-  bottom: max(18px, env(safe-area-inset-bottom));
-  transform: translate(-50%, 18px) scale(0.98);
+  top: max(14px, env(safe-area-inset-top));
+  padding: 16px 18px 12px;
+  transform: translate(-50%, -18px) scale(0.98);
 }
 
 #dOver.show {
   transform: translate(-50%, 0) scale(1);
 }
 
-.drop-card .soaked {
-  position: relative;
-}
-
-.drop-card .soaked .face-svg {
-  filter: brightness(0.86) saturate(0.85);
-}
-
-.drop-card .soaked .suds {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
+#dOver h2 {
+  margin-bottom: 6px;
 }
 
 .drop-card .breeds {
@@ -292,12 +282,6 @@
   color: var(--ginger);
   font-family: var(--display);
   font-size: 18px;
-}
-
-.drop-card .face {
-  display: flex;
-  justify-content: center;
-  margin: 2px 0 6px;
 }
 
 .drop-card .stats {

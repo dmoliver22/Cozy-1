@@ -1,6 +1,7 @@
 // Cat Drop: an endless squishy fall through a cozy house. Drag to steer, tap
 // to bounce, eat fish to grow (more points, slower squeezes) and stay ahead of
-// bath time. This file wires the simulation (game.ts) to the screen
+// bath time; when it catches the cat, its foam fills the screen and the run
+// ends in the bath. This file wires the simulation (game.ts) to the screen
 // (view.ts), the HUD (ui.ts), input and sound, and exposes `window.__drop`.
 import '@fontsource/baloo-2/latin-700.css';
 import '@fontsource/baloo-2/latin-800.css';
@@ -10,11 +11,12 @@ import './drop.css';
 import { AudioEngine, type ImpactMaterial } from '../../audio/audio';
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed, unlockAudioOnGesture } from '../kit';
-import { DropGame, type DropState, type GameEvent } from './game';
+import { BathScene } from './bath';
+import { DropGame, SOAK, type DropState, type GameEvent } from './game';
 import { DropSfx } from './sfx';
 import { Suds } from './suds';
 import { BREED_CHOICES, DropUi } from './ui';
-import { DropView } from './view';
+import { DropView, type EndStage } from './view';
 
 const BEST_KEY = 'catdrop.best';
 const PREF_KEY = 'catdrop.prefs';
@@ -65,7 +67,9 @@ let daily = false;
 let seed = randomSeed();
 let game = new DropGame(seed, prefs.breed);
 v.reset(game);
-let overAt = -1;
+/** The frame the run ended on (-1: still going), and whether its card is up. */
+let overFrame = -1;
+let finished = false;
 
 function randomSeed(): number {
   return (Math.random() * 2 ** 31) >>> 0;
@@ -120,7 +124,8 @@ function newRun(s: number, breed: BreedId): void {
   audio.stopAllPurrs();
   game = new DropGame(seed, breed);
   v.reset(game);
-  overAt = -1;
+  overFrame = -1;
+  finished = false;
   steerKeys = 0;
   ui.setBest(loadBest(bestKey()), daily);
 }
@@ -269,26 +274,44 @@ function handleEvents(): void {
         v.fx.sparks(e.x, e.y, 6);
         break;
       case 'soak':
+        // the foam has the cat, and pours on down to fill the screen
         audio.stopAllPurrs();
-        audio.duckMusic(0.6, 2.5);
+        audio.duckMusic(0.6, 5);
+        sfx.fill(SOAK.end);
         break;
       case 'sploosh':
         sfx.sploosh();
         break;
-      case 'sneeze': {
-        sfx.sneeze(voice());
-        // a puff of tiny bubbles out of the nose
-        const f = v.painter.view(c);
-        const ny = f.fy + 4 * f.fs;
-        v.suds.puff(f.fx, ny, 7, 1.6, 4, 0, -50, 120);
-        v.fx.puff(f.fx, ny + 2, 4);
-        break;
-      }
       case 'over':
-        overAt = performance.now();
+        overFrame = game.frame;
         break;
     }
   }
+  // the bath at the end
+  for (const e of v.bathEvents) {
+    switch (e.t) {
+      case 'clear':
+        sfx.drain();
+        break;
+      case 'drop':
+        audio.boop(voice() * 1.15);
+        break;
+      case 'splash':
+        sfx.splash(Math.max(0, Math.min(1, (e.size - 20) / 36)), Math.min(1, e.speed / 800));
+        audio.boop(voice() * 0.85);
+        v.fx.puff(e.x, e.y - 10, 9);
+        break;
+      case 'ready':
+        finish(game.state());
+        break;
+      case 'plink':
+        sfx.plink(e.delay);
+        break;
+    }
+  }
+  v.bathEvents.length = 0;
+  // (the card shows whatever happens, a while after the run ended)
+  if (overFrame >= 0 && !finished && game.frame - overFrame > 480) finish(game.state());
 }
 
 // --- Loop --------------------------------------------------------------------------
@@ -304,47 +327,62 @@ const loop = new Loop(
     v.render(game, alpha, dt);
     const s = game.state();
     ui.update(s, game.foamY > v.camY + 30);
-    // bath time's patter and bloops, louder as it comes (quieter once it has the cat)
-    const near = game.phase === 'play' ? (game.time > 1 ? v.nearness(game) : 0) : game.phase === 'soak' ? 0.7 : game.phase === 'over' ? 0.2 : 0;
+    // bath time's patter and bloops, louder as it comes (then the bath's water lapping)
+    const inBath = v.ending === 'bath';
+    const near = game.phase === 'play' ? (game.time > 1 ? v.nearness(game) : 0) : inBath ? 0 : game.phase === 'soak' || game.phase === 'over' ? 0.6 : 0;
     sfx.bath(near, dt);
-    // purring on the perch before the run
+    sfx.lap(inBath ? 1 : 0, dt);
+    // purring on the perch before the run, and in the bath once it has settled in
     if (game.phase === 'ready' && !ui.cardShown) audio.setPurr(1, 0.5, BREEDS[game.breed].purr);
     else if (game.phase === 'ready') audio.setPurr(1, 0.35, BREEDS[game.breed].purr);
-    // game over: the card, a moment after the bath
-    if (overAt > 0 && performance.now() - overAt > 650) {
-      overAt = -1;
-      finish(s);
-    }
+    else if (v.bath?.purring) audio.setPurr(1, 0.4, BREEDS[game.breed].purr);
   },
 );
 loop.start();
 
 /**
  * While the start card is up, run the bubble simulation through a throwaway
- * bath (a few steps at a time), so the first real foam and the first catch
- * don't stutter while the browser compiles it.
+ * bath (a few steps at a time): the catch, the foam filling the screen and
+ * clearing off it, and a cat dropping into the tub, so that the first real
+ * ones don't stutter while the browser compiles them.
  */
 function warmFoam(): void {
   const g = new DropGame(4242, prefs.breed);
   const s = new Suds();
   s.reset(g);
   g.start();
+  let bath: BathScene | null = null;
   let f = 0;
+  const N = 420;
   const chunk = (): void => {
     if (game.phase !== 'ready') return;
-    for (let k = 0; k < 8 && f < 240 && g.phase !== 'over'; k++, f++) {
-      if (f === 30) g.foamY = g.catTop() - 60;
-      g.step();
-      g.events.length = 0;
-      s.step(g, g.cat.cy - 300, 860);
+    for (let k = 0; k < 8 && f < N; k++, f++) {
+      const camY = g.cat.cy - 300;
+      if (!bath) {
+        if (f === 30) g.foamY = g.catTop() - 60;
+        g.step();
+        g.events.length = 0;
+        s.step(g, camY, 860);
+        if (g.phase === 'over' && s.cover(camY, 860) >= 0.999) {
+          bath = new BathScene(g.breed, g.cat.p.radius, camY, 860, 1);
+          s.beginClear(camY, 860, bath);
+        }
+      } else {
+        bath.step();
+        for (const e of bath.events) if (e.t === 'splash') s.splashAt(e.x, e.y, e.speed, e.size);
+        bath.events.length = 0;
+        s.stepEnd(bath.top, 860);
+      }
     }
-    if (f < 240 && g.phase !== 'over') window.setTimeout(chunk, 30);
+    if (f < N) window.setTimeout(chunk, 30);
   };
   window.setTimeout(chunk, 500);
 }
 warmFoam();
 
 function finish(s: DropState): void {
+  if (finished) return;
+  finished = true;
   const key = bestKey();
   const prev = loadBest(key);
   const isBest = s.score > prev;
@@ -428,6 +466,26 @@ const handle = {
   /** Debug: chunks of the house so far (kind and world y range). */
   chunks(): { kind: string; y0: number; y1: number; storey: number }[] {
     return game.level.chunks.map((c) => ({ kind: c.kind, y0: c.y0, y1: c.y1, storey: c.storey }));
+  },
+  /**
+   * The end of the run: 'none' yet, the foam 'fill'ing the screen, or the
+   * 'bath'; how much of the screen the foam covers (0..1); whether the cat is
+   * in the bath, and whether the card is up.
+   */
+  get ending(): { stage: EndStage; cover: number; inBath: boolean; card: boolean } {
+    return { stage: v.ending, cover: v.cover, inBath: (v.bath?.splashT ?? -1) >= 0, card: finished && ui.cardShown };
+  },
+  /** Jump to the end: bath time gets the cat now, and it plays out (synchronously) until the card is up. */
+  endNow(): DropState {
+    if (game.phase === 'ready') begin();
+    for (let i = 0; i < 1200 && !finished; i++) {
+      if (game.phase === 'play') game.foamY = game.catTop() - 20;
+      v.beforeStep(game);
+      game.step();
+      v.afterStep(game);
+      handleEvents();
+    }
+    return game.state();
   },
   /** Debug: start logging cache paint task times (ms); returns the log. */
   logTasks(): { times: number[]; names: string[] } {

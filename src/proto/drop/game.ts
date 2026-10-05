@@ -54,10 +54,14 @@ export const TUNE = {
 export const CUSHION_GIVE = 0.75;
 
 /**
- * The bath, once it has the cat (seconds): the foam billows down over it
- * (sploosh), holds while the cat gets wet, settles back up, and the cat sneezes.
+ * The bath, once it has the cat (seconds): the foam swallows it (sploosh) and
+ * pours on down past it, faster and faster, until the whole house is foam;
+ * then the run is over (and the view moves on to the bath itself).
  */
-export const SOAK = { cover: 0.36, hold: 0.8, settle: 1.3, sploosh: 0.24, wet: 0.5, sneeze: 1.62, end: 2.05 };
+export const SOAK = { sploosh: 0.2, wet: 0.4, end: 1.45 };
+
+/** How the foam pours on once it has the cat: its speed at least (and at most) to start with, and how fast it gains. */
+export const POUR = { speed: 260, maxSpeed: 560, accel: 640 };
 
 export type Phase = 'ready' | 'play' | 'soak' | 'over';
 
@@ -72,11 +76,10 @@ export type GameEvent =
   | { t: 'storey'; name: string; index: number }
   | { t: 'nudge' }
   | { t: 'rescue'; x: number; y: number; why: 'stuck' | 'tangled' }
-  /** Caught: the foam is coming down over the cat. */
+  /** Caught: the foam is coming down over the cat (and on down, until the house is full of it). */
   | { t: 'soak' }
-  /** The foam swallows the cat: it comes out soaked. */
+  /** The foam swallows the cat. */
   | { t: 'sploosh'; x: number; y: number }
-  | { t: 'sneeze'; x: number; y: number }
   | { t: 'over' };
 
 export interface DropState {
@@ -129,15 +132,15 @@ export class DropGame {
   /** Seconds since the bath got the cat, and whether it is soaked yet. */
   soakT = 0;
   soaked = false;
-  /** The foam's edge when it got the cat. */
+  /** The foam's edge when it got the cat, and how fast it was coming. */
   private soakFrom = 0;
+  private pourV = 0;
   /** The size multiplier when the bath got the cat. */
   private finalMult = 0;
-  /** Frames since the last hop/bounce/nom/sneeze (for the face). */
+  /** Frames since the last hop/bounce/nom (for the face). */
   sinceHop = 999;
   sinceBoing = 999;
   sinceNom = 999;
-  sinceSneeze = 999;
   /** Storey the cat is in (for "entered the kitchen" toasts). */
   storeyIndex = 0;
   /** The squeeze zone the cat is in, if any. */
@@ -280,8 +283,10 @@ export class DropGame {
   step(): void {
     const c = this.cat;
     if (this.phase === 'over') {
-      // a soggy cat sits it out: just the scenery idles on
+      // the cat is the bath's now: the foam just pours on down (off the screen,
+      // while the view moves on), and the scenery idles on
       this.frame++;
+      if (this.soakT < 4) this.pour((this.soakT += FRAME_DT));
       this.animateFish();
       this.animateCushions();
       return;
@@ -314,7 +319,6 @@ export class DropGame {
     this.sinceHop++;
     this.sinceBoing++;
     this.sinceNom++;
-    this.sinceSneeze++;
   }
 
   /** Add the statics of newly generated chunks; drop the ones far above. */
@@ -632,7 +636,7 @@ export class DropGame {
     this.phase = 'soak';
     this.soakT = 0;
     this.soakFrom = this.foamY;
-    this.foamV = 0;
+    this.pourV = Math.max(POUR.speed, Math.min(POUR.maxSpeed, this.foamV));
     this.steerX = null;
     c.assistAx = 0;
     c.settleForce = 0;
@@ -643,24 +647,17 @@ export class DropGame {
   }
 
   /**
-   * Bath time has the cat: the foam billows down over it, holds a moment and
-   * settles back up, leaving a soaked cat. Foam is thick: the cat hangs in it,
-   * barely sinking, and every motion soon dies away. Then a little sneeze.
+   * Bath time has the cat: the foam swallows it and pours on down past it,
+   * faster and faster, until the house is full of foam. Foam is thick: the cat
+   * is held where it is (gravity cancelled, every motion soon gone).
    */
   private soakStep(): void {
     const c = this.cat;
     const t = (this.soakT += FRAME_DT);
-    // where the foam's edge goes: over the cat, then back up just above it
-    const cover = this.catBottom() + 34;
-    const rest = this.catTop() - 70;
-    if (t < SOAK.cover) this.foamY = this.soakFrom + (cover - this.soakFrom) * easeOut(t / SOAK.cover);
-    else if (t < SOAK.hold) this.foamY = cover;
-    else if (t < SOAK.settle) this.foamY = cover + (rest - cover) * easeInOut((t - SOAK.hold) / (SOAK.settle - SOAK.hold));
-    else this.foamY = rest;
+    this.pour(t);
     for (let i = 0; i < c.n; i++) {
-      c.vy[i] -= GRAVITY * FRAME_DT * 0.82;
-      c.vx[i] *= 0.86;
-      c.vy[i] *= 0.86;
+      c.vx[i] *= 0.8;
+      c.vy[i] = c.vy[i] * 0.8 - GRAVITY * FRAME_DT * 0.92;
     }
     c.wake();
     if (t >= SOAK.sploosh && t - FRAME_DT < SOAK.sploosh) {
@@ -668,16 +665,16 @@ export class DropGame {
       this.events.push({ t: 'sploosh', x: c.cx, y: c.cy });
     }
     if (!this.soaked && t >= SOAK.wet) this.soaked = true;
-    if (t >= SOAK.sneeze && t - FRAME_DT < SOAK.sneeze) {
-      c.computeCentroid();
-      c.kick(0, -70);
-      this.sinceSneeze = 0;
-      this.events.push({ t: 'sneeze', x: c.cx, y: this.catTop() });
-    }
     if (t >= SOAK.end) {
       this.phase = 'over';
       this.events.push({ t: 'over' });
     }
+  }
+
+  /** The foam's edge `t` seconds after it got the cat: pouring on down, gaining speed. */
+  private pour(t: number): void {
+    this.foamY = this.soakFrom + this.pourV * t + 0.5 * POUR.accel * t * t;
+    this.foamV = this.pourV + POUR.accel * t;
   }
 
   private animateFish(): void {
@@ -767,6 +764,3 @@ export function distToRing(b: SoftBody, px: number, py: number): number {
   const d = Math.sqrt(best) - 2.5;
   return inside ? -d : d;
 }
-
-const easeOut = (u: number): number => 1 - (1 - u) ** 3;
-const easeInOut = (u: number): number => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);

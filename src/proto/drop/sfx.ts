@@ -1,7 +1,9 @@
 // Cat Drop: a few sounds the game's AudioEngine doesn't have, synthesised on a
 // small Web Audio graph of their own: a "nom nom", a cushion's "boing", and
 // bath time: a light patter of drizzle and soft bubbly bloops that grow as the
-// foam comes closer, little pops, a sploosh when it gets the cat, and a sneeze.
+// foam comes closer, little pops, a sploosh when it gets the cat, the foam
+// swelling as it fills the screen and draining away, the splash of the cat
+// landing in the bath, water lapping in the tub, and the tap's drip.
 // Like the engine, every method is a quiet no-op until unlock() and never throws.
 
 type CtxCtor = new (o?: AudioContextOptions) => AudioContext;
@@ -11,7 +13,10 @@ export class DropSfx {
   private out: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private patterGain: GainNode | null = null;
+  private lapGain: GainNode | null = null;
+  private lapBuf: AudioBuffer | null = null;
   private bloopOwed = 0;
+  private blubOwed = 0;
   private lastPop = 0;
   private on = true;
 
@@ -40,6 +45,7 @@ export class DropSfx {
           d[i] = (s / 4294967296) * 2 - 1;
         }
         this.noise = n;
+        this.lapBuf = this.lapBuffer(ctx);
         // iOS: a silent blip inside the gesture unlocks output
         const blip = ctx.createBufferSource();
         blip.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
@@ -263,44 +269,182 @@ export class DropSfx {
     }
   }
 
-  /** A tiny cat sneeze: a little breath in, then "tchoo!" (`pitch` ~1, higher for small cats). */
-  sneeze(pitch = 1): void {
+  /** A burst of noise through a filter, enveloped (the building block of the watery sounds). */
+  private hiss(ctx: AudioContext, at: number, type: BiquadFilterType, f0: number, f1: number, q: number, peak: number, attack: number, decay: number): void {
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.Q.value = q;
+    f.frequency.setValueAtTime(f0, at);
+    f.frequency.exponentialRampToValueAtTime(f1, at + attack + decay);
+    src.connect(f);
+    f.connect(this.env(ctx, at, peak, attack, decay));
+    src.start(at, Math.random() * 0.4);
+    src.stop(at + attack + decay + 0.05);
+  }
+
+  /**
+   * The foam pours on down to fill the screen: a gushing swell that rises over
+   * `secs`, with bubbly bloops coming faster and faster.
+   */
+  fill(secs = 1.4): void {
+    try {
+      const ctx = this.live();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.02;
+      // the gush: noise opening up as it swells, wobbling like water pouring
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.Q.value = 0.9;
+      lp.frequency.setValueAtTime(500, t);
+      lp.frequency.exponentialRampToValueAtTime(3200, t + secs);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.2, t + secs * 0.9);
+      g.gain.setTargetAtTime(0.0001, t + secs, 0.18);
+      // (a wobble, as of water gushing: a tremolo on top of the swell)
+      const trem = ctx.createGain();
+      trem.gain.value = 1;
+      const wob = ctx.createOscillator();
+      wob.frequency.value = 7;
+      const wg = ctx.createGain();
+      wg.gain.value = 0.3;
+      wob.connect(wg);
+      wg.connect(trem.gain);
+      src.connect(lp);
+      lp.connect(g);
+      g.connect(trem);
+      trem.connect(this.out!);
+      src.start(t);
+      wob.start(t);
+      src.stop(t + secs + 1);
+      wob.stop(t + secs + 1);
+      // bubbles, faster and faster
+      const n = 26;
+      for (let k = 0; k < n; k++) {
+        const at = t + secs * Math.sqrt((k + Math.random() * 0.6) / n);
+        this.bloop(ctx, at, 220 + Math.random() * 520, 0.03 + 0.04 * (k / n), 0.05 + Math.random() * 0.04);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /** The foam slides away off the screen: a soft falling "shhh" and a few last bubbles. */
+  drain(): void {
     try {
       const ctx = this.live();
       if (!ctx) return;
       const t = ctx.currentTime + 0.01;
-      // "a..."
-      const a = ctx.createBufferSource();
-      a.buffer = this.noise;
-      const abp = ctx.createBiquadFilter();
-      abp.type = 'bandpass';
-      abp.Q.value = 2;
-      abp.frequency.setValueAtTime(1300 * pitch, t);
-      abp.frequency.exponentialRampToValueAtTime(2500 * pitch, t + 0.22);
-      a.connect(abp);
-      abp.connect(this.env(ctx, t, 0.07, 0.16, 0.08));
-      a.start(t, Math.random() * 0.5);
-      a.stop(t + 0.3);
-      // "...tchoo!"
-      const c = t + 0.3;
-      const n = ctx.createBufferSource();
-      n.buffer = this.noise;
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.Q.value = 1.3;
-      bp.frequency.setValueAtTime(3600 * pitch, c);
-      bp.frequency.exponentialRampToValueAtTime(1800 * pitch, c + 0.12);
-      n.connect(bp);
-      bp.connect(this.env(ctx, c, 0.34, 0.004, 0.13));
-      n.start(c, Math.random() * 0.5);
-      n.stop(c + 0.18);
+      this.hiss(ctx, t, 'lowpass', 3400, 420, 0.7, 0.14, 0.05, 0.9);
+      for (let k = 0; k < 6; k++) this.bloop(ctx, t + 0.05 + k * 0.11 + Math.random() * 0.05, 300 + Math.random() * 500, 0.035, 0.04);
+    } catch {
+      // ignore
+    }
+  }
+
+  /** The cat lands in the bath: a plunging plop, a splash of water, and bubbles (`size` 0..1 for bigger cats, `speed` 0..1). */
+  splash(size = 0.5, speed = 1): void {
+    try {
+      const ctx = this.live();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.01;
+      const v = Math.max(0.3, Math.min(1, speed));
+      // the plop: a quick drop in pitch
       const o = ctx.createOscillator();
-      o.type = 'triangle';
-      o.frequency.setValueAtTime(980 * pitch, c);
-      o.frequency.exponentialRampToValueAtTime(600 * pitch, c + 0.12);
-      o.connect(this.env(ctx, c, 0.1, 0.006, 0.12));
-      o.start(c);
-      o.stop(c + 0.16);
+      o.type = 'sine';
+      const f0 = 300 - size * 110;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.28, t + 0.2);
+      o.connect(this.env(ctx, t, 0.3 * v, 0.006, 0.24));
+      o.start(t);
+      o.stop(t + 0.3);
+      // the water: a broad splash and the spray after it
+      this.hiss(ctx, t, 'bandpass', 1500 - size * 400, 700, 0.6, 0.34 * v, 0.006, 0.42);
+      this.hiss(ctx, t + 0.04, 'highpass', 3200, 2400, 0.5, 0.12 * v, 0.02, 0.55);
+      // and the bubbles coming back up
+      for (let k = 0; k < 6; k++) this.bloop(ctx, t + 0.16 + k * 0.08 + Math.random() * 0.05, 200 + Math.random() * 380, 0.05, 0.06);
+    } catch {
+      // ignore
+    }
+  }
+
+  /** A drop from the tap landing in the bath (`delay` seconds from now). */
+  plink(delay = 0): void {
+    try {
+      const ctx = this.live();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.01 + Math.max(0, delay);
+      this.bloop(ctx, t, 1050 + Math.random() * 250, 0.05, 0.035);
+      this.bloop(ctx, t + 0.012, 520, 0.025, 0.05);
+    } catch {
+      // ignore
+    }
+  }
+
+  /** Four seconds of water lapping softly in a tub: low, slow swells of brownish noise (looping seamlessly). */
+  private lapBuffer(ctx: AudioContext): AudioBuffer {
+    const len = ctx.sampleRate * 4;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    let s = 24680;
+    let brown = 0;
+    // (the swells' envelope, worked out every 256 samples)
+    let swell = 0;
+    for (let i = 0; i < len; i++) {
+      if ((i & 255) === 0) {
+        const u = i / len;
+        const a = Math.max(0, Math.sin(u * Math.PI * 6));
+        const b = Math.max(0, Math.sin(u * Math.PI * 10 + 1));
+        swell = 0.35 + 0.65 * a * a + 0.3 * b * b * b;
+      }
+      s = (s * 1103515245 + 12345) >>> 0;
+      brown = brown * 0.97 + ((s / 4294967296) * 2 - 1) * 0.3;
+      d[i] = brown * swell;
+    }
+    return buf;
+  }
+
+  /** The lapping, looped, through a soft low-pass (silent until lap() raises it). */
+  private lapLoop(ctx: AudioContext): GainNode {
+    const buf = this.lapBuf ?? (this.lapBuf = this.lapBuffer(ctx));
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 700;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(lp);
+    lp.connect(g);
+    g.connect(this.out!);
+    src.start();
+    return g;
+  }
+
+  /** In the bath: level 0..1. Call every frame: the water laps softly, with the odd low blub. */
+  lap(level: number, dt: number): void {
+    try {
+      const ctx = this.ctx;
+      if (!ctx || ctx.state !== 'running') return;
+      const l = Math.max(0, Math.min(1, level));
+      if (!this.lapGain) {
+        if (l <= 0) return;
+        this.lapGain = this.lapLoop(ctx);
+      }
+      this.lapGain.gain.setTargetAtTime(this.on && l > 0 ? 0.32 * l : 0, ctx.currentTime, 0.4);
+      if (!this.on || l <= 0.05) return;
+      this.blubOwed += dt * 0.45 * l;
+      if (this.blubOwed >= 1) {
+        this.blubOwed = 0;
+        this.bloop(ctx, ctx.currentTime + 0.01, 150 + Math.random() * 120, 0.035 * l, 0.09);
+      }
     } catch {
       // ignore
     }
