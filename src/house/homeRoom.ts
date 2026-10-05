@@ -7,7 +7,7 @@
 import type { BreedId } from '../physics/breeds';
 import type { CatPlacement, RoomDef } from '../game/room';
 import type { GameId } from './house';
-import { CEIL_Y, HATCH } from './homeArt';
+import { CEIL_Y, HATCH, TOP_STEP } from './homeArt';
 import { NAMES } from './house';
 
 /** The room without its cats. */
@@ -17,7 +17,7 @@ const ROOM: Omit<RoomDef, 'cats'> = {
   theme: 'living',
   furniture: [
     // the cat steps up to the attic hatch
-    { type: 'shelf', x0: 286, x1: 380, y: 128 },
+    { type: 'shelf', ...TOP_STEP },
     { type: 'shelf', x0: 208, x1: 300, y: 224 },
     // the shelf with the jar of cats
     { type: 'shelf', x0: 250, x1: 380, y: 338 },
@@ -73,7 +73,8 @@ export interface Portal {
 export const PORTALS: Portal[] = [
   { game: 'fits', name: 'If It Fits', x0: 128, y0: 470, x1: 264, y1: 564, lx: 196, ly: 466 },
   { game: 'jar', name: 'Cat Jar', x0: 262, y0: 254, x1: 340, y1: 340, lx: 300, ly: 252 },
-  { game: 'drop', name: 'Cat Drop', x0: HATCH.x0 - 10, y0: CEIL_Y - 26, x1: HATCH.x1 + 10, y1: CEIL_Y + 66, lx: HATCH.x0 - 46, ly: CEIL_Y + 30 },
+  // the hatch and its ladder (a cat on the step below gets the tap first)
+  { game: 'drop', name: 'Cat Drop', x0: TOP_STEP.x0 - 4, y0: CEIL_Y - 26, x1: HATCH.x1 + 10, y1: TOP_STEP.y - 4, lx: HATCH.x0 - 46, ly: CEIL_Y + 30 },
 ];
 
 /** The game whose way in is at a world point (null if none). */

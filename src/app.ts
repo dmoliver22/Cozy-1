@@ -299,6 +299,7 @@ export class App {
     $('tray').classList.toggle('hidden', this.kind === 'sandbox' || home);
     $('sandboxTray').classList.toggle('hidden', this.kind !== 'sandbox');
     $('homeBtn').classList.toggle('hidden', home);
+    $('topbar').classList.toggle('with-home', !home);
     $('tray').classList.remove('faded');
     $('topbar').classList.remove('faded');
     this.lastFaces = '';

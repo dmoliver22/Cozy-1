@@ -11,11 +11,11 @@ import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
 import { TINT as JAR_TINT, twineAndTag } from '../proto/jar/art';
 import { CatView, drawCat } from '../render/catArt';
-import { plank } from '../render/furnitureArt';
 import { glint, hash01, lightOf, mix, rgba, roundRect, shadowOf, softShadow, type Ctx } from '../render/paint';
 import {
   K,
   caustic,
+  tube,
   cavityAt,
   cavityPath,
   glassSolid,
@@ -45,8 +45,8 @@ const BAND = 20;
 const SLAB = 11;
 /** The attic hatch: its back edge, over the top cat step. */
 export const HATCH = { x0: 300, x1: 352 };
-/** The hatch's door hangs down the wall from its back edge. */
-const DOOR_H = 30;
+/** The top cat step: a little ladder goes up from it through the hatch. */
+export const TOP_STEP = { x0: 286, x1: 380, y: 128 };
 /** Vanishing point the ceiling recedes to (the floor uses the same idea). */
 const VPX = WORLD_W / 2;
 
@@ -109,7 +109,7 @@ export function paintCeiling(ctx: Ctx, r: { x0: number; y0: number; x1: number; 
   hatchHole(ctx, front);
   // crown moulding where the wall meets the ceiling (the hatch cuts through it)
   moulding(ctx, x0, x1, theme.trim, seed);
-  hatchDoor(ctx, seed);
+  hatchLadder(ctx, seed);
   ctx.restore();
 }
 
@@ -196,62 +196,73 @@ function moulding(ctx: Ctx, x0: number, x1: number, trim: string, seed: number):
   }
 }
 
-/** The hatch's door, swung down against the wall, with a ring pull and a cord. */
-function hatchDoor(ctx: Ctx, seed: number): void {
-  const x = HATCH.x0 + 3;
-  const w = HATCH.x1 - HATCH.x0 - 6;
-  const y = CEIL_Y + 1;
-  const wood = '#C99A6E';
+/** A little wooden ladder from the top cat step up through the hatch, hooked over its edge. */
+function hatchLadder(ctx: Ctx, seed: number): void {
+  const wood = '#C99A6C';
+  const W = 3.8;
+  const span = 21;
+  const top = { x: HATCH.x0 + 9, y: CEIL_Y - BAND + 4 };
+  const foot = { x: TOP_STEP.x0 + 9, y: TOP_STEP.y };
+  const rail = (off: number): void => {
+    ctx.moveTo(top.x + off - W / 2, top.y);
+    ctx.lineTo(top.x + off + W / 2, top.y);
+    ctx.lineTo(foot.x + off + W / 2, foot.y);
+    ctx.lineTo(foot.x + off - W / 2, foot.y);
+    ctx.closePath();
+  };
+  // its shadow on the wall (none on the ceiling: it goes up through the hole)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(foot.x - 20, CEIL_Y + 2, span + 60, foot.y - CEIL_Y);
+  ctx.clip();
   castShadow(ctx, () => {
     ctx.beginPath();
-    ctx.rect(x, y, w, DOOR_H);
-  }, 2.5, 4, 4, 0.3);
-  // warm light from the attic spills onto the door and the wall below it
-  const spill = ctx.createRadialGradient(x + w / 2, y, 4, x + w / 2, y + 30, 70);
-  spill.addColorStop(0, rgba('#FFD9A0', 0.32));
-  spill.addColorStop(1, rgba('#FFD9A0', 0));
-  ctx.fillStyle = spill;
-  ctx.fillRect(x - 60, y, w + 120, 100);
-  plank(ctx, x, y, w, DOOR_H, wood, seed + 5, 2.5, 0, 0.5);
-  // tongue-and-groove boards, and the hinges along the top
-  ctx.fillStyle = rgba(shadowOf(wood, 0.6), 0.45);
-  for (let k = 1; k < 4; k++) ctx.fillRect(x + (w * k) / 4 - 0.4, y + 2, 0.9, DOOR_H - 4);
-  ctx.fillStyle = rgba(lightOf(wood, 0.6), 0.4);
-  for (let k = 1; k < 4; k++) ctx.fillRect(x + (w * k) / 4 + 0.6, y + 2, 0.7, DOOR_H - 4);
-  for (const hx of [x + 7, x + w - 13]) {
-    roundRect(ctx, hx, y + 1.5, 6, 3.4, 1);
-    ctx.fillStyle = '#7C6E6A';
-    ctx.fill();
+    rail(0);
+    rail(span);
+  }, 4, 6, 3, 0.22);
+  ctx.restore();
+  // rungs: round dowels between the rails
+  const n = 7;
+  for (let k = 1; k < n; k++) {
+    const t = k / n;
+    const x = top.x + (foot.x - top.x) * t;
+    const y = top.y + (foot.y - top.y) * t;
+    tube(ctx, () => {
+      ctx.beginPath();
+      ctx.moveTo(x + 1, y);
+      ctx.lineTo(x + span - 1, y);
+    }, 2.6, wood, { spec: 0.35 });
   }
-  // the ring pull and a cord with a wooden bead, to reach up and pull it down
-  const rx = x + w / 2;
-  const ry = y + DOOR_H - 5;
-  ctx.strokeStyle = '#B8935A';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.arc(rx, ry + 2.6, 2.8, 0, TAU);
-  ctx.stroke();
-  ctx.strokeStyle = '#EED7A4';
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.arc(rx, ry + 2.6, 2.8, Math.PI * 1.1, Math.PI * 1.6);
-  ctx.stroke();
-  ctx.strokeStyle = '#8C7B6C';
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(rx, ry + 5.4);
-  ctx.quadraticCurveTo(rx + 1.5, ry + 16, rx + 0.6, ry + 26);
-  ctx.stroke();
-  const by = ry + 29;
-  softShadow(ctx, rx + 2, by + 2, 3, 2, 0.18);
-  ctx.fillStyle = '#B07C52';
-  ctx.beginPath();
-  ctx.ellipse(rx + 0.6, by, 2.7, 3.3, 0, 0, TAU);
-  ctx.fill();
-  ctx.fillStyle = rgba('#F3D2A4', 0.8);
-  ctx.beginPath();
-  ctx.ellipse(rx - 0.4, by - 1.2, 0.9, 1.2, -0.4, 0, TAU);
-  ctx.fill();
+  // the rails: sawn boards, lit on the window side
+  for (const off of [0, span]) {
+    const path = (): void => {
+      ctx.beginPath();
+      rail(off);
+    };
+    ctx.fillStyle = wood;
+    path();
+    ctx.fill();
+    paintTex(ctx, path, 'wood', 0.4, 0.25, 0.4, seed + off * 3, top.y);
+    ctx.strokeStyle = rgba(lightOf(wood, 0.7), 0.8);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(top.x + off - W / 2 + 0.7, top.y + 2);
+    ctx.lineTo(foot.x + off - W / 2 + 0.7, foot.y - 1);
+    ctx.stroke();
+    inkLine(ctx, path, wood, 0.9, 0.7);
+    // a little foot on the step
+    softShadow(ctx, foot.x + off + 1, foot.y, 4, 1.4, 0.25);
+  }
+  // iron hooks over the hatch's edge
+  ctx.strokeStyle = '#5E5468';
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = 'round';
+  for (const off of [0, span]) {
+    ctx.beginPath();
+    ctx.moveTo(top.x + off, top.y + 3);
+    ctx.quadraticCurveTo(top.x + off - 1, top.y - 3, top.x + off - 4, top.y - 1);
+    ctx.stroke();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,13 @@ boots, boxes and sinks until every cat fits and sits. A new room every morning.
 
 > Cats are liquid. Prove it: pour this chonk into a teacup.
 
+It lives in a little house with two more games on the same cats: the page
+opens in the **home room**, a sunny living room where your cats lounge, and
+everything starts from there. The glass box on the rug is **If It Fits**, the
+little jar of cats on the shelf is **Cat Jar**, and the ladder up through the
+attic hatch is **Cat Drop**. Two cats live here at first; the other five
+**move in as you play**, each waiting on something in one of the games.
+
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
 portal as a single HTML file.
@@ -15,6 +22,24 @@ portal as a single HTML file.
 npm install
 npm run dev          # http://localhost:5173
 ```
+
+At home, tap the box, the jar or the hatch (or the big buttons along the
+bottom) to play. Your cats can be picked up and booped here too, and now and
+then one hops over to another spot. Tap the faces in the top bar for the cats
+card: who lives here, and what brings each of the others home. A cat who's
+earned their place says so at once, mid-game too, and drops in through the
+attic hatch the next time you're home.
+
+| Cat | Moves in when you... |
+| --- | --- |
+| Pip (kitten), Mochi (tabby) | live here from the start |
+| Duchess (Persian) | finish a room in If It Fits |
+| Juniper (Maine Coon) | make a Maine Coon in Cat Jar |
+| Noodle (sphynx) | drop 100 m down the house in Cat Drop |
+| Biscuit (chonk) | eat 25 fish in one Cat Drop |
+| Inkwell (the Void) | finish the Midnight Study in If It Fits (she lives there) |
+
+In If It Fits:
 
 - **Drag** a cat to pick it up and carry it. Every cat can be lifted; heavier
   cats lag behind your finger and stretch on the way.
@@ -28,7 +53,8 @@ npm run dev          # http://localhost:5173
   builds (**Fits & sits**), then you can share a spoiler-free grid of cat faces.
 
 Handy URLs while developing: `?room=1|2|3` (hand-made rooms), `?daily=2026-10-05`
-(any morning), `?sandbox` (the photo room).
+(any morning), `?sandbox` (the photo room), `?game=fits|jar|drop` (home, then
+straight into a game).
 
 ## What's in the box
 
@@ -43,6 +69,7 @@ Handy URLs while developing: `?room=1|2|3` (hand-made rooms), `?daily=2026-10-05
 | Fits & sits reveal: camera pan, purrs swell, cat-face row turns gold | `src/app.ts`, `src/render/renderer.ts` |
 | Spoiler-free share grid | `src/game/share.ts` |
 | Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
+| The house: the home room, its ways into the games, cats moving in | `src/house/` |
 | 6 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |
@@ -108,10 +135,12 @@ is generated and solved in a Web Worker on the player's device and cached.
 Changing the generator bumps `GENERATOR_VERSION`; re-run the precompute (a test
 checks the index still matches).
 
-## Prototypes: Cat Jar and Cat Drop
+## Cat Jar and Cat Drop
 
-Two quick game prototypes built on the same cats, physics and paint, each its
-own page (the game above is untouched):
+Two more games built on the same cats, physics and paint. In the house they're
+mounted over the page (`mountJar`, `mountDrop`: the page's stylesheet steps
+aside while one is up, and they share its sound and settings, a way home and
+run reports); each also still has a page of its own:
 
 - **Cat Jar** (`jar.html`, `src/proto/jar/`): drag sideways to aim, let go
   to drop cats into a tall glass jar. The next cat hangs a set height over the
@@ -138,20 +167,21 @@ own page (the game above is untouched):
   your stats. Six breeds, plus a daily drop.
 
 They share `src/proto/kit.ts` (canvas, fixed-step loop with interpolation,
-tap/drag input, a cat painter) and run on the dev server at `/jar.html` and
+tap/drag input, a cat painter) and `src/proto/shell.ts` (how a game sits in
+the house), and run on their own on the dev server at `/jar.html` and
 `/drop.html`. `npm run build:protos` makes one self-contained HTML file per
-prototype in `dist-proto/`.
+game in `dist-proto/`.
 
 ## Scripts
 
 ```bash
 npm run dev           # dev server
-npm test              # unit tests (physics, scoring, solver, generator, saves)
+npm test              # unit tests (physics, scoring, solver, generator, saves, the house)
 npm run e2e           # Playwright smoke tests (builds + previews first)
 npm run typecheck
 npm run build         # static site in dist/
-npm run build:single  # one self-contained HTML file in dist-single/ (portals, itch.io)
-npm run build:protos  # the two prototypes, one HTML file each, in dist-proto/
+npm run build:single  # the whole house in one self-contained HTML file in dist-single/
+npm run build:protos  # Cat Jar and Cat Drop on their own, one HTML file each, in dist-proto/
 npm run precompute    # re-solve the next 200 mornings into src/game/daily-index.json
 ```
 

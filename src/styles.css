@@ -141,15 +141,25 @@ button:focus-visible {
 .round-btn:active {
   background: var(--line);
 }
-/* in If It Fits the way home sits right beside the menu */
+/* in If It Fits the way home sits right beside the menu, and the rest budges up */
 #homeBtn {
   width: 36px;
   flex-basis: 36px;
 }
-#homeBtn:not(.hidden) + #menuBtn {
+#topbar.with-home {
+  gap: 5px;
+}
+#topbar.with-home #menuBtn {
   width: 36px;
   flex-basis: 36px;
-  margin-left: -6px;
+  margin-left: -4px;
+}
+#topbar.with-home .face {
+  width: 24px;
+  height: 24px;
+}
+#topbar.with-home #roomName {
+  font-size: 17px;
 }
 .title {
   flex: 1 1 auto;

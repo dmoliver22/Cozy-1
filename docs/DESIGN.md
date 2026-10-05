@@ -170,3 +170,44 @@ are what they are:
 - **Breeds** differ through physics numbers (`TIERS` in `config.ts`) plus two
   behaviours in `game.ts`: kittens hop and scoot to a twin; a chonk pops small
   cats up when it arrives or lands. The Little Void is a wildcard drop.
+
+## The house
+
+One page, three games, and a home room in between (`src/house/`). Notes on
+the choices:
+
+- **The home is an If It Fits room.** It's a `RoomDef` like any other, run in
+  sandbox mode (no paws, no "fits & sits"), so the cats are the same soft
+  bodies you can pick up, boop and pour into the box or the basket. Two
+  pieces of art are its own, painted into the renderer's cached back layer
+  through `paintExtra`: the ceiling with the attic hatch and its ladder, and
+  the little jar of cats (the big jar's glass, twine and tag, with a heap of
+  real soft-body cats settled inside once and drawn small).
+- **The ways in are things in the room**: the glass box (If It Fits: if it
+  fits, I sits), the jar of cats (Cat Jar) and the ladder up to the attic
+  (Cat Drop starts in the attic). Each has a label, a tap on the thing works
+  (a cat under the finger gets the tap first), and the bar of three tins along
+  the bottom says the same thing plainly, with the face of the next cat you
+  can meet in that game peeking over its lid.
+- **Mounting.** Cat Jar and Cat Drop mount over the page and unmount again
+  (`src/proto/shell.ts`). Their stylesheets and the page's share names (`.card`,
+  `.btn`, `body`), so the page's stylesheet is attached from JS (`?inline`) and
+  steps aside while a game is up; a tiny inline style keeps the page hidden
+  until it arrives. They share the page's AudioEngine and settings, so music
+  carries on from room to game.
+- **Cats move in as you play.** Five milestones, one early one in each game
+  and two that take a little more, measured with bots rather than guessed: a
+  Cat Drop bot steering for the openings falls 400-1,400 m and eats 17-62 fish
+  in a run (so "drop 100 m" and "eat 25 fish" are a first run and a good
+  run); in Cat Jar even random drops make a Maine Coon within 20 drops and the
+  Void within 40, so the Void isn't the last milestone: Inkwell, who lives in
+  the Midnight Study, follows you home when you finish that room. The games
+  report how a run is *going* (each 10 m and each fish; each new biggest cat),
+  not just how it went, so a cat announces itself the moment it's earned, in a
+  toast that shows over any game. A new house counts progress made before it
+  existed.
+- **Arrivals.** An earned cat waits until you're home, then drops in through
+  the attic hatch onto the top cat step, with a card. Residents start in their
+  favourite spots; every so often one who's been resting hops (a ballistic
+  kick) to a free perch nearby, sometimes into the box or the basket, where it
+  purrs.
