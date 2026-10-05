@@ -1,9 +1,11 @@
 // Cat Drop: a few sounds the game's AudioEngine doesn't have, synthesised on a
 // small Web Audio graph of their own: a "nom nom", a cushion's "boing", and
-// bath time: a light patter of drizzle and soft bubbly bloops that grow as the
-// foam comes closer, little pops, a sploosh when it gets the cat, the foam
-// swelling as it fills the screen and draining away, the splash of the cat
-// landing in the bath, water lapping in the tub, and the tap's drip.
+// bath time: drizzle drops plinking and soft bubbly bloops that grow as the
+// foam comes closer, little pops, a whump when it gets the cat, a bubbly swell
+// as it fills the screen, glugs as it drains away, the splash of the cat
+// landing in the bath, the odd blub in the tub, and the tap's drip.
+// Bath time is tonal on purpose: loops and bursts of noise (a drizzle patter,
+// pop clicks, a gushing rush, water lapping) all read as static on a phone.
 // Like the engine, every method is a quiet no-op until unlock() and never throws.
 
 type CtxCtor = new (o?: AudioContextOptions) => AudioContext;
@@ -12,9 +14,7 @@ export class DropSfx {
   private ctx: AudioContext | null = null;
   private out: GainNode | null = null;
   private noise: AudioBuffer | null = null;
-  private patterGain: GainNode | null = null;
-  private lapGain: GainNode | null = null;
-  private lapBuf: AudioBuffer | null = null;
+  private dropOwed = 0;
   private bloopOwed = 0;
   private blubOwed = 0;
   private lastPop = 0;
@@ -45,7 +45,6 @@ export class DropSfx {
           d[i] = (s / 4294967296) * 2 - 1;
         }
         this.noise = n;
-        this.lapBuf = this.lapBuffer(ctx);
         // iOS: a silent blip inside the gesture unlocks output
         const blip = ctx.createBufferSource();
         blip.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
@@ -156,61 +155,42 @@ export class DropSfx {
     o.stop(at + len + 0.08);
   }
 
-  /** A loop of light drizzle: sparse soft ticks of filtered noise. */
-  private patterLoop(ctx: AudioContext): GainNode {
-    const len = ctx.sampleRate * 2;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    let s = 987654;
-    const rnd = (): number => {
-      s = (s * 1103515245 + 12345) >>> 0;
-      return s / 4294967296;
-    };
-    const ticks = 150;
-    for (let k = 0; k < ticks; k++) {
-      const at = Math.floor(rnd() * len);
-      const amp = 0.25 + rnd() * 0.75;
-      const dur = Math.floor(ctx.sampleRate * (0.002 + rnd() * 0.006));
-      for (let i = 0; i < dur && at + i < len; i++) d[at + i] += (rnd() * 2 - 1) * amp * Math.exp(-i / (dur * 0.3));
-    }
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 1400;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 6500;
-    const g = ctx.createGain();
-    g.gain.value = 0;
-    src.connect(hp);
-    hp.connect(lp);
-    lp.connect(g);
-    g.connect(this.out!);
-    src.start();
-    return g;
+  /** One drizzle drop landing: a tiny "plip" that bends upward, like a drop hitting water. */
+  private droplet(ctx: AudioContext, at: number, gain: number): void {
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    const f = 1300 + Math.random() * 1100;
+    o.frequency.setValueAtTime(f, at);
+    o.frequency.exponentialRampToValueAtTime(f * 1.5, at + 0.03);
+    o.connect(this.env(ctx, at, gain, 0.002, 0.045));
+    o.start(at);
+    o.stop(at + 0.07);
   }
 
   /**
    * Bath time nearby: level 0..1 (far off .. right over the cat). Call every
-   * frame: the drizzle's patter swells and soft bloops come more often.
+   * frame: drizzle drops plink now and then and soft bloops come, both more
+   * often as it closes in.
    */
   bath(level: number, dt: number): void {
     try {
       const ctx = this.ctx;
-      if (!ctx || ctx.state !== 'running') return;
+      if (!ctx || ctx.state !== 'running' || !this.on) return;
       const l = Math.max(0, Math.min(1, level));
-      if (!this.patterGain) {
-        if (l <= 0) return;
-        this.patterGain = this.patterLoop(ctx);
+      if (l <= 0.05) {
+        this.dropOwed = 0;
+        this.bloopOwed = 0;
+        return;
       }
-      this.patterGain.gain.setTargetAtTime(this.on && l > 0 ? 0.04 + l * l * 0.2 : 0, ctx.currentTime, 0.25);
-      if (!this.on || l <= 0.05) return;
-      this.bloopOwed += dt * (0.4 + 3.2 * l);
+      this.dropOwed += dt * (0.8 + 4.5 * l);
+      if (this.dropOwed >= 1) {
+        this.dropOwed = 0;
+        this.droplet(ctx, ctx.currentTime + 0.01 + Math.random() * 0.04, 0.014 + l * 0.02);
+      }
+      this.bloopOwed += dt * (0.4 + 2.6 * l);
       if (this.bloopOwed >= 1) {
         this.bloopOwed = 0;
-        this.bloop(ctx, ctx.currentTime + 0.01 + Math.random() * 0.05, 240 + Math.random() * 300, 0.03 + l * 0.05);
+        this.bloop(ctx, ctx.currentTime + 0.01 + Math.random() * 0.05, 240 + Math.random() * 300, 0.03 + l * 0.04);
       }
     } catch {
       // ignore
@@ -221,41 +201,22 @@ export class DropSfx {
   pop(): void {
     try {
       const ctx = this.live();
-      if (!ctx || ctx.currentTime - this.lastPop < 0.08) return;
+      if (!ctx || ctx.currentTime - this.lastPop < 0.09) return;
       this.lastPop = ctx.currentTime;
       const t = ctx.currentTime + 0.005;
-      this.bloop(ctx, t, 700 + Math.random() * 500, 0.045, 0.025);
-      const src = ctx.createBufferSource();
-      src.buffer = this.noise;
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 3000;
-      src.connect(hp);
-      hp.connect(this.env(ctx, t, 0.05, 0.002, 0.02));
-      src.start(t, Math.random() * 0.5);
-      src.stop(t + 0.03);
+      // just the "plip" (a click of noise on every pop added up to static)
+      this.bloop(ctx, t, 700 + Math.random() * 500, 0.04, 0.03);
     } catch {
       // ignore
     }
   }
 
-  /** The foam swallows the cat: a soft whoosh, a low blub, and a flurry of bubbles. */
+  /** The foam swallows the cat: a soft low whump and a flurry of bubbles. */
   sploosh(): void {
     try {
       const ctx = this.live();
       if (!ctx) return;
       const t = ctx.currentTime + 0.01;
-      const src = ctx.createBufferSource();
-      src.buffer = this.noise;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.Q.value = 0.8;
-      lp.frequency.setValueAtTime(4200, t);
-      lp.frequency.exponentialRampToValueAtTime(420, t + 0.5);
-      src.connect(lp);
-      lp.connect(this.env(ctx, t, 0.32, 0.04, 0.6));
-      src.start(t);
-      src.stop(t + 0.7);
       const o = ctx.createOscillator();
       o.type = 'sine';
       o.frequency.setValueAtTime(190, t + 0.04);
@@ -286,63 +247,69 @@ export class DropSfx {
   }
 
   /**
-   * The foam pours on down to fill the screen: a gushing swell that rises over
-   * `secs`, with bubbly bloops coming faster and faster.
+   * The foam pours on down to fill the screen: a soft, warm swell rising over
+   * `secs` with bubbly bloops coming faster and faster.
    */
   fill(secs = 1.4): void {
     try {
       const ctx = this.live();
       if (!ctx) return;
       const t = ctx.currentTime + 0.02;
-      // the gush: noise opening up as it swells, wobbling like water pouring
-      const src = ctx.createBufferSource();
-      src.buffer = this.noise;
-      src.loop = true;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.Q.value = 0.9;
-      lp.frequency.setValueAtTime(500, t);
-      lp.frequency.exponentialRampToValueAtTime(3200, t + secs);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.2, t + secs * 0.9);
-      g.gain.setTargetAtTime(0.0001, t + secs, 0.18);
-      // (a wobble, as of water gushing: a tremolo on top of the swell)
-      const trem = ctx.createGain();
-      trem.gain.value = 1;
-      const wob = ctx.createOscillator();
-      wob.frequency.value = 7;
-      const wg = ctx.createGain();
-      wg.gain.value = 0.3;
-      wob.connect(wg);
-      wg.connect(trem.gain);
-      src.connect(lp);
-      lp.connect(g);
-      g.connect(trem);
-      trem.connect(this.out!);
-      src.start(t);
-      wob.start(t);
-      src.stop(t + secs + 1);
-      wob.stop(t + secs + 1);
+      // the swell: two soft sines a fifth apart, rising a little, gently wobbling
+      for (const [f, peak] of [
+        [131, 0.05],
+        [196, 0.03],
+      ] as const) {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f, t);
+        o.frequency.exponentialRampToValueAtTime(f * 1.26, t + secs);
+        const wob = ctx.createOscillator();
+        wob.frequency.value = 5;
+        const wg = ctx.createGain();
+        wg.gain.value = f * 0.012;
+        wob.connect(wg);
+        wg.connect(o.frequency);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(peak, t + secs * 0.85);
+        g.gain.setTargetAtTime(0.0001, t + secs, 0.22);
+        o.connect(g);
+        g.connect(this.out!);
+        o.start(t);
+        wob.start(t);
+        o.stop(t + secs + 1.2);
+        wob.stop(t + secs + 1.2);
+      }
       // bubbles, faster and faster
-      const n = 26;
+      const n = 22;
       for (let k = 0; k < n; k++) {
         const at = t + secs * Math.sqrt((k + Math.random() * 0.6) / n);
-        this.bloop(ctx, at, 220 + Math.random() * 520, 0.03 + 0.04 * (k / n), 0.05 + Math.random() * 0.04);
+        this.bloop(ctx, at, 220 + Math.random() * 520, 0.03 + 0.035 * (k / n), 0.05 + Math.random() * 0.04);
       }
     } catch {
       // ignore
     }
   }
 
-  /** The foam slides away off the screen: a soft falling "shhh" and a few last bubbles. */
+  /** The foam slides away off the screen: a few soft glugs and the last bubbles. */
   drain(): void {
     try {
       const ctx = this.live();
       if (!ctx) return;
       const t = ctx.currentTime + 0.01;
-      this.hiss(ctx, t, 'lowpass', 3400, 420, 0.7, 0.14, 0.05, 0.9);
-      for (let k = 0; k < 6; k++) this.bloop(ctx, t + 0.05 + k * 0.11 + Math.random() * 0.05, 300 + Math.random() * 500, 0.035, 0.04);
+      for (let k = 0; k < 3; k++) {
+        const at = t + k * 0.17;
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        const f0 = 230 - k * 30;
+        o.frequency.setValueAtTime(f0, at);
+        o.frequency.exponentialRampToValueAtTime(f0 * 0.55, at + 0.12);
+        o.connect(this.env(ctx, at, 0.09, 0.01, 0.14));
+        o.start(at);
+        o.stop(at + 0.18);
+      }
+      for (let k = 0; k < 6; k++) this.bloop(ctx, t + 0.05 + k * 0.11 + Math.random() * 0.05, 300 + Math.random() * 500, 0.03, 0.04);
     } catch {
       // ignore
     }
@@ -364,9 +331,8 @@ export class DropSfx {
       o.connect(this.env(ctx, t, 0.3 * v, 0.006, 0.24));
       o.start(t);
       o.stop(t + 0.3);
-      // the water: a broad splash and the spray after it
-      this.hiss(ctx, t, 'bandpass', 1500 - size * 400, 700, 0.6, 0.34 * v, 0.006, 0.42);
-      this.hiss(ctx, t + 0.04, 'highpass', 3200, 2400, 0.5, 0.12 * v, 0.02, 0.55);
+      // the water: one short, soft splash (no hissing spray after it)
+      this.hiss(ctx, t, 'bandpass', 1100 - size * 300, 520, 0.8, 0.13 * v, 0.006, 0.26);
       // and the bubbles coming back up
       for (let k = 0; k < 6; k++) this.bloop(ctx, t + 0.16 + k * 0.08 + Math.random() * 0.05, 200 + Math.random() * 380, 0.05, 0.06);
     } catch {
@@ -387,66 +353,24 @@ export class DropSfx {
     }
   }
 
-  /** Four seconds of water lapping softly in a tub: low, slow swells of brownish noise (looping seamlessly). */
-  private lapBuffer(ctx: AudioContext): AudioBuffer {
-    const len = ctx.sampleRate * 4;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    let s = 24680;
-    let brown = 0;
-    // (the swells' envelope, worked out every 256 samples)
-    let swell = 0;
-    for (let i = 0; i < len; i++) {
-      if ((i & 255) === 0) {
-        const u = i / len;
-        const a = Math.max(0, Math.sin(u * Math.PI * 6));
-        const b = Math.max(0, Math.sin(u * Math.PI * 10 + 1));
-        swell = 0.35 + 0.65 * a * a + 0.3 * b * b * b;
-      }
-      s = (s * 1103515245 + 12345) >>> 0;
-      brown = brown * 0.97 + ((s / 4294967296) * 2 - 1) * 0.3;
-      d[i] = brown * swell;
-    }
-    return buf;
-  }
-
-  /** The lapping, looped, through a soft low-pass (silent until lap() raises it). */
-  private lapLoop(ctx: AudioContext): GainNode {
-    const buf = this.lapBuf ?? (this.lapBuf = this.lapBuffer(ctx));
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 700;
-    const g = ctx.createGain();
-    g.gain.value = 0;
-    src.connect(lp);
-    lp.connect(g);
-    g.connect(this.out!);
-    src.start();
-    return g;
-  }
-
-  /** In the bath: level 0..1. Call every frame: the water laps softly, with the odd low blub. */
+  /** In the bath: level 0..1. Call every frame: the odd low blub in the tub (no lapping loop: it hissed). */
   lap(level: number, dt: number): void {
     try {
       const ctx = this.ctx;
-      if (!ctx || ctx.state !== 'running') return;
+      if (!ctx || ctx.state !== 'running' || !this.on) return;
       const l = Math.max(0, Math.min(1, level));
-      if (!this.lapGain) {
-        if (l <= 0) return;
-        this.lapGain = this.lapLoop(ctx);
+      if (l <= 0.05) {
+        this.blubOwed = 0;
+        return;
       }
-      this.lapGain.gain.setTargetAtTime(this.on && l > 0 ? 0.32 * l : 0, ctx.currentTime, 0.4);
-      if (!this.on || l <= 0.05) return;
-      this.blubOwed += dt * 0.45 * l;
+      this.blubOwed += dt * 0.4 * l;
       if (this.blubOwed >= 1) {
         this.blubOwed = 0;
-        this.bloop(ctx, ctx.currentTime + 0.01, 150 + Math.random() * 120, 0.035 * l, 0.09);
+        this.bloop(ctx, ctx.currentTime + 0.01, 150 + Math.random() * 120, 0.03 * l, 0.09);
       }
     } catch {
       // ignore
     }
   }
+
 }

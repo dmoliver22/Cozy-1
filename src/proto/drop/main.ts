@@ -329,7 +329,8 @@ const loop = new Loop(
     ui.update(s, game.foamY > v.camY + 30);
     // bath time's patter and bloops, louder as it comes (then the bath's water lapping)
     const inBath = v.ending === 'bath';
-    const near = game.phase === 'play' ? (game.time > 1 ? v.nearness(game) : 0) : inBath ? 0 : game.phase === 'soak' || game.phase === 'over' ? 0.6 : 0;
+    // (only while the chase is on: after the catch the fill, drain and bath have their own sounds)
+    const near = game.phase === 'play' && game.time > 1 ? v.nearness(game) : 0;
     sfx.bath(near, dt);
     sfx.lap(inBath ? 1 : 0, dt);
     // purring on the perch before the run, and in the bath once it has settled in
