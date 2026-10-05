@@ -49,6 +49,13 @@ interface CatSprite {
 }
 
 const shift = { x: 0, y: 0 };
+/**
+ * How far (world units) a cat's shape may drift before its picture is
+ * repainted: a cat jiggling in a busy pile would otherwise be repainted
+ * every frame or two, and painting cats is most of a frame's cost.
+ */
+const RESHAPE_TOL = 1.2;
+const cull = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
 /**
  * How much a cat changed shape since its picture was painted: the largest
@@ -328,7 +335,16 @@ export class JarView {
         this.snuggling.add(s.a);
         this.snuggling.add(s.b);
       }
-      if (!this.skip.has('cats')) for (const c of game.cats) this.drawCat(ctx, game, c);
+      if (!this.skip.has('cats')) {
+        // only the cats on screen (the rest of a tall pile costs nothing)
+        const y0 = (-this.oy) / this.scale - 40;
+        const y1 = (this.stage.h - this.oy) / this.scale + 40;
+        for (const c of game.cats) {
+          c.body.bounds(cull);
+          if (cull.maxY + c.body.p.radius * 0.9 < y0 || cull.minY - c.body.p.radius * 0.9 > y1) continue;
+          this.drawCat(ctx, game, c);
+        }
+      }
       this.drawSnuggles(ctx, snug);
       for (const c of this.sprites.keys()) if (c.removed) this.sprites.delete(c);
       for (const c of this.looks.keys()) if (c.removed) this.looks.delete(c);
@@ -479,8 +495,8 @@ export class JarView {
       return;
     }
     // A cat that isn't going anywhere is painted once into a picture and
-    // stamped until it moves (half a unit), blinks or changes its face: a
-    // settled pile costs almost nothing. Quick cats are painted live.
+    // stamped until its shape drifts (RESHAPE_TOL), it blinks or its face
+    // changes: a settled pile costs almost nothing. Quick cats are painted live.
     const v = this.painter.view(b);
     const blink = (expression === 'open' || expression === 'content') && v.blinking();
     const key = `${expression}|${look}|${resting ? 1 : 0}|${blink ? 1 : 0}|${this.layerKey}`;
@@ -490,7 +506,7 @@ export class JarView {
     let sp = this.sprites.get(c);
     let dx = 0;
     let dy = 0;
-    if (sp && sp.key === key && sp.n === b.n && (sp.q === 1 || !calm) && reshaped(sp.ref, b) <= 0.6) {
+    if (sp && sp.key === key && sp.n === b.n && (sp.q === 1 || !calm) && reshaped(sp.ref, b) <= RESHAPE_TOL) {
       // same shape, maybe moved (or the camera did): stamp it there, on whole device pixels
       const k = this.scale * this.stage.dpr;
       dx = Math.round(shift.x * k);

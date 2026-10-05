@@ -57,9 +57,8 @@ export interface JarCat {
   grow: { from: number; to: number; t0: number; frames: number } | null;
   /** Can't melt again before this frame (lets the pop register). */
   lockUntil: number;
-  /** In the air from a drop, or a hop or a boop (for the landing thump and the face), since this frame. */
+  /** In the air from a drop, a hop or a boop (for the landing thump and the face), since this frame. */
   falling: boolean;
-  fallKind: 'drop' | 'air';
   fallFrom: number;
   prevVy: number;
   /** It was off the ground last frame (a hop's landing is a touch-down, not a thump). */
@@ -333,7 +332,6 @@ export class JarGame {
       grow: null,
       lockUntil: 0,
       falling: dropped,
-      fallKind: 'drop',
       fallFrom: this.frame,
       prevVy: 0,
       wasAir: false,
@@ -506,14 +504,14 @@ export class JarGame {
     // landing: a sharp stop while falling
     if (cat.falling) {
       const vy = b.vcy;
-      // a sharp stop (a drop's thump), or touching down after a hop or a boop
+      // a sharp stop, or touching down after a while in the air (a soft landing)
       const thump = cat.prevVy > 140 && cat.prevVy - vy > 110;
-      const down = cat.fallKind === 'air' && cat.wasAir && airborne(b) === 0;
+      const down = cat.wasAir && airborne(b) === 0;
       if (this.frame - cat.fallFrom > 3 && (thump || down)) {
         cat.falling = false;
         cat.landedAt = this.frame;
         // the glass reports its own clink; this is the soft thump on a cat
-        if (thump && b.impactShape === -1) this.events.push({ t: 'land', cat, speed: cat.prevVy });
+        if (cat.prevVy > 140 && b.impactShape === -1) this.events.push({ t: 'land', cat, speed: cat.prevVy });
         // a chonk landing on small cats pops them up
         if (TIERS[cat.tier].breed === 'chonk' && cat.prevVy > 200) this.chonkPop(cat);
       } else if (this.frame - cat.fallFrom > 240) cat.falling = false;
@@ -541,7 +539,6 @@ export class JarGame {
   /** The cat leaves the ground (a boop, a hop): watch for its landing. */
   private takeOff(cat: JarCat): void {
     cat.falling = true;
-    cat.fallKind = 'air';
     cat.fallFrom = this.frame;
     cat.prevVy = 0;
     cat.wasAir = false;
