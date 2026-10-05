@@ -1,5 +1,6 @@
-// App controller: rooms, input, HUD, the "Fits & sits" reveal, results,
-// menu, collection, sandbox and saving.
+// App controller: the house's home room and If It Fits (rooms, input, HUD,
+// the "Fits & sits" reveal, results, menu, collection, sandbox, saving), and
+// Cat Jar and Cat Drop, mounted over the page while they're played.
 
 import { AudioEngine } from './audio/audio';
 import { getDailyRoom } from './game/daily';
@@ -11,6 +12,13 @@ import { gesturesFor, runGesture } from './game/solver';
 import { shareOrCopy, shareText } from './game/share';
 import { BASE_BREEDS, BREED_ORDER, BREEDS, type BreedId } from './physics/breeds';
 import { FRAME_DT } from './physics/world';
+import { Home } from './house/home';
+import type { GameId } from './house/house';
+import { pageStyles } from './pageStyles';
+import { mountDrop } from './proto/drop/mount';
+import { mountJar } from './proto/jar/mount';
+import { loadBest } from './proto/kit';
+import type { Mounted, ProtoShell } from './proto/shell';
 import { PALETTE } from './render/paint';
 import { Renderer } from './render/renderer';
 import { SANDBOX_ROOM, SANDBOX_THINGS, Sandbox, thingPreview } from './sandbox';
@@ -21,7 +29,7 @@ import { clamp } from './util/math';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
-type Kind = 'handmade' | 'daily' | 'sandbox';
+type Kind = 'home' | 'handmade' | 'daily' | 'sandbox';
 
 interface Gesture {
   id: number;
@@ -72,6 +80,36 @@ export class App {
   private paused = false;
   private goldCount = 0;
   private lastResult: RoomResult | null = null;
+  readonly home: Home;
+  /** Cat Jar or Cat Drop, while one is being played (the page is hidden). */
+  private away: { game: 'jar' | 'drop'; mounted: Mounted; host: HTMLElement } | null = null;
+  /** A tap on one of the home room's ways into a game. */
+  private portalTap: { id: number; game: GameId; sx: number; sy: number } | null = null;
+
+  constructor() {
+    const app = this;
+    this.home = new Home(
+      {
+        renderer: this.renderer,
+        audio: this.audio,
+        get session() {
+          return app.session;
+        },
+        fitsNote: () => this.fitsNote(),
+        openOverlay: (html, onBind) => this.openOverlay(html, onBind),
+        closeOverlay: () => this.closeOverlay(),
+        overlayOpen: () => !$('overlay').classList.contains('hidden'),
+        busy: () => !!this.gesture,
+        play: (g, room) => this.play(g, room),
+      },
+      {
+        fitsRooms: Object.keys(this.save.rooms).length + Object.keys(this.save.daily).length,
+        fitsDone: Object.keys(this.save.rooms),
+        jarBest: loadBest('catjar.best'),
+        dropBest: loadBest('catdrop.best'),
+      },
+    );
+  }
 
   async start(): Promise<void> {
     this.bindInput();
@@ -87,23 +125,19 @@ export class App {
     const params = new URLSearchParams(location.search);
     const roomParam = params.get('room');
     const dailyParam = params.get('daily');
+    const gameParam = params.get('game');
     if (dailyParam && /^\d{4}-\d{2}-\d{2}$/.test(dailyParam)) this.dateKey = dailyParam;
-    // First visit: the guided kitchen. Afterwards: this morning's room.
+    // Home first; links can go straight to a room or a game.
     if (roomParam && HANDMADE[Number(roomParam) - 1]) {
       this.loadHandmade(Number(roomParam) - 1);
     } else if (params.get('sandbox') !== null) {
       this.enterSandbox();
     } else if (dailyParam) {
       await this.loadDaily();
-    } else if (!this.save.tutorialDone) {
-      this.loadHandmade(0);
     } else {
-      const todayDone = !!this.save.daily[this.dateKey];
-      if (todayDone) {
-        const next = HANDMADE.findIndex((r) => !this.save.rooms[r.id]);
-        if (next >= 0) this.loadHandmade(next);
-        else await this.loadDaily();
-      } else await this.loadDaily();
+      this.goHome();
+      if (gameParam === 'fits') await this.playFits();
+      else if (gameParam === 'jar' || gameParam === 'drop') this.openGame(gameParam);
     }
     $('loading').classList.add('done');
     requestAnimationFrame((t) => this.frame(t));
@@ -116,6 +150,93 @@ export class App {
       this.dailyPromise = null;
       this.prefetchDaily();
     }, msUntilTomorrow() + 2000);
+  }
+
+  // ---------------------------------------------------------------------------
+  // The house
+
+  /** The home room, with everyone who lives here. */
+  goHome(): void {
+    this.kind = 'home';
+    const def = this.home.room();
+    const n = def.cats.length + this.home.house.arriving.length;
+    this.startRoom({ ...def, subtitle: `${n} cat${n === 1 ? '' : 's'} live${n === 1 ? 's' : ''} here` });
+    this.home.enter();
+  }
+
+  /** Into a game from the home room (for If It Fits, maybe a particular room). */
+  play(game: GameId, room?: string): void {
+    this.audio.unlock();
+    this.audio.click();
+    const i = room ? HANDMADE.findIndex((r) => r.id === room) : -1;
+    if (game === 'fits' && i >= 0 && this.save.tutorialDone) this.loadHandmade(i);
+    else if (game === 'fits') void this.playFits();
+    else this.openGame(game);
+  }
+
+  /** If It Fits: the guided kitchen first, then this morning's room, then the rooms not done yet. */
+  async playFits(): Promise<void> {
+    if (!this.save.tutorialDone) return this.loadHandmade(0);
+    if (!this.save.daily[this.dateKey]) return this.loadDaily();
+    const next = HANDMADE.findIndex((r) => !this.save.rooms[r.id]);
+    if (next >= 0) this.loadHandmade(next);
+    else await this.loadDaily();
+  }
+
+  /** One line about If It Fits for its button on the home screen. */
+  private fitsNote(): string {
+    if (!this.save.tutorialDone) return 'start here';
+    return this.save.daily[this.dateKey] ? 'done today' : 'new room!';
+  }
+
+  /** Cat Jar or Cat Drop takes over the screen; the page waits underneath. */
+  openGame(game: 'jar' | 'drop'): void {
+    if (this.away) return;
+    this.closeOverlay();
+    this.closeDrawer();
+    this.audio.stopAllPurrs();
+    this.home.leave();
+    this.gesture = null;
+    this.portalTap = null;
+    $('app').style.display = 'none';
+    pageStyles(false);
+    const host = document.createElement('div');
+    host.className = 'game-host';
+    document.body.appendChild(host);
+    const shell: ProtoShell = {
+      audio: this.audio,
+      settings: this.save.settings,
+      setSetting: (k, on) => this.setSetting(k, on),
+      home: () => this.closeGame(),
+      report: (r) => this.home.report(r),
+    };
+    const mounted = game === 'jar' ? mountJar(host, shell) : mountDrop(host, shell);
+    this.away = { game, mounted, host };
+  }
+
+  /** Back home from Cat Jar or Cat Drop. */
+  closeGame(): void {
+    const a = this.away;
+    if (!a) return;
+    this.away = null;
+    a.mounted.unmount();
+    a.host.remove();
+    pageStyles(true);
+    $('app').style.display = '';
+    this.last = 0;
+    this.goHome();
+  }
+
+  /** Which game is on screen ('fits' covers the home room too). */
+  get playing(): 'home' | 'fits' | 'jar' | 'drop' {
+    return this.away ? this.away.game : this.kind === 'home' ? 'home' : 'fits';
+  }
+
+  private setSetting(k: 'sfx' | 'music', on: boolean): void {
+    this.save.settings[k] = on;
+    writeSave(this.save);
+    if (k === 'sfx') this.audio.setSfxEnabled(on);
+    else this.audio.setMusicEnabled(on);
   }
 
   // ---------------------------------------------------------------------------
@@ -158,10 +279,13 @@ export class App {
 
   private startRoom(def: RoomDef): void {
     if (this.kind !== 'sandbox') this.sandbox = null;
+    const home = this.kind === 'home';
+    if (!home) this.home.leave();
     this.closeOverlay();
     this.closeDrawer();
     this.audio.stopAllPurrs();
-    this.session = new Session(def, { mode: this.kind === 'sandbox' ? 'sandbox' : 'puzzle' });
+    this.session = new Session(def, { mode: this.kind === 'sandbox' || home ? 'sandbox' : 'puzzle' });
+    this.renderer.paintExtra = home ? this.home.paint : null;
     this.renderer.setRoom(this.session);
     this.reveal = null;
     this.goldCount = 0;
@@ -170,10 +294,11 @@ export class App {
     $('roomName').textContent = def.name;
     $('roomSub').textContent = def.subtitle ?? '';
     $('parCount').textContent = def.par ? String(def.par) : '–';
-    $('par').classList.toggle('hidden', this.kind === 'sandbox');
+    $('par').classList.toggle('hidden', this.kind === 'sandbox' || home);
     $('faces').classList.toggle('hidden', this.kind === 'sandbox');
-    $('tray').classList.toggle('hidden', this.kind === 'sandbox');
+    $('tray').classList.toggle('hidden', this.kind === 'sandbox' || home);
     $('sandboxTray').classList.toggle('hidden', this.kind !== 'sandbox');
+    $('homeBtn').classList.toggle('hidden', home);
     $('tray').classList.remove('faded');
     $('topbar').classList.remove('faded');
     this.lastFaces = '';
@@ -197,7 +322,8 @@ export class App {
 
   exitSandbox(): void {
     this.sandbox = null;
-    if (this.returnTo.kind === 'daily') void this.loadDaily();
+    if (this.returnTo.kind === 'home') this.goHome();
+    else if (this.returnTo.kind === 'daily') void this.loadDaily();
     else this.loadHandmade(this.returnTo.index);
   }
 
@@ -230,7 +356,7 @@ export class App {
 
   private frame(t: number): void {
     requestAnimationFrame((tt) => this.frame(tt));
-    if (this.paused) return;
+    if (this.paused || this.away) return;
     const dt = this.last ? Math.min(0.1, (t - this.last) / 1000) : FRAME_DT;
     this.last = t;
     this.acc += dt;
@@ -243,6 +369,7 @@ export class App {
     }
     if (steps === 4) this.acc = 0;
     this.handleEvents(this.session.drainEvents());
+    if (this.kind === 'home') this.home.tick(dt);
     this.tickReveal(dt);
     this.tickCoach(dt);
     this.tickAmbient(dt);
@@ -293,6 +420,15 @@ export class App {
         }
         case 'seat': {
           const v = r.view(e.cat);
+          if (this.kind === 'home') {
+            // at home a cat who settles in somewhere is just happy about it
+            // (not the ones settling back into their spots as you come home)
+            if (this.home.since > 1.5) {
+              r.hearts(v.hx, v.hy - 12, 2);
+              this.audio.seat(88);
+            }
+            break;
+          }
           const snug = e.cozy.score >= 92;
           r.label(v.hx, v.hy - 28, e.cozy.label, snug ? '#D9A62E' : e.cozy.score >= 78 ? PALETTE.ginger : '#9A93AE');
           if (snug) r.hearts(v.hx, v.hy - 12);
@@ -403,6 +539,7 @@ export class App {
       const names = fresh.map((b) => BREEDS[b].name).join(' & ');
       setTimeout(() => this.toast(`New in your collection: ${names}!`), 2400);
     }
+    if (this.kind !== 'sandbox') this.home.report({ game: 'fits', room: this.session.def.id });
   }
 
   // ---------------------------------------------------------------------------
@@ -410,7 +547,19 @@ export class App {
 
   private updateHud(): void {
     const s = this.session;
-    if (this.kind !== 'sandbox') {
+    if (this.kind === 'home') {
+      // everyone who lives here, in the top bar (tap for the cats card)
+      const key = `home:${s.cats.map((c) => c.breed).join('|')}`;
+      if (key !== this.lastFaces) {
+        this.lastFaces = key;
+        const faces = s.cats.map((c) => `<span class="face on" title="${c.name} the ${BREEDS[c.breed].name}">${faceSVG(c.breed, { mood: 'happy', size: 24 })}</span>`).join('');
+        $('faces').innerHTML = `<button class="home-cats" aria-label="Your cats">${faces}</button>`;
+        $('faces').querySelector('button')!.addEventListener('click', () => {
+          this.audio.click();
+          this.home.showCats();
+        });
+      }
+    } else if (this.kind !== 'sandbox') {
       const key = s.cats.map((c) => `${c.breed}:${c.seat ? 1 : 0}`).join('|') + `:${this.goldCount}`;
       if (key !== this.lastFaces) {
         this.lastFaces = key;
@@ -534,6 +683,7 @@ export class App {
           <button class="btn mint" data-act="next">${next.label}</button>
           <button class="btn" data-act="again">Play again</button>
           <button class="btn" data-act="sandbox">Photo room</button>
+          <button class="btn" data-act="home"><svg viewBox="0 0 24 24"><use href="#i-home"/></svg>Home</button>
         </div>
       </div>`,
       (root) => {
@@ -541,6 +691,7 @@ export class App {
         root.querySelector('[data-act=next]')!.addEventListener('click', () => next.go());
         root.querySelector('[data-act=again]')!.addEventListener('click', () => this.restart());
         root.querySelector('[data-act=sandbox]')!.addEventListener('click', () => this.enterSandbox());
+        root.querySelector('[data-act=home]')!.addEventListener('click', () => this.goHome());
       },
     );
   }
@@ -581,7 +732,62 @@ export class App {
     else if (how === 'failed') this.toast(text.split('\n').slice(0, 3).join('  '), 5000);
   }
 
+  /** Sound and music switches (the menu and the home menu). */
+  private togglesHtml(): string {
+    const st = this.save.settings;
+    return `<div class="toggles">
+          <button class="toggle" data-toggle="sfx" aria-pressed="${st.sfx}">Sound ${st.sfx ? 'on' : 'off'}</button>
+          <button class="toggle" data-toggle="music" aria-pressed="${st.music}">Music ${st.music ? 'on' : 'off'}</button>
+        </div>`;
+  }
+
+  private bindToggles(root: HTMLElement): void {
+    root.querySelectorAll<HTMLElement>('[data-toggle]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const k = b.dataset.toggle as 'sfx' | 'music';
+        this.setSetting(k, !this.save.settings[k]);
+        b.setAttribute('aria-pressed', String(this.save.settings[k]));
+        b.textContent = `${k === 'sfx' ? 'Sound' : 'Music'} ${this.save.settings[k] ? 'on' : 'off'}`;
+      }),
+    );
+  }
+
+  /** The menu at home: your cats, the three games, sound and music. */
+  private showHomeMenu(): void {
+    this.audio.click();
+    const h = this.home.house;
+    const best = (k: string): string => {
+      const b = loadBest(k);
+      return b > 0 ? `best ${b.toLocaleString('en-US')}` : 'not played yet';
+    };
+    this.openOverlay(
+      `<div class="card" role="dialog" aria-label="Menu">
+        <h2>Home</h2>
+        <p class="sub">${h.residents.length} of 7 cats live here</p>
+        <div class="menu-list">
+          <button class="menu-item" data-act="cats"><span class="mi-icon">🐾</span><span>Your cats<small>Who lives here, and who's coming</small></span></button>
+          <button class="menu-item" data-play="fits"><span class="mi-icon">📦</span><span>If It Fits<small>Pour cats into teacups and boxes · ${this.fitsNote()}</small></span></button>
+          <button class="menu-item" data-play="jar"><span class="mi-icon">🫙</span><span>Cat Jar<small>Two the same melt into a bigger cat · ${best('catjar.best')}</small></span></button>
+          <button class="menu-item" data-play="drop"><span class="mi-icon">🛁</span><span>Cat Drop<small>Drop down the house, ahead of bath time · ${best('catdrop.best')}</small></span></button>
+        </div>
+        ${this.togglesHtml()}
+        <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back home</button></div>
+      </div>`,
+      (root) => {
+        root.querySelector('[data-act=cats]')!.addEventListener('click', () => this.home.showCats());
+        root.querySelectorAll<HTMLElement>('[data-play]').forEach((b) =>
+          b.addEventListener('click', () => {
+            this.closeOverlay();
+            this.play(b.dataset.play as GameId);
+          }),
+        );
+        this.bindToggles(root);
+      },
+    );
+  }
+
   showMenu(): void {
+    if (this.kind === 'home') return this.showHomeMenu();
     this.audio.click();
     const today = this.save.daily[this.dateKey];
     const rooms = HANDMADE.map((r, i) => {
@@ -593,35 +799,24 @@ export class App {
         <h2>If It Fits</h2>
         <p class="sub">A new room every morning</p>
         <div class="menu-list">
+          <button class="menu-item" data-act="home"><span class="mi-icon">🏠</span><span>Home<small>Your cats, and the other games</small></span></button>
           <button class="menu-item ${today ? 'done' : ''}" data-act="daily"><span class="mi-icon">${today ? '✓' : '☀️'}</span><span>This morning's room<small>Morning #${roomNumber(this.dateKey)} · ${prettyDate(this.dateKey)}${today ? ` · cozy ${today.cozy}` : ''}</small></span></button>
           ${rooms}
           <button class="menu-item" data-act="sandbox"><span class="mi-icon">📷</span><span>Photo room<small>Pour any cat into anything</small></span></button>
           <button class="menu-item" data-act="collection"><span class="mi-icon">🐾</span><span>Cat collection<small>${collectedCount(this.save)} of 7 breeds</small></span></button>
           <button class="menu-item" data-act="howto"><span class="mi-icon">?</span><span>How to play</span></button>
         </div>
-        <div class="toggles">
-          <button class="toggle" data-toggle="sfx" aria-pressed="${this.save.settings.sfx}">Sound ${this.save.settings.sfx ? 'on' : 'off'}</button>
-          <button class="toggle" data-toggle="music" aria-pressed="${this.save.settings.music}">Music ${this.save.settings.music ? 'on' : 'off'}</button>
-        </div>
+        ${this.togglesHtml()}
         <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back to the room</button></div>
       </div>`,
       (root) => {
+        root.querySelector('[data-act=home]')!.addEventListener('click', () => this.goHome());
         root.querySelector('[data-act=daily]')!.addEventListener('click', () => void this.loadDaily());
         root.querySelectorAll<HTMLElement>('[data-room]').forEach((b) => b.addEventListener('click', () => this.loadHandmade(Number(b.dataset.room))));
         root.querySelector('[data-act=sandbox]')!.addEventListener('click', () => this.enterSandbox());
         root.querySelector('[data-act=collection]')!.addEventListener('click', () => this.showCollection());
         root.querySelector('[data-act=howto]')!.addEventListener('click', () => this.showHowTo());
-        root.querySelectorAll<HTMLElement>('[data-toggle]').forEach((b) =>
-          b.addEventListener('click', () => {
-            const k = b.dataset.toggle as 'sfx' | 'music';
-            this.save.settings[k] = !this.save.settings[k];
-            writeSave(this.save);
-            if (k === 'sfx') this.audio.setSfxEnabled(this.save.settings.sfx);
-            else this.audio.setMusicEnabled(this.save.settings.music);
-            b.setAttribute('aria-pressed', String(this.save.settings[k]));
-            b.textContent = `${k === 'sfx' ? 'Sound' : 'Music'} ${this.save.settings[k] ? 'on' : 'off'}`;
-          }),
-        );
+        this.bindToggles(root);
       },
     );
   }
@@ -784,6 +979,10 @@ export class App {
     click('hintBtn', () => this.showHint());
     click('sandboxBtn', () => this.enterSandbox());
     click('menuBtn', () => this.showMenu());
+    click('homeBtn', () => {
+      this.audio.click();
+      this.goHome();
+    });
     click('sbCatsBtn', () => this.openDrawer('cats'));
     click('sbPropsBtn', () => this.openDrawer('things'));
     click('sbPhotoBtn', () => {
@@ -793,7 +992,13 @@ export class App {
     });
     click('sbBackBtn', () => this.exitSandbox());
     window.addEventListener('keydown', (e) => {
+      // Cat Jar and Cat Drop have keys of their own
+      if (this.away) return;
       this.audio.unlock();
+      if (this.kind === 'home') {
+        if (e.key === 'Escape') this.closeOverlay();
+        return;
+      }
       if ((e.key === 'z' && (e.ctrlKey || e.metaKey)) || e.key === 'u') this.session.undo();
       else if (e.key === 'h') this.showHint();
       else if (e.key === 'Escape') {
@@ -828,6 +1033,11 @@ export class App {
       const cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
       const now = performance.now();
       if (!cat) {
+        const portal = this.kind === 'home' ? this.home.portalAt(w.x, w.y) : null;
+        if (portal) {
+          this.portalTap = { id: e.pointerId, game: portal.game, sx: p.x, sy: p.y };
+          return;
+        }
         if (this.sandbox && this.sandbox.pickThing(w.x, w.y)) {
           c.setPointerCapture(e.pointerId);
           this.gesture = { id: e.pointerId, catIndex: -1, thing: true, sx: p.x, sy: p.y, t0: now, dragging: true, lx: w.x, ly: w.y, lt: now, vx: 0, vy: 0 };
@@ -867,6 +1077,13 @@ export class App {
       }
     });
     const end = (e: PointerEvent): void => {
+      const tap = this.portalTap;
+      if (tap && tap.id === e.pointerId) {
+        this.portalTap = null;
+        const p = pos(e);
+        if (e.type === 'pointerup' && this.kind === 'home' && Math.hypot(p.x - tap.sx, p.y - tap.sy) < 14) this.play(tap.game);
+        return;
+      }
       const g = this.gesture;
       if (!g || g.id !== e.pointerId) return;
       this.gesture = null;

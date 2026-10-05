@@ -293,11 +293,14 @@ const TWINE = '#B98F58';
 const TWINE_LIT = '#DDBB83';
 const KRAFT = '#D9B98A';
 
-/** Jute twine tied round the neck, and a kraft paper tag with a paw print. */
-function twineAndTag(ctx: Ctx): void {
-  const y = RIM.y + 5;
-  const { cx, hw } = cavityAt(CAV, y);
-  const R = hw + JAR.wall * 2 + 0.4;
+/**
+ * Jute twine tied round the neck, and a kraft paper tag with a paw print (on
+ * this jar, or another of the same make: the home's little jar of cats).
+ */
+export function twineAndTag(ctx: Ctx, rim: Rim = RIM, cav: Cavity = CAV, wall = JAR.wall): void {
+  const y = rim.y + 5;
+  const { cx, hw } = cavityAt(cav, y);
+  const R = hw + wall * 2 + 0.4;
   ctx.save();
   ctx.lineCap = 'round';
   for (const [dy, w] of [

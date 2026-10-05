@@ -11,7 +11,7 @@ import { unlockAudioOnGesture } from './kit';
 /** How a run went, for the house (milestones: cats moving in). */
 export type RunReport =
   | { game: 'jar'; daily: boolean; score: number; biggest: number; drops: number; over: boolean }
-  | { game: 'drop'; daily: boolean; score: number; depth: number; fish: number; breed: BreedId };
+  | { game: 'drop'; daily: boolean; score: number; depth: number; fish: number; breed: BreedId; over: boolean };
 
 export interface Settings {
   sfx: boolean;
@@ -26,7 +26,10 @@ export interface ProtoShell {
   setSetting(k: keyof Settings, on: boolean): void;
   /** Back to the home room (absent when the game has a page of its own). */
   home?: () => void;
-  /** Tell the house how a run went. */
+  /**
+   * Tell the house how a run went (\`over\`), or how it's going: a cat can
+   * earn their place half way through a run, and the house says so at once.
+   */
   report?: (r: RunReport) => void;
 }
 

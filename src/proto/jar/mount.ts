@@ -395,6 +395,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
       introduced.add(e.tier + 1);
       fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 4 ? `${T.name} · ${T.trait}!` : `${T.name}!`, '#6F8FB8', 13);
     }
+    if (e.tier + 1 > topTier) report(false);
     topTier = Math.max(topTier, e.tier + 1);
     if (e.cat && e.tier + 1 >= 3) setPurrCat(e.cat);
   }

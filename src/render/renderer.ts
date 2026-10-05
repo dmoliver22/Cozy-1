@@ -71,6 +71,11 @@ export class Renderer {
   time = 0;
   /** Props currently being dragged in the sandbox (drawn live, not cached). */
   liveProps = new Set<number>();
+  /**
+   * A room's own extra painting (the home's ceiling and its jar of cats), over
+   * the furniture and decor, under the containers; `cssPerUnit` is the scale.
+   */
+  paintExtra: ((ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }, cssPerUnit: number) => void) | null = null;
   reducedMotion = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -284,6 +289,7 @@ export class Renderer {
     for (const d of decor) if (d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel') drawDecor(ctx, d, this.theme, seed + d.x);
     for (const p of s.furniture) if (!this.liveProps.has(p.uid)) drawFurniture(ctx, p, this.theme);
     for (const d of decor) if (!(d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel')) drawDecor(ctx, d, this.theme, seed + d.x);
+    this.paintExtra?.(ctx, r, this.scale);
     for (const p of s.containers) {
       if (this.liveProps.has(p.uid)) continue;
       containerShadow(ctx, p);

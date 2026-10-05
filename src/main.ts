@@ -4,8 +4,11 @@ import '@fontsource/baloo-2/latin-800.css';
 import '@fontsource/nunito/latin-400.css';
 import '@fontsource/nunito/latin-700.css';
 import '@fontsource/nunito/latin-800.css';
-import './styles.css';
+import './house/house.css';
 import { App } from './app';
+import { pageStyles } from './pageStyles';
+
+pageStyles(true);
 
 async function boot(): Promise<void> {
   try {

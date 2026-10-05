@@ -43,7 +43,7 @@ export class JarUI {
   ) {
     root.innerHTML = `
       <div class="hud jar-hud" id="hud">
-        ${h.home ? `<button class="jar-music jar-home" id="homeBtn" aria-label="Home">${HOUSE_ICON}</button>` : ''}
+        ${h.home ? `<button class="jar-music jar-home" id="jarHome" aria-label="Home">${HOUSE_ICON}</button>` : ''}
         <div class="pill jar-score"><span class="jar-score-n" id="score">0</span><small id="best">best 0</small><small class="jar-mode" id="mode"></small></div>
         <div class="jar-boops" id="boops" aria-label="Boops left"></div>
         <div class="spacer"></div>
@@ -82,7 +82,7 @@ export class JarUI {
     $('playBtn').addEventListener('click', () => h.play('play'));
     if (h.home) {
       const home = h.home;
-      for (const b of root.querySelectorAll<HTMLElement>('#homeBtn, [data-home]')) b.addEventListener('click', () => home());
+      for (const b of root.querySelectorAll<HTMLElement>('#jarHome, [data-home]')) b.addEventListener('click', () => home());
     }
     $('dailyBtn').addEventListener('click', () => h.play('daily'));
     this.musicBtn.addEventListener('click', () => {

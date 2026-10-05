@@ -62,7 +62,7 @@ export function drawFurniture(ctx: Ctx, p: Prop, theme: FurnitureTheme): void {
 // --- Shared bits -------------------------------------------------------------
 
 /** Painted wood: grain, a sunlit top face, a crisp arris, deeper underside. */
-function plank(ctx: Ctx, x: number, y: number, w: number, h: number, base: string, seed: number, r = Math.min(3.5, h / 3), top = Math.min(3.4, h * 0.3), grain = 0.55): void {
+export function plank(ctx: Ctx, x: number, y: number, w: number, h: number, base: string, seed: number, r = Math.min(3.5, h / 3), top = Math.min(3.4, h * 0.3), grain = 0.55): void {
   const path = (): void => roundRect(ctx, x, y, w, h, r);
   ctx.fillStyle = base;
   path();

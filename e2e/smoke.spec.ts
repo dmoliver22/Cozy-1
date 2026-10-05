@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-test('first visit opens the guided kitchen', async ({ page }) => {
+test('first visit: home, then If It Fits opens the guided kitchen', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Welcome home!' })).toBeVisible();
+  await page.getByRole('button', { name: "Let's play" }).click();
+  await page.locator('#homeBar [data-game=fits]').click();
   await expect(page.locator('#roomName')).toHaveText('Sunny Kitchen');
   await expect(page.locator('.face')).toHaveCount(3);
   await expect(page.locator('.coach')).toContainText('teacup');

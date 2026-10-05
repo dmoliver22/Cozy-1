@@ -77,6 +77,8 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
   /** The frame the run ended on (-1: still going), and whether its card is up. */
   let overFrame = -1;
   let finished = false;
+  /** What the house was last told about this run. */
+  let told = { depth: 0, fish: 0 };
 
   function randomSeed(): number {
     return (Math.random() * 2 ** 31) >>> 0;
@@ -134,6 +136,7 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
     v.reset(game);
     overFrame = -1;
     finished = false;
+    told = { depth: 0, fish: 0 };
     steerKeys = 0;
     ui.setBest(loadBest(bestKey()), daily);
   }
@@ -335,6 +338,7 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
       v.render(game, alpha, dt);
       const s = game.state();
       ui.update(s, game.foamY > v.camY + 30);
+      if (game.phase === 'play' && (s.fish > told.fish || s.depth >= told.depth + 10)) report(s, false);
       // bath time's patter and bloops, louder as it comes (then the bath's water lapping)
       const inBath = v.ending === 'bath';
       // (only while the chase is on: after the catch the fill, drain and bath have their own sounds)
@@ -389,6 +393,12 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
   }
   warmFoam();
 
+  /** Tell the house how the run is going (each 10 m and each fish), and how it went. */
+  function report(s: DropState, over: boolean): void {
+    told = { depth: s.depth, fish: s.fish };
+    shell.report?.({ game: 'drop', daily, score: s.score, depth: s.depth, fish: s.fish, breed: game.breed, over });
+  }
+
   function finish(s: DropState): void {
     if (finished) return;
     finished = true;
@@ -397,7 +407,7 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
     const isBest = s.score > prev;
     if (isBest) saveBest(key, s.score);
     if (!daily && s.score > loadBest(BEST_KEY)) saveBest(BEST_KEY, s.score);
-    shell.report?.({ game: 'drop', daily, score: s.score, depth: s.depth, fish: s.fish, breed: game.breed });
+    report(s, true);
     ui.showOver(s, Math.max(prev, s.score), isBest && s.score > 0);
     ui.setBest(loadBest(key), daily);
   }

@@ -8,12 +8,26 @@
     <title>If It Fits</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="manifest" href="./manifest.webmanifest" />
+    <!-- until the page's styles arrive with its script (they come and go with the games) -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #3e3a4f;
+      }
+      #app {
+        visibility: hidden;
+      }
+    </style>
   </head>
   <body>
     <div id="app">
       <canvas id="game" aria-label="The room. Drag a cat to nudge it, tap a cat to boop it."></canvas>
 
       <header id="topbar">
+        <button id="homeBtn" class="round-btn hidden" aria-label="Home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home" /></svg>
+        </button>
         <button id="menuBtn" class="round-btn" aria-label="Menu">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
         </button>
@@ -59,6 +73,24 @@
         <button id="sbBackBtn" class="tin tin-mint" aria-label="Back to the room">
           <span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-back" /></svg></span>
           <span class="tin-label">back</span>
+        </button>
+      </footer>
+
+      <footer id="homeBar" class="tray home-bar hidden">
+        <button class="tin tin-mint" data-game="fits" aria-label="Play If It Fits">
+          <span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-box" /></svg><span class="face-badge hidden"></span></span>
+          <span class="tin-label">If It Fits</span>
+          <span class="tin-note"></span>
+        </button>
+        <button class="tin tin-blue" data-game="jar" aria-label="Play Cat Jar">
+          <span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-jar" /></svg><span class="face-badge hidden"></span></span>
+          <span class="tin-label">Cat Jar</span>
+          <span class="tin-note"></span>
+        </button>
+        <button class="tin tin-ginger" data-game="drop" aria-label="Play Cat Drop">
+          <span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-drop" /></svg><span class="face-badge hidden"></span></span>
+          <span class="tin-label">Cat Drop</span>
+          <span class="tin-note"></span>
         </button>
       </footer>
 
@@ -109,6 +141,25 @@
         </symbol>
         <symbol id="i-back" viewBox="0 0 24 24">
           <path d="M14.5 5.5 8 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="i-home" viewBox="0 0 24 24">
+          <path d="M3.5 11.2 12 4l8.5 7.2" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M6 10.2V19a1 1 0 0 0 1 1h3.4v-5.2h3.2V20H17a1 1 0 0 0 1-1v-8.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="i-box" viewBox="0 0 24 24">
+          <path d="M3.6 11h16.8l-1.5 8.6a1.6 1.6 0 0 1-1.6 1.4H6.7a1.6 1.6 0 0 1-1.6-1.4Z" />
+          <path d="M3.6 11 1.8 7.4h6.6l2 3.6M20.4 11l1.8-3.6h-6.6l-2 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          <path d="M8.2 11 9 6.4l2.4 2.2a5 5 0 0 1 1.2 0L15 6.4l.8 4.6Z" />
+        </symbol>
+        <symbol id="i-jar" viewBox="0 0 24 24">
+          <rect x="6.6" y="2.6" width="10.8" height="3" rx="1.2" />
+          <path d="M7.4 6.6h9.2c1.7 1.2 2.6 2.7 2.6 4.8v7.4a2.4 2.4 0 0 1-2.4 2.4H7.2a2.4 2.4 0 0 1-2.4-2.4v-7.4c0-2.1.9-3.6 2.6-4.8Z" />
+          <path d="M8.4 19c0-2.4 1.6-3.8 3.6-3.8s3.6 1.4 3.6 3.8Z" fill="#fff8ee" />
+          <path d="M8.9 16.4 9.3 13.6l1.7 1.6M15.1 16.4l-.4-2.8-1.7 1.6" fill="#fff8ee" />
+        </symbol>
+        <symbol id="i-drop" viewBox="0 0 24 24">
+          <path d="M12 3.2v11.6M7 10.6l5 5.2 5-5.2" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M2.6 20.4h6.4M15 20.4h6.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
         </symbol>
         <symbol id="i-share" viewBox="0 0 24 24">
           <path d="M12 3.5v11M7.5 8 12 3.5 16.5 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
