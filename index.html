@@ -8,14 +8,15 @@
     <title>If It Fits</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <!-- until the page's styles arrive with its script (they come and go with the games) -->
+    <!-- until the page's styles arrive with its script (they come and go with the
+         games); :where() keeps these from outranking any stylesheet, wherever
+         a host puts them -->
     <style>
-      html,
-      body {
+      :where(html, body) {
         margin: 0;
         background: #3e3a4f;
       }
-      #app {
+      :where(#app) {
         visibility: hidden;
       }
     </style>
