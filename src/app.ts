@@ -407,7 +407,7 @@ export class App {
         case 'impact': {
           const size = clamp((e.cat.body.p.radius - 22) / 22, 0, 1);
           this.audio.impact(e.material, e.speed, size);
-          if (e.speed > 320 && !e.container) {
+          if (e.speed > 320 && !e.container && !e.cat.grabbed) {
             const b = e.cat.body;
             let maxY = -Infinity;
             let sx = 0;

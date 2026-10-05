@@ -4,15 +4,13 @@
 import { BREEDS, breedArea, type BreedId } from '../physics/breeds';
 import type { Material } from '../physics/shapes';
 import type { BodySnapshot, SoftBody } from '../physics/softbody';
-import { GRAVITY, type World } from '../physics/world';
+import type { World } from '../physics/world';
 import { clamp } from '../util/math';
 import { cozyScore, measureOverlap, shareFace, type CozyResult, type Overlap } from './fit';
 import { buildContainer, FLOOR_Y, WORLD_W, type ContainerPlacement, type Prop } from './props';
 import { SoftBody as Body } from '../physics/softbody';
 import { buildRoom, type RoomDef } from './room';
 
-/** Upward share of the finger's strength: enough to lift every cat, with some sag. */
-export const LIFT = 0.8;
 const SETTLE_ENERGY = 400;
 const SETTLE_SPEED2 = 14 * 14;
 const SETTLE_FRAMES = 16;
@@ -43,6 +41,8 @@ export interface Cat {
   grabbed: boolean;
   /** Frames since last boop/grab, for face animation. */
   sinceTouch: number;
+  /** Frames held still in a finger: a scruffed cat goes calm. */
+  heldStill: number;
   /** Committed settling decision for the container being touched. */
   intent: Intent | null;
 }
@@ -146,6 +146,7 @@ export class Session {
       lastPour: -999,
       grabbed: false,
       sinceTouch: 999,
+      heldStill: 0,
       intent: null,
     }));
     this.paws = 0;
@@ -241,6 +242,7 @@ export class Session {
     for (const cat of this.cats) {
       const b = cat.body;
       cat.sinceTouch++;
+      cat.heldStill = cat.grabbed && b.emaVx * b.emaVx + b.emaVy * b.emaVy < 30 * 30 ? cat.heldStill + 1 : 0;
       // Overlap with every container
       let best = -1;
       let bestCovered = 0;
@@ -502,16 +504,12 @@ export class Session {
     return true;
   }
 
-  fingerForce(cat: Cat): number {
-    return cat.body.p.pull * cat.body.mass * GRAVITY;
-  }
-
   beginGrab(cat: Cat, wx: number, wy: number): void {
     if (this.complete) return;
     if (this.grabbing) this.endGrab();
     this.pushUndo();
     if (this.mode === 'puzzle') this.paws++;
-    cat.body.startGrab(wx, wy, this.fingerForce(cat), LIFT);
+    cat.body.startGrab(wx, wy);
     cat.grabbed = true;
     cat.sinceTouch = 0;
     cat.intent = null;
@@ -612,6 +610,7 @@ export class Session {
       lastPour: -999,
       grabbed: false,
       sinceTouch: 999,
+      heldStill: 0,
       intent: null,
     };
     this.cats.push(cat);

@@ -15,39 +15,84 @@ const REST_VISC = 30;
 const REST_LINEAR = 6;
 const REST_SPIN = 20;
 
+/**
+ * A finger holding a cat by the scruff: a pinch of skin near the touch (never
+ * the tummy) goes wherever the finger goes, and the rest of the cat hangs from
+ * it, stretching under its own weight and swinging as it's carried.
+ */
 export interface Grab {
-  /** Pointer target in world space. */
+  /** The finger, in world space. */
   tx: number;
   ty: number;
-  /** Pointer velocity (world units / s), used to damp toward. */
+  /** The finger's velocity (world units / s). */
   tvx: number;
   tvy: number;
+  /**
+   * The hand this substep: it moves from where it was at the start of the
+   * frame to the finger in even steps across the frame's substeps (the world
+   * sets it), so the pinch moves smoothly, not in one jump per frame.
+   */
+  hx: number;
+  hy: number;
+  fromX: number;
+  fromY: number;
+  /** The pinched nodes, how firmly each is held, and where each is held relative to the hand. */
   count: number;
   nodes: Int32Array;
   weights: Float64Array;
   offX: Float64Array;
   offY: Float64Array;
-  weightSum: number;
-  /** Max force the finger may apply (mass * units / s^2). */
-  force: number;
-  /** Max upward share of that force (0..1); cats are lazy about being lifted. */
-  lift: number;
-  /** Touch point relative to the centroid at grab time (the cat hangs from here). */
+  /** The middle of the pinch relative to the hand: the skin bunches up toward it. */
+  midX: number;
+  midY: number;
+  /**
+   * Lowest the pinch's middle may go while the cat still stands on something
+   * (a finger pushing down slides a cat off its shelf, it doesn't squash it in).
+   */
+  low: number;
+  /** Substeps since the grab began (the pinch tightens over the first few). */
+  age: number;
+  /** Touch point relative to the centroid at grab time. */
   ax: number;
   ay: number;
 }
 
-/** Share of the finger's force that moves the whole cat (the rest stretches it). */
-const BODY_SHARE = 0.65;
+/** Nodes either side of the middle one in the pinch. */
+const PINCH_HALF = 2;
+/** How much the pinched skin bunches together (share of its spread). */
+const PINCH = 0.3;
+/** Substeps the pinch takes to tighten (~0.1 s). */
+const PINCH_SUBSTEPS = 48;
+/**
+ * Furthest a pinched node moves toward the hand in one constraint pass: less
+ * than the half thickness of the thinnest glass, so a cat held against a wall
+ * slides along it instead of being pulled through, however far the finger goes.
+ */
+const PIN_STEP = 3;
+/** The same, while the skin around the pinch is pressed against something. */
+const PIN_STEP_PRESSED = 0.6;
+/** Substeps the skin where a pinch let go stays guarded against creasing (~1/4 s). */
+const LET_GO_SUBSTEPS = 120;
+/** Damping of a held cat's swing and wobble, relative to the pinch (per second). */
+const SWING_DAMP = 2.6;
+/**
+ * Shape stiffness toward the dangling shape while held: every breed goes long
+ * in the hand, even the ones with no shape of their own (honey and pudding
+ * just get there slowly, through their viscosity).
+ */
+const HANG_SHAPE = 0.02;
+/** How strongly a held cat's body drifts sideways to hang under the pinch (per substep), and its cap (units). */
+const FOLLOW = 0.02;
+const FOLLOW_MAX = 0.6;
+/** How fast a picked-up cat goes long, and comes back round once let go (per second). */
+const HANG_IN = 5;
+const HANG_OUT = 3;
 
 let nextBodyId = 1;
 
 export class SoftBody {
   /** How much of a collision push-out may turn into bounce (0 = all, 1 = none). */
   static contactBounceKill = 0.85;
-  /** Damping of the finger's whole-body spring: high, so a lifted cat eases
-   *  up to the finger instead of bobbing like a yo-yo. */
-  static grabDamp = 0.6;
   /**
    * Let resting on another cat count as contact for rest damping, sleep and
    * airborne frames (normally only furniture and containers count). Off by
@@ -74,6 +119,13 @@ export class SoftBody {
   readonly roundY: Float64Array;
   readonly loafX: Float64Array;
   readonly loafY: Float64Array;
+  /** Dangling from the scruff: long and narrow at the pinch (built when picked up). */
+  readonly hangX: Float64Array;
+  readonly hangY: Float64Array;
+  /** How far into its dangling shape the cat is (0..1, eases in when picked up). */
+  hang = 0;
+  /** How firmly each node is held by the finger (0 = free): the edges pull the free end. */
+  private readonly held: Float64Array;
   /** Contact info from the last substep, per node. -1 = no contact. */
   readonly contactShape: Int32Array;
   readonly contactNx: Float32Array;
@@ -160,6 +212,9 @@ export class SoftBody {
     this.roundY = new Float64Array(n);
     this.loafX = new Float64Array(n);
     this.loafY = new Float64Array(n);
+    this.hangX = new Float64Array(n);
+    this.hangY = new Float64Array(n);
+    this.held = new Float64Array(n);
     this.contactShape = new Int32Array(n).fill(-1);
     this.refX = new Float64Array(n);
     this.refY = new Float64Array(n);
@@ -338,79 +393,86 @@ export class SoftBody {
   }
 
   /**
-   * Start a finger grab at (wx, wy). The half of the body nearest the finger
-   * is pulled; the rest lags behind, which is what makes cats stretch.
+   * Pick the cat up by the scruff at (wx, wy): the ring nodes nearest the
+   * touch, but from the top half (touch a cat's tummy and you still get the
+   * scruff above it). The pinch keeps its place relative to the finger, so the
+   * spot you touched stays put under it.
    */
-  startGrab(wx: number, wy: number, force: number, lift: number): Grab {
+  startGrab(wx: number, wy: number): Grab {
     this.wake();
-    const n = this.n;
-    const r = this.p.radius;
-    const reach = r * 1.05;
-    const nodes = new Int32Array(n);
-    const weights = new Float64Array(n);
-    const offX = new Float64Array(n);
-    const offY = new Float64Array(n);
-    // Anchor point: clamp the touch to inside the body so off-edge touches work.
-    let count = 0;
-    let wsum = 0;
-    for (let i = 0; i < n; i++) {
-      const dx = this.x[i] - wx;
-      const dy = this.y[i] - wy;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < reach) {
-        const w = 1 - d / reach;
-        const ww = w * w * (3 - 2 * w);
-        nodes[count] = i;
-        weights[count] = 0.25 + 0.75 * ww;
-        offX[count] = dx * 0.55;
-        offY[count] = dy * 0.55;
-        wsum += weights[count];
-        count++;
-      }
-    }
-    if (count < 3) {
-      // Touch was far from the ring (centre of a big cat): grab the 5 nearest.
-      count = 0;
-      wsum = 0;
-      const order = Array.from({ length: n }, (_, i) => i);
-      order.sort((a, b) => {
-        const da = (this.x[a] - wx) ** 2 + (this.y[a] - wy) ** 2;
-        const db = (this.x[b] - wx) ** 2 + (this.y[b] - wy) ** 2;
-        return da - db;
-      });
-      for (let k = 0; k < Math.min(7, n); k++) {
-        const i = order[k];
-        nodes[count] = i;
-        weights[count] = 1 - k / 9;
-        offX[count] = (this.x[i] - wx) * 0.55;
-        offY[count] = (this.y[i] - wy) * 0.55;
-        wsum += weights[count];
-        count++;
-      }
-    }
     this.computeCentroid();
+    const { n, x, y } = this;
+    const top = this.cy - this.p.radius * 0.15;
+    let mid = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      const dx = x[i] - wx;
+      const dy = y[i] - wy;
+      const low = y[i] > top ? (y[i] - top) * 1.6 : 0;
+      const d = Math.sqrt(dx * dx + dy * dy) + low;
+      if (d < bestD) {
+        bestD = d;
+        mid = i;
+      }
+    }
+    const count = PINCH_HALF * 2 + 1;
+    const nodes = new Int32Array(count);
+    const weights = new Float64Array(count);
+    const offX = new Float64Array(count);
+    const offY = new Float64Array(count);
+    let ws = 0;
+    let mx = 0;
+    let my = 0;
+    for (let k = -PINCH_HALF; k <= PINCH_HALF; k++) {
+      const m = k + PINCH_HALF;
+      const i = (mid + k + n) % n;
+      const w = 1 - (0.45 * (k < 0 ? -k : k)) / PINCH_HALF;
+      nodes[m] = i;
+      weights[m] = w;
+      offX[m] = x[i] - wx;
+      offY[m] = y[i] - wy;
+      mx += offX[m] * w;
+      my += offY[m] * w;
+      ws += w;
+    }
+    this.held.fill(0);
+    for (let m = 0; m < count; m++) this.held[nodes[m]] = weights[m];
+    buildHang(this.hangX, this.hangY, n, this.p.radius, this.p.hang, mid);
+    normalizeShape(this.hangX, this.hangY, n, this.area0);
     this.grab = {
       tx: wx,
       ty: wy,
       tvx: 0,
       tvy: 0,
+      hx: wx,
+      hy: wy,
+      fromX: wx,
+      fromY: wy,
       count,
       nodes,
       weights,
       offX,
       offY,
-      weightSum: wsum,
-      force,
-      lift,
-      ax: (wx - this.cx) * 0.6,
-      ay: (wy - this.cy) * 0.6,
+      midX: mx / ws,
+      midY: my / ws,
+      low: wy + my / ws,
+      age: 0,
+      ax: wx - this.cx,
+      ay: wy - this.cy,
     };
     return this.grab;
   }
 
   releaseGrab(): void {
+    // the skin where the pinch was keeps its guard against creasing for a
+    // moment, while the bunched-up skin springs back
+    if (this.grab) this.letGo = { first: this.grab.nodes[0], count: this.grab.count, left: LET_GO_SUBSTEPS };
     this.grab = null;
+    this.held.fill(0);
   }
+
+  /** Where a pinch just let go of, and for how many more substeps it's guarded. */
+  private letGo: { first: number; count: number; left: number } | null = null;
 
   // --- Simulation pieces (called by World) ---------------------------------
 
@@ -436,9 +498,11 @@ export class SoftBody {
     this.solveEdges(h);
     this.solveArea();
     this.solveShape();
-    if (this.grab && first) this.solveGrab(h);
-    // Once a substep is plenty: folding through takes many substeps.
-    if (first) this.solveSelf();
+    // every pass: the pinch is held after the body's own constraints tug at it
+    if (this.grab) this.solveGrab(first);
+    // Once a substep is plenty, folding through takes many substeps; but a
+    // pinch pulled against a wall can fold the skin in one pass, so after it too.
+    if (first || this.grab) this.solveSelf();
   }
 
   /**
@@ -501,6 +565,57 @@ export class SoftBody {
         y[k] -= qy * lam * wb;
       }
     }
+    if (this.grab) this.unfoldPinch(this.grab.nodes[0], this.grab.count);
+    else if (this.letGo) {
+      this.unfoldPinch(this.letGo.first, this.letGo.count);
+      if (--this.letGo.left <= 0) this.letGo = null;
+    }
+  }
+
+  /**
+   * Around a held pinch the skin is pulled one way by the finger and pushed
+   * the other by whatever the cat is pressed against, and can crease into a
+   * hairpin right beside the pinch, where the check above doesn't look (the
+   * stretch just past a node's neighbour). There, a node also keeps clear of
+   * the stretch beyond its neighbour: no sharper bend than about 60 degrees.
+   */
+  private unfoldPinch(a: number, count: number): void {
+    const { n, x, y } = this;
+    const skin = NODE_RADIUS * 1.6;
+    const skin2 = skin * skin;
+    const span = count + 4;
+    for (let q = -2; q < span - 2; q++) {
+      const i = (a + q + n) % n;
+      for (const side of [1, -2]) {
+        // the stretch (j, k) just past i's neighbour on that side
+        const j = (i + side + n) % n;
+        const k = j + 1 === n ? 0 : j + 1;
+        const ax = x[j];
+        const ay = y[j];
+        const dx = x[i] - ax;
+        const dy = y[i] - ay;
+        const ex = x[k] - ax;
+        const ey = y[k] - ay;
+        const l2 = ex * ex + ey * ey;
+        if (l2 < 1e-12) continue;
+        let t = (dx * ex + dy * ey) / l2;
+        if (t <= 0 || t >= 1) continue;
+        const qx = dx - ex * t;
+        const qy = dy - ey * t;
+        const d2 = qx * qx + qy * qy;
+        if (d2 >= skin2 || d2 < 1e-12) continue;
+        const d = Math.sqrt(d2);
+        const wa = 1 - t;
+        const wb = t;
+        const lam = (skin - d) / (d * (1 + wa * wa + wb * wb));
+        x[i] += qx * lam;
+        y[i] += qy * lam;
+        x[j] -= qx * lam * wa;
+        y[j] -= qy * lam * wa;
+        x[k] -= qx * lam * wb;
+        y[k] -= qy * lam * wb;
+      }
+    }
   }
 
 
@@ -511,7 +626,7 @@ export class SoftBody {
    * node spacing sane.
    */
   private solveEdges(h: number): void {
-    const { n, x, y } = this;
+    const { n, x, y, held } = this;
     const lens = scratchA(n);
     let per = 0;
     for (let i = 0; i < n; i++) {
@@ -536,11 +651,17 @@ export class SoftBody {
       let target = len - eq * (len - mean) - tensionStep;
       if (target < minL) target = minL;
       else if (target > maxL) target = maxL;
-      const corr = (0.5 * (len - target)) / len;
-      x[i] += dx * corr;
-      y[i] += dy * corr;
-      x[j] -= dx * corr;
-      y[j] -= dy * corr;
+      const corr = (len - target) / len;
+      // split the correction by how free each end is: the finger's pinch
+      // barely gives, so a hanging cat pulls on its own skin, not the finger
+      const fi = 1 - held[i] * 0.9;
+      const fj = 1 - held[j] * 0.9;
+      const ci = (corr * fi) / (fi + fj);
+      const cj = (corr * fj) / (fi + fj);
+      x[i] += dx * ci;
+      y[i] += dy * ci;
+      x[j] -= dx * cj;
+      y[j] -= dy * cj;
     }
   }
 
@@ -574,7 +695,7 @@ export class SoftBody {
   }
 
   private solveShape(): void {
-    const k = this.p.shape * this.shapeMul;
+    const k = Math.max(this.p.shape * this.shapeMul, HANG_SHAPE * this.hang);
     const { n, x, y, qx, qy } = this;
     let cx = 0;
     let cy = 0;
@@ -626,69 +747,119 @@ export class SoftBody {
     }
   }
 
-  private solveGrab(h: number): void {
+  /** Hold the pinch at the hand; the rest of the cat hangs from it. */
+  private solveGrab(first: boolean): void {
     const g = this.grab!;
-    const { n, x, y, px, py } = this;
-    const h2 = h * h;
-    const inv = 1 / h;
-    // 1) Whole-body spring: the centroid follows the finger (minus the touch
-    //    offset), with a capped force, so even a chonk can be scooted along.
-    let cx = 0;
-    let cy = 0;
-    let vx = 0;
-    let vy = 0;
-    for (let i = 0; i < n; i++) {
-      cx += x[i];
-      cy += y[i];
-      vx += x[i] - px[i];
-      vy += y[i] - py[i];
-    }
-    cx /= n;
-    cy /= n;
-    vx *= inv / n;
-    vy *= inv / n;
-    const bodyMax = (g.force * BODY_SHARE * h2) / this.mass;
-    const kd = SoftBody.grabDamp;
-    let bx = (g.tx - g.ax - cx) * 0.012 + (g.tvx - vx) * h * kd;
-    let by = (g.ty - g.ay - cy) * 0.012 + (g.tvy - vy) * h * kd;
-    if (by < 0 && -by > bodyMax * g.lift) by = -bodyMax * g.lift;
-    const bl = Math.sqrt(bx * bx + by * by);
-    if (bl > bodyMax) {
-      bx *= bodyMax / bl;
-      by *= bodyMax / bl;
-    }
-    for (let i = 0; i < n; i++) {
-      x[i] += bx;
-      y[i] += by;
-    }
-    // 2) Local spring on the touched nodes: this is what makes cats stretch
-    //    toward your finger.
-    const k = 0.05;
-    const c = 0.06;
-    const localForce = g.force * (1 - BODY_SHARE);
+    const { n, x, y, contactShape, contactNx, contactNy } = this;
+    // where the pinch's middle is now
+    let px = 0;
+    let py = 0;
+    let ws = 0;
     for (let m = 0; m < g.count; m++) {
       const i = g.nodes[m];
       const w = g.weights[m];
-      const tx = g.tx + g.offX[m];
-      const ty = g.ty + g.offY[m];
-      const nvx = (x[i] - px[i]) * inv;
-      const nvy = (y[i] - py[i]) * inv;
-      let dx = ((tx - x[i]) * k + (g.tvx - nvx) * h * c) * w;
-      let dy = ((ty - y[i]) * k + (g.tvy - nvy) * h * c) * w;
-      const share = (localForce * w) / g.weightSum;
-      const maxStep = share * h2 * this.invNodeMass;
-      if (dy < 0) {
-        // Cats are lazy about being lifted.
-        const maxUp = maxStep * g.lift;
-        if (-dy > maxUp) dy = -maxUp;
+      px += x[i] * w;
+      py += y[i] * w;
+      ws += w;
+    }
+    px /= ws;
+    py /= ws;
+    if (first) {
+      if (g.age < PINCH_SUBSTEPS) g.age++;
+      // Standing on something right under the pinch, the pinch lifts and
+      // slides the cat but won't push down into what it stands on: drag a cat
+      // down off a shelf and it slides to the edge and steps off (once the
+      // pinch is out past the edge, down it goes), then hangs to the finger.
+      // (Not when the pinch itself rests on something, the rim of a wall it's
+      // being pulled over: holding it up there would leave it straddling.)
+      const reach = this.p.radius * 0.6;
+      let standing = false;
+      for (let i = 0; i < n; i++) {
+        if (contactShape[i] !== -1 && contactNy[i] < -0.45 && x[i] > px - reach && x[i] < px + reach) {
+          standing = true;
+          break;
+        }
       }
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > maxStep) {
-        dx *= maxStep / len;
-        dy *= maxStep / len;
+      for (let m = 0; m < g.count && standing; m++) {
+        const i = g.nodes[m];
+        if (contactShape[i] !== -1 && contactNy[i] < -0.45) standing = false;
       }
-      x[i] += dx;
-      y[i] += dy;
+      const want = g.hy + g.midY;
+      g.low = standing && want > g.low ? g.low : want;
+      let bx = 0;
+      for (let i = 0; i < n; i++) bx += x[i];
+      bx /= n;
+      // The body drifts round to hang right under the pinch: a cat draped
+      // over the edge it was dragged off slides the rest of the way off, and
+      // ends up where the finger put it (sideways only: gravity does the rest).
+      // (Not into a wall it's pressed against: that would only crumple it.)
+      let fx = (px - bx) * FOLLOW;
+      if (fx > FOLLOW_MAX) fx = FOLLOW_MAX;
+      else if (fx < -FOLLOW_MAX) fx = -FOLLOW_MAX;
+      for (let i = 0; i < n && fx !== 0; i++) if (contactShape[i] !== -1 && contactNx[i] * fx < -0.5 * (fx > 0 ? fx : -fx)) fx = 0;
+      const held = this.held;
+      if (fx !== 0) for (let i = 0; i < n; i++) x[i] += fx * (1 - held[i]);
+    }
+    // 1) The pinch moves as one piece toward the hand, a few units a pass at
+    //    most, and slides along whatever any part of it is pressed against
+    //    (a pinch split by a thin wall would fold the skin over it).
+    let dx = g.hx + g.midX - px;
+    // (held up off what it stands on)
+    let dy = Math.min(g.hy + g.midY, g.low) - py;
+    // (the skin around the pinch counts too: pushing it into a wall folds it)
+    // Pressed against something there, the hand eases off and the pinch
+    // creeps (a hand feels the cat catch on a rim and stops yanking): the
+    // skin gets the time to slide round the obstacle instead of folding.
+    const near2 = this.p.radius * this.p.radius * 0.64;
+    let pressed = false;
+    for (let i = 0; i < n; i++) {
+      if (contactShape[i] === -1) continue;
+      const ux = x[i] - px;
+      const uy = y[i] - py;
+      if (ux * ux + uy * uy > near2) continue;
+      pressed = true;
+      const into = dx * contactNx[i] + dy * contactNy[i];
+      if (into < 0) {
+        dx -= into * contactNx[i];
+        dy -= into * contactNy[i];
+      }
+    }
+    // (sliding along a slanted face mustn't take it down past where it may go)
+    if (dy > 0 && py + dy > g.low) dy = g.low > py ? g.low - py : 0;
+    const step = pressed ? PIN_STEP_PRESSED : PIN_STEP;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > step * step) {
+      const k = step / Math.sqrt(d2);
+      dx *= k;
+      dy *= k;
+    }
+    // Skin right at the pinch resting on a rim: the pinch is lifted up over
+    // it rather than held level with it, where the rim would come up between
+    // the two sides of the pinch and fold them over each other.
+    const reach = this.p.radius * 0.6;
+    for (let i = 0; i < n; i++) {
+      if (contactShape[i] === -1 || contactNy[i] > -0.45) continue;
+      const ux = x[i] - px;
+      const uy = y[i] - py;
+      if (ux > -reach && ux < reach && uy > -4 && uy < 14) {
+        if (dy > -1) dy = -1;
+        break;
+      }
+    }
+    // 2) Each pinched node keeps its place in the pinch (the skin bunches up
+    //    a little between the fingers as it's picked up).
+    const t = g.age / PINCH_SUBSTEPS;
+    const bunch = 1 - PINCH * t * t * (3 - 2 * t);
+    for (let m = 0; m < g.count; m++) {
+      const i = g.nodes[m];
+      const w = g.weights[m];
+      // (a node pressed against something stays put in the pinch: bunching
+      // it toward the others could pull it across a thin wall)
+      const touching = contactShape[i] !== -1;
+      const ex = touching ? 0 : (px + (g.offX[m] - g.midX) * bunch - x[i]) * w * 0.5;
+      const ey = touching ? 0 : (py + (g.offY[m] - g.midY) * bunch - y[i]) * w * 0.5;
+      x[i] += dx + ex;
+      y[i] += dy + ey;
     }
   }
 
@@ -798,6 +969,30 @@ export class SoftBody {
     this.vcx = nmx;
     this.vcy = nmy;
     this.energy = e / n;
+    if (this.grab) this.dampSwing(h);
+  }
+
+  /** A held cat swings and wobbles a little, then hangs still: damp its motion relative to the pinch. */
+  private dampSwing(h: number): void {
+    const g = this.grab!;
+    const { n, vx, vy } = this;
+    let pvx = 0;
+    let pvy = 0;
+    let ws = 0;
+    for (let m = 0; m < g.count; m++) {
+      const i = g.nodes[m];
+      const w = g.weights[m];
+      pvx += vx[i] * w;
+      pvy += vy[i] * w;
+      ws += w;
+    }
+    pvx /= ws;
+    pvy /= ws;
+    const keep = 1 - Math.min(1, SWING_DAMP * h);
+    for (let i = 0; i < n; i++) {
+      vx[i] = pvx + (vx[i] - pvx) * keep;
+      vy[i] = pvy + (vy[i] - pvy) * keep;
+    }
   }
 
   /** Called once per frame by the world (not per substep). */
@@ -807,13 +1002,23 @@ export class SoftBody {
     // Rest shape: blend round <-> loaf, plus plastic creep toward current shape.
     const n = this.n;
     const lf = this.loafiness;
+    // long only while actually dangling: a held cat still standing on
+    // something (or pressed into a wall) keeps its own shape
+    const dangling = !!this.grab && this.airborneFrames > 2;
+    this.hang += ((dangling ? 1 : 0) - this.hang) * Math.min(1, dt * (dangling ? HANG_IN : HANG_OUT));
+    if (this.hang < 1e-3) this.hang = 0;
+    const hg = this.hang;
     const relax = Math.min(1, dt * 3);
     const plasticRate = Math.min(1, this.p.plasticity * this.plastic * dt);
     const c = this.rotC;
     const s = this.rotS;
     for (let i = 0; i < n; i++) {
-      const tx = this.roundX[i] + (this.loafX[i] - this.roundX[i]) * lf;
-      const ty = this.roundY[i] + (this.loafY[i] - this.roundY[i]) * lf;
+      let tx = this.roundX[i] + (this.loafX[i] - this.roundX[i]) * lf;
+      let ty = this.roundY[i] + (this.loafY[i] - this.roundY[i]) * lf;
+      if (hg > 0) {
+        tx += (this.hangX[i] - tx) * hg;
+        ty += (this.hangY[i] - ty) * hg;
+      }
       let qx = this.qx[i] + (tx - this.qx[i]) * relax * (1 - this.plastic);
       let qy = this.qy[i] + (ty - this.qy[i]) * relax * (1 - this.plastic);
       if (plasticRate > 0) {
@@ -893,6 +1098,9 @@ export class SoftBody {
       qy: this.qy.slice(),
       loafiness: this.loafiness,
       plastic: this.plastic,
+      hang: this.hang,
+      hangX: this.hangX.slice(),
+      hangY: this.hangY.slice(),
       contactShape: this.contactShape.slice(),
       contactNx: this.contactNx.slice(),
       contactNy: this.contactNy.slice(),
@@ -912,6 +1120,11 @@ export class SoftBody {
     this.qy.set(s.qy);
     this.loafiness = s.loafiness;
     this.plastic = s.plastic;
+    this.hang = s.hang;
+    this.hangX.set(s.hangX);
+    this.hangY.set(s.hangY);
+    this.held.fill(0);
+    this.letGo = null;
     this.contactShape.set(s.contactShape);
     this.contactNx.set(s.contactNx);
     this.contactNy.set(s.contactNy);
@@ -937,6 +1150,9 @@ export interface BodySnapshot {
   qy: Float64Array;
   loafiness: number;
   plastic: number;
+  hang: number;
+  hangX: Float64Array;
+  hangY: Float64Array;
   contactShape: Int32Array;
   contactNx: Float32Array;
   contactNy: Float32Array;
@@ -965,6 +1181,23 @@ export function normalizeShape(xs: Float64Array, ys: Float64Array, n: number, ar
       xs[i] *= s;
       ys[i] *= s;
     }
+  }
+}
+
+/**
+ * A cat dangling by the scruff: taller than wide by `aspect`, narrow up at the
+ * pinch and fuller below, turned so ring node `top` (the middle of the pinch)
+ * is at the top.
+ */
+function buildHang(xs: Float64Array, ys: Float64Array, n: number, r: number, aspect: number, top: number): void {
+  const a = r * Math.sqrt(aspect);
+  const b = r / Math.sqrt(aspect);
+  for (let i = 0; i < n; i++) {
+    const t = ((i - top) / n) * TAU - TAU / 4;
+    const c = dcos(t);
+    const s = dsin(t);
+    xs[i] = a * c * (1 + 0.22 * s);
+    ys[i] = b * s;
   }
 }
 

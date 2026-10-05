@@ -661,9 +661,10 @@ export class Renderer {
     let look = 0;
     const seat = cat.seat;
     if (cat.grabbed) {
-      expression = 'wide';
+      // startled when scooped up; held still by the scruff, it goes calm
+      expression = cat.heldStill > 40 ? 'content' : 'wide';
       const g = b.grab;
-      if (g) look = clamp((g.tx - b.cx) / (b.p.radius * 2), -1, 1);
+      if (g && cat.heldStill <= 40) look = clamp((g.tx - b.cx) / (b.p.radius * 2), -1, 1);
     } else if (cat.sinceTouch < 22) expression = 'squint';
     else if (b.airborneFrames > 6) expression = 'wide';
     else if (seat) expression = s.complete || seat.cozy.score >= 78 ? 'happy' : 'content';
@@ -673,6 +674,21 @@ export class Renderer {
     const c = k >= 0 ? s.containers[k] : null;
     const rim = c ? { x0: c.opening!.x0, x1: c.opening!.x1, y: c.opening!.y, lip: 7 * c.scale } : null;
     const resting = !cat.grabbed && b.airborneFrames < 2 && cat.settled > 6;
+    // where the finger holds it: the middle of the pinched skin
+    let pinch: { x: number; y: number } | null = null;
+    const g = cat.grabbed ? b.grab : null;
+    if (g) {
+      let px = 0;
+      let py = 0;
+      let ws = 0;
+      for (let m = 0; m < g.count; m++) {
+        const w = g.weights[m];
+        px += b.x[g.nodes[m]] * w;
+        py += b.y[g.nodes[m]] * w;
+        ws += w;
+      }
+      pinch = { x: px / ws, y: py / ws };
+    }
     return {
       expression,
       look,
@@ -682,6 +698,7 @@ export class Renderer {
       purr: seat ? (s.complete ? 1 : 0.6) : 0,
       grabbed: cat.grabbed,
       glow: this.glow,
+      pinch,
     };
   }
 

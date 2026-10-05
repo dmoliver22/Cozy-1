@@ -57,12 +57,11 @@ const HOP_GAP: [number, number] = [6, 13];
 const PERCHES: { x: number; y: number; half: number; maxR: number }[] = [
   { x: 102, y: 212, half: 40, maxR: 34 }, // the windowsill
   { x: 334, y: 128, half: 30, maxR: 40 }, // the top cat step
-  { x: 254, y: 224, half: 30, maxR: 40 }, // the lower step
-  { x: 362, y: 338, half: 8, maxR: 24 }, // beside the jar
-  { x: 74, y: 438, half: 44, maxR: 44 }, // the table
-  { x: 62, y: 560, half: 30, maxR: 50 }, // the floor by the table
+  { x: 248, y: 224, half: 30, maxR: 40 }, // the lower step
+  { x: 345, y: 338, half: 22, maxR: 34 }, // beside the jar
+  { x: 64, y: 432, half: 30, maxR: 44 }, // on the bookcase
   { x: 196, y: 556, half: 6, maxR: 40 }, // in the box
-  { x: 318, y: 552, half: 6, maxR: 36 }, // in the basket
+  { x: 318, y: 552, half: 6, maxR: 44 }, // in the basket
 ];
 
 export class Home {

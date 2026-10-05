@@ -30,17 +30,14 @@ export interface BreedPhysics {
   upright: number;
   /** Vertical speed of a boop-hop. */
   hop: number;
-  /**
-   * Finger strength as a multiple of the cat's weight. Every cat can be picked
-   * up; heavier cats just lag and slide more (kitten 3.2 ... chonk 2.5).
-   */
-  pull: number;
   /** How willingly it pours into narrow openings (jelly resists). */
   slurp: number;
   /** Rest-shape creep per second while sitting (keeps the container's shape). */
   plasticity: number;
   /** Width/height of the settled loaf. */
   loafAspect: number;
+  /** Width/height dangling from the scruff (pudding and honey droop longest, jelly springs back). */
+  hang: number;
 }
 
 export type FacePersona = 'sleepy' | 'dramatic' | 'zippy' | 'wobbly' | 'polite' | 'fluffy' | 'void';
@@ -99,10 +96,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.25,
       upright: 0.03,
       hop: 430,
-      pull: 3.2,
       slurp: 1,
       plasticity: 1.2,
       loafAspect: 1.25,
+      hang: 0.7,
     },
     look: {
       body: '#A9AEB8',
@@ -143,10 +140,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.45,
       upright: 0.02,
       hop: 260,
-      pull: 2.6,
       slurp: 1,
       plasticity: 0.8,
       loafAspect: 1.4,
+      hang: 0.58,
     },
     look: {
       body: '#F7E6CC',
@@ -187,10 +184,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.5,
       upright: 0.03,
       hop: 220,
-      pull: 2.5,
       slurp: 1,
       plasticity: 0.7,
       loafAspect: 1.45,
+      hang: 0.55,
     },
     look: {
       body: '#E8964A',
@@ -231,10 +228,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.35,
       upright: 0.05,
       hop: 380,
-      pull: 2.8,
       slurp: 0.25,
       plasticity: 0.35,
       loafAspect: 1.2,
+      hang: 0.78,
     },
     look: {
       body: '#EDBBA8',
@@ -275,10 +272,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.4,
       upright: 0.04,
       hop: 330,
-      pull: 2.8,
       slurp: 1,
       plasticity: 0.9,
       loafAspect: 1.3,
+      hang: 0.66,
     },
     look: {
       body: '#C9965F',
@@ -319,10 +316,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.45,
       upright: 0.03,
       hop: 300,
-      pull: 2.7,
       slurp: 1,
       plasticity: 0.8,
       loafAspect: 1.35,
+      hang: 0.62,
     },
     look: {
       body: '#8A6F5C',
@@ -364,10 +361,10 @@ export const BREEDS: Record<BreedId, Breed> = {
       friction: 0.3,
       upright: 0.03,
       hop: 360,
-      pull: 3.0,
       slurp: 1.2,
       plasticity: 1.4,
       loafAspect: 1.3,
+      hang: 0.64,
     },
     look: {
       body: '#3E3A4F',

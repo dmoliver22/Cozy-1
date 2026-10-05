@@ -16,22 +16,42 @@ Working notes for tuning *If It Fits*. The README covers the overview.
 All sizes are in world units (the room is 380 wide, the floor is at y = 560).
 Tension is the skin's constant line tension; viscosity damps deformation only.
 
-| Breed | Radius | Flow | Tension | Viscosity | Shape | Pull (x weight) | Notes |
+| Breed | Radius | Flow | Tension | Viscosity | Shape | Hang (w/h) | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Kitten | 22 | water | 360 | 3 | 0 | 3.2 | zippy; follows the finger closely |
-| Persian | 32 | honey | 680 | 26 | 0 | 2.6 | slow ooze, overflows bowls |
-| Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 2.5 | the hero; heaviest to carry; sleepy z's when idle |
-| Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 2.8 | holds its shape; resists narrow necks (`slurp` 0.25) |
-| Tabby | 29 | custard | 700 | 8 | 0 | 2.8 | the polite reference cat |
-| Maine Coon | 37 | cloud | 700 | 9 | 0 | 2.7 | compresses to 78% of its area |
-| The Void | 28 | ink | 420 | 5 | 0 | 3.0 | secret; pours into anything |
+| Kitten | 22 | water | 360 | 3 | 0 | 0.70 | zippy |
+| Persian | 32 | honey | 680 | 26 | 0 | 0.58 | slow ooze, overflows bowls; drips long when held |
+| Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 0.55 | the hero; droops the longest; sleepy z's when idle |
+| Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 0.78 | holds its shape; resists narrow necks (`slurp` 0.25) |
+| Tabby | 29 | custard | 700 | 8 | 0 | 0.66 | the polite reference cat |
+| Maine Coon | 37 | cloud | 700 | 9 | 0 | 0.62 | compresses to 78% of its area |
+| The Void | 28 | ink | 420 | 5 | 0 | 0.64 | secret; pours into anything |
 
-Every cat can be picked up, in puzzles and in the photo room alike: 80% of the
-finger's force may point upward and every breed has `pull * 0.8 >= 2`. Weight
-shows as lag instead: the chonk takes about 0.9 s to lift 180 units, the kitten
-0.55 s, and heavier cats slide further when you stop. The finger's whole-body
-spring is strongly damped (`SoftBody.grabDamp`) so a lifted cat eases up to the
-finger rather than bobbing.
+**Held by the scruff.** Every cat can be picked up, in puzzles, the photo room
+and at home alike, and goes where the finger takes it: a pinch of five ring
+nodes near the touch (never the underside) is pinned to the finger. The world
+moves the hand to the finger in even steps across a frame's substeps, so it
+doesn't jerk; the pinch moves as one piece, at most 3 units per constraint
+pass (less than the thinnest glass is thick, so nothing is ever pulled through
+a wall), sliding along whatever it or the skin round it is pressed against,
+and easing off to a creep while pressed (so the skin can slide round a rim
+instead of folding). The edges split their corrections by how free each end
+is, so a hanging body pulls on its own skin, not the finger. Once off the
+ground the body dangles: its rest shape eases into a hanging one (taller than
+wide by `hang`, narrow at the pinch, fuller below), which even shapeless
+breeds take through a small shape stiffness while held; its swing and wobble
+are damped relative to the pinch, and it drifts sideways to hang right under
+the pinch, so a cat dragged off an edge doesn't stay draped over it. A few
+rules keep it sensible: standing on something under the pinch, the pinch
+won't descend (a finger pushing down slides the cat to the edge, then it steps
+off and hangs); skin right at the pinch resting on a rim lifts the pinch over
+it; and a guard keeps the skin beside the pinch from creasing into a hairpin
+(while held and for a moment after). Startled when scooped up, a held cat goes
+calm after a moment held still, like a real scruffed cat; a few soft folds
+show the gathered skin. A test drags cats of every size into the sides of
+containers at floor level and checks the skin never folds or passes through.
+
+The solver carries cats the same way, holding them so their dangling bottom
+clears the rim, and steps a cat off its own perch, down, then in under it.
 
 ## Painting and layering
 

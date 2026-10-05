@@ -70,10 +70,21 @@ export class World {
       b.impactShape = -1;
       // A sleeping cat wakes the moment the game or a finger pulls on it.
       if (b.asleep && (b.grab || b.settleForce !== 0 || b.assistAx <= -40 || b.assistAx >= 40)) b.wake();
+      if (b.grab) {
+        b.grab.fromX = b.grab.hx;
+        b.grab.fromY = b.grab.hy;
+      }
     }
     for (let s = 0; s < substeps; s++) {
+      const u = (s + 1) / substeps;
       for (const b of bodies) {
         b.bodyContacts = 0;
+        const g = b.grab;
+        if (g) {
+          // the hand goes to the finger in even steps across the frame
+          g.hx = g.fromX + (g.tx - g.fromX) * u;
+          g.hy = g.fromY + (g.ty - g.fromY) * u;
+        }
         if (!b.asleep) b.integrate(h, GRAVITY);
       }
       // Two passes so pressure and walls agree before velocities are derived
@@ -120,8 +131,8 @@ export class World {
     const { n, x, y, px, py } = b;
     const statics = this.statics;
     const rN = NODE_RADIUS;
-    // Held cats slide more easily (you're scooting them).
-    const mu = b.p.friction * (b.grab ? 0.45 : 1) * b.frictionMul;
+    // Held cats slide easily (you're carrying them, not dragging them along).
+    const mu = b.p.friction * (b.grab ? 0.3 : 1) * b.frictionMul;
     // Body AABB for broad phase
     let bminX = Infinity;
     let bminY = Infinity;

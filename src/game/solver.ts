@@ -98,7 +98,9 @@ export function gesturesFor(session: Session, catIndex: number, k: number): Gest
   const mid = (op.x0 + op.x1) / 2;
   const r = b.p.radius;
   const dir = Math.sign(mid - b.cx) || 1;
-  const above = op.y - r * 1.15;
+  // Held by the scruff (its top, about 0.7 r over where it's grabbed) a cat
+  // hangs about 2 r / sqrt(hang) long: hold it so its bottom clears the rim.
+  const above = op.y + r * 0.6 - (2 * r) / Math.sqrt(b.p.hang);
   const out: Gesture[] = [];
   const dist = Math.abs(mid - b.cx);
   const mv = Math.round(Math.min(40, 16 + dist / 5));
@@ -114,12 +116,15 @@ export function gesturesFor(session: Session, catIndex: number, k: number): Gest
     const leftGap = b.cx - support.x0;
     const toRight = (mid > b.cx ? rightGap * 0.7 : rightGap * 1.4) < (mid < b.cx ? leftGap * 0.7 : leftGap * 1.4);
     const ex = toRight ? support.x1 + r * 0.9 : support.x0 - r * 0.9;
+    // step off the edge and down to below the perch, then carry it in under
+    // the perch (dangling by the scruff, the cat's top must clear its underside)
+    const under = Math.max(above, support.y + r * 0.7 + 16);
     for (const [tol, hold] of [
       [0.3, 40],
       [0.18, 60],
       [0.45, 20],
     ] as const) {
-      out.push({ kind: 'drag', gx: b.cx + (toRight ? 1 : -1) * r * 0.35, gy, tx: mid, ty: Math.max(above, support.y + r * 0.6), move: mv, hold, tol, wx: ex, wy: b.cy - 4 });
+      out.push({ kind: 'drag', gx: b.cx + (toRight ? 1 : -1) * r * 0.35, gy, tx: mid, ty: under, move: mv, hold, tol, wx: ex, wy: under });
     }
   }
   for (const [dx, tol, hold, m] of [

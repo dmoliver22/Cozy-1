@@ -41,6 +41,8 @@ export interface CatPose {
   grabbed: boolean;
   /** Golden glow at the reveal. */
   glow: number;
+  /** Where a finger holds the cat by the scruff (world), while it's held. */
+  pinch?: { x: number; y: number } | null;
   /** Silhouette (locked collection cards). */
   silhouette?: boolean;
 }
@@ -553,6 +555,7 @@ function drawBody(ctx: Ctx, v: CatView, pose: CatPose, r: number, look: BreedLoo
   // cool shade hugging the far edge, a rim of light on the near one
   innerBands(ctx, P, box, ink.shade, r * 0.2, 0.32, 'shadow', 1);
   innerBands(ctx, P, box, ink.rim, r * 0.09, ink.rimAlpha, 'light', 1);
+  if (pose.pinch && v.dangle > 0.05) scruffFolds(ctx, pose.pinch.x, pose.pinch.y, r, ink, v.dangle);
   if (pose.glow > 0) {
     ctx.fillStyle = `rgba(255,214,120,${0.2 * pose.glow})`;
     ctx.fillRect(box.x0 - 2, box.y0 - 2, w + 4, h + 4);
@@ -626,6 +629,37 @@ function fillTexture(ctx: Ctx, kind: TexKind, box: Box, alpha: number, op: Globa
 }
 
 /** Breed markings, painted inside the body clip before the shading. */
+/**
+ * Held by the scruff: the skin is gathered up into the pinch, a few soft folds
+ * fanning down from it (drawn inside the body, under the face).
+ */
+function scruffFolds(ctx: Ctx, x: number, y: number, r: number, ink: Ink, a: number): void {
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const k of [-1, 0, 1]) {
+    const x0 = x + k * r * 0.07;
+    const y0 = y + r * 0.04;
+    const x1 = x + k * r * 0.3;
+    const y1 = y + r * (k === 0 ? 0.3 : 0.24);
+    const cx = x + k * r * 0.1;
+    const cy = y + r * 0.2;
+    ctx.strokeStyle = rgba(ink.deep, (ink.dark ? 0.5 : 0.32) * a);
+    ctx.lineWidth = Math.max(0.8, r * 0.045);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.quadraticCurveTo(cx, cy, x1, y1);
+    ctx.stroke();
+    // the raised side of each fold catches the light
+    ctx.strokeStyle = rgba(ink.lit, 0.35 * a);
+    ctx.lineWidth = Math.max(0.6, r * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(x0 - r * 0.035, y0 + r * 0.01);
+    ctx.quadraticCurveTo(cx - r * 0.035, cy, x1 - r * 0.035, y1);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawMarkings(ctx: Ctx, look: BreedLook, ink: Ink, v: CatView, r: number): void {
   const box = v.box;
   const w = box.x1 - box.x0;

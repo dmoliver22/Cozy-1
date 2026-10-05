@@ -85,9 +85,9 @@ describe('the home room', () => {
       expect(c.body.cy).toBeLessThan(FLOOR_Y);
       expect(c.body.cy).toBeGreaterThan(0);
     }
-    // Duchess in her basket and Inkwell in the box
+    // Biscuit in his basket and Inkwell in the box
     const seats = Object.fromEntries(s.cats.map((c) => [c.breed, c.seat ? s.containers[c.seat.container].type : null]));
-    expect(seats.persian).toBe('basket');
+    expect(seats.chonk).toBe('basket');
     expect(seats.void).toBe('box');
     expect(s.complete).toBe(false);
   });
@@ -95,7 +95,7 @@ describe('the home room', () => {
   it('the box, the jar and the hatch lead to the three games', () => {
     expect(PORTALS.map((p) => p.game).sort()).toEqual(['drop', 'fits', 'jar']);
     expect(portalAt(196, 530)?.game).toBe('fits');
-    expect(portalAt(300, 300)?.game).toBe('jar');
+    expect(portalAt(258, 300)?.game).toBe('jar');
     expect(portalAt(326, 10)?.game).toBe('drop');
     expect(portalAt(60, 300)).toBeNull();
   });

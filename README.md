@@ -41,8 +41,10 @@ attic hatch the next time you're home.
 
 In If It Fits:
 
-- **Drag** a cat to pick it up and carry it. Every cat can be lifted; heavier
-  cats lag behind your finger and stretch on the way.
+- **Drag** a cat to pick it up by the scruff and carry it. The spot you pinch
+  stays right under your finger; the rest of the cat dangles, long and droopy
+  (a chonk droops like pudding, a sphynx springs back), swings when you move
+  and goes calm when you hold still.
 - Let go over a container (or let a cat **ooze off a shelf**) and it pours in.
   If it fits, it sits.
 - **Tap** a cat to boop it: a little hop.
@@ -113,12 +115,15 @@ a sticky decision: pour in (a damped pull toward the opening plus a gentle
 it really doesn't fit, just perch. Cozy points come from how full the cavity is
 and how much of the cat is in it; a loaf poking out is perfect.
 
-**The finger.** A drag pulls the whole cat (65%) and stretches the touched part
-toward your finger (35%). Its strength is a multiple of the cat's weight (3.2x
-for the kitten down to 2.5x for the chonk, 80% of it allowed upward), so every
-cat can be carried and the heavy ones simply lag, sag and slide further. A
-strongly damped spring eases the cat up to the finger without bobbing. Undo
-snapshots everything.
+**The finger.** A drag picks the cat up by the scruff: a pinch of five ring
+nodes near the touch (from the top half, so you never dangle a cat by its
+tummy) is pinned to the finger, moving as one piece and a few units per
+constraint pass at most, so it slides along glass instead of being pulled
+through it. The rest of the cat hangs from the pinch and takes a dangling
+shape (each breed has its own droop, `hang`), with its swing damped relative
+to the pinch. A cat standing on something isn't pushed down into it: drag one
+down off a shelf and it slides to the edge and steps off. Undo snapshots
+everything.
 
 **Mornings.** The date seeds an integer RNG. The generator composes the room
 from tested vignettes (a shelf over a cup, a counter beside a stool, a cabinet

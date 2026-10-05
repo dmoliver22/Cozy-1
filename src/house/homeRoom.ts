@@ -15,39 +15,40 @@ const ROOM: Omit<RoomDef, 'cats'> = {
   id: 'home',
   name: 'Home',
   theme: 'living',
+  // (every spot can be reached from above: nothing for a cat to be stuck under)
   furniture: [
     // the cat steps up to the attic hatch
     { type: 'shelf', ...TOP_STEP },
-    { type: 'shelf', x0: 208, x1: 300, y: 224 },
-    // the shelf with the jar of cats
-    { type: 'shelf', x0: 250, x1: 380, y: 338 },
+    { type: 'shelf', x0: 200, x1: 296, y: 224 },
+    // the shelf with the jar of cats (clear of the box, so Inkwell lifts straight out)
+    { type: 'shelf', x0: 222, x1: 380, y: 338 },
     { type: 'sill', x0: 40, x1: 164, y: 212 },
-    { type: 'table', x0: 12, x1: 142, y: 438 },
+    { type: 'bookcase', x0: 12, x1: 118, y: 432 },
   ],
   containers: [
     { type: 'box', x: 196, y: 560, tint: 0 },
-    { type: 'basket', x: 318, y: 560, tint: 0, scale: 0.86 },
+    { type: 'basket', x: 318, y: 560, tint: 0, scale: 0.95 },
   ],
   decor: [
     { type: 'window', x: 102, y: 56, w: 112, h: 136, variant: 0 },
-    { type: 'picture', x: 188, y: 320, w: 46, h: 38, variant: 1 },
+    { type: 'picture', x: 96, y: 300, w: 46, h: 38, variant: 1 },
     { type: 'clock', x: 228, y: 112, w: 15 },
     { type: 'pendant', x: 186, y: 44 },
-    { type: 'rug', x: 214, y: 560, w: 200 },
+    { type: 'rug', x: 238, y: 560, w: 220 },
   ],
 };
 
 /** The little jar of cats: where it stands and how big it's drawn. */
-export const JAR_SPOT = { x: 300, y: 338, s: 0.42 };
+export const JAR_SPOT = { x: 258, y: 338, s: 0.42 };
 
 /** Where each cat likes to be when you come home (x, and the top of what they sit on). */
 const SPOTS: Record<BreedId, { x: number; y: number }> = {
   kitten: { x: 102, y: 212 },
-  tabby: { x: 70, y: 438 },
-  persian: { x: 318, y: 552 },
+  tabby: { x: 64, y: 432 },
+  persian: { x: 345, y: 338 },
   sphynx: { x: 334, y: 128 },
-  mainecoon: { x: 254, y: 224 },
-  chonk: { x: 62, y: 560 },
+  mainecoon: { x: 248, y: 224 },
+  chonk: { x: 318, y: 552 },
   void: { x: 196, y: 553 },
 };
 
@@ -72,7 +73,7 @@ export interface Portal {
 
 export const PORTALS: Portal[] = [
   { game: 'fits', name: 'If It Fits', x0: 128, y0: 470, x1: 264, y1: 564, lx: 196, ly: 466 },
-  { game: 'jar', name: 'Cat Jar', x0: 262, y0: 254, x1: 340, y1: 340, lx: 300, ly: 252 },
+  { game: 'jar', name: 'Cat Jar', x0: 220, y0: 254, x1: 298, y1: 340, lx: 258, ly: 252 },
   // the hatch and its ladder (a cat on the step below gets the tap first)
   { game: 'drop', name: 'Cat Drop', x0: TOP_STEP.x0 - 4, y0: CEIL_Y - 26, x1: HATCH.x1 + 10, y1: TOP_STEP.y - 4, lx: HATCH.x0 - 46, ly: CEIL_Y + 30 },
 ];

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BREED_ORDER, BREEDS, type BreedId } from '../src/physics/breeds';
 import { SoftBody } from '../src/physics/softbody';
-import { GRAVITY, World } from '../src/physics/world';
+import { World } from '../src/physics/world';
 import { CONTAINER_TYPES, buildContainer, roomShell } from '../src/game/props';
-import { LIFT, Session } from '../src/game/session';
+import { Session } from '../src/game/session';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 import type { StaticShape } from '../src/physics/shapes';
 
@@ -43,8 +43,8 @@ describe('soft-body cats', () => {
     expect(Array.from(a.y)).toEqual(Array.from(b.y));
   });
 
-  it('every cat can be picked up, heavy cats just rise more slowly', () => {
-    const early: Record<string, number> = {};
+  it('every cat can be picked up by the scruff: the pinch follows the finger, the body hangs and stretches', () => {
+    const tall: Record<string, number> = {};
     for (const breed of BREED_ORDER) {
       const world = new World();
       for (const s of roomShell()) world.addStatic(s);
@@ -52,22 +52,53 @@ describe('soft-body cats', () => {
       for (let f = 0; f < 60; f++) world.step();
       body.computeCentroid();
       const startY = body.cy;
-      body.startGrab(body.cx, body.cy - 5, body.p.pull * body.mass * GRAVITY, LIFT);
-      for (let f = 1; f <= 120; f++) {
-        body.grab!.tx = 180;
-        body.grab!.ty = startY - 200;
+      const r = body.p.radius;
+      const g = body.startGrab(body.cx, body.cy - r * 0.5);
+      const pinch = (): { x: number; y: number } => {
+        let x = 0;
+        let y = 0;
+        for (let m = 0; m < g.count; m++) {
+          x += body.x[g.nodes[m]];
+          y += body.y[g.nodes[m]];
+        }
+        return { x: x / g.count, y: y / g.count };
+      };
+      // carried up and across, then held still
+      for (let f = 1; f <= 150; f++) {
+        const t = Math.min(1, f / 40);
+        g.tx = 180 + 60 * t;
+        g.ty = startY - r * 0.5 - 220 * t;
         world.step();
-        if (f === 24) {
-          body.computeCentroid();
-          early[breed] = startY - body.cy;
+        if (f === 20 || f === 150) {
+          // the pinch is right where the finger has it (within a few units)
+          const p = pinch();
+          expect(Math.hypot(p.x - (g.hx + g.midX), p.y - (g.hy + g.midY)), `${breed} frame ${f}`).toBeLessThan(6);
         }
       }
       body.computeCentroid();
-      // carried up to the finger, without bobbing past it
-      expect(startY - body.cy).toBeGreaterThan(185);
-      expect(startY - body.cy).toBeLessThan(215);
+      // hanging straight down under the pinch, and long
+      expect(Math.abs(body.cx - pinch().x)).toBeLessThan(6);
+      expect(body.cy).toBeGreaterThan(pinch().y + r * 0.6);
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      for (let i = 0; i < body.n; i++) {
+        y0 = Math.min(y0, body.y[i]);
+        y1 = Math.max(y1, body.y[i]);
+        x0 = Math.min(x0, body.x[i]);
+        x1 = Math.max(x1, body.x[i]);
+      }
+      tall[breed] = (y1 - y0) / (x1 - x0);
+      expect(tall[breed], breed).toBeGreaterThan(1.1);
+      // let go: it falls and loafs
+      body.releaseGrab();
+      for (let f = 0; f < 120; f++) world.step();
+      body.computeCentroid();
+      expect(body.cy).toBeGreaterThan(500);
     }
-    expect(early.kitten).toBeGreaterThan(early.chonk + 10);
+    // a chonk droops longer than a springy sphynx
+    expect(tall.chonk).toBeGreaterThan(tall.sphynx);
   });
 
   it('a cat squeezed into a snug mug comes to complete rest (no jitter)', () => {
@@ -147,11 +178,17 @@ describe('soft-body cats', () => {
     // Pulling a cat into a shoebox through its wall used to pinch the neck over
     // the rim until the ring twisted into a figure 8 with the wall inside it;
     // pressing one into the crevice under a teacup knotted the skin.
+    // (held by the scruff, the pinch can also be pulled over a rim, or into
+    // the corner a wall makes with what the cat stands on)
     const cases = [
       ['shoebox', 'tabby'],
       ['shoebox', 'void'],
       ['saucepan', 'void'],
       ['teacup', 'void'],
+      ['box', 'chonk'],
+      ['bucket', 'kitten'],
+      ['vase', 'persian'],
+      ['basket', 'mainecoon'],
     ] as const;
     for (const [type, breed] of cases) {
       const s = new Session(
