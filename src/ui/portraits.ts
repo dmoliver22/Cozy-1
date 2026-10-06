@@ -1,6 +1,6 @@
-// Little resting-cat portraits for the collection and the sandbox picker.
+// Little resting-cat portraits: the cats card, and a cat's moving-in card.
 
-import { BREEDS, type BreedId } from '../physics/breeds';
+import { BREEDS, lookKey, type BreedId } from '../physics/breeds';
 import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
 import { roundedBox } from '../physics/shapes';
@@ -12,7 +12,7 @@ const cache = new Map<string, HTMLCanvasElement>();
 /** A settled loaf of the given breed drawn into a canvas (CSS size w x h). */
 export function catPortrait(breed: BreedId, w: number, h: number, opts: { silhouette?: boolean; happy?: boolean } = {}): HTMLCanvasElement {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const key = `${breed}:${w}x${h}@${dpr}:${opts.silhouette ? 's' : ''}${opts.happy ? 'h' : ''}`;
+  const key = `${lookKey(breed)}:${w}x${h}@${dpr}:${opts.silhouette ? 's' : ''}${opts.happy ? 'h' : ''}`;
   const hit = cache.get(key);
   if (hit) return cloneCanvas(hit);
   const world = new World();

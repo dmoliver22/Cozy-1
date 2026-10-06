@@ -2,9 +2,9 @@
 // fronts), live cats in between, effects and paper grain on top.
 
 import type { Cat, Session } from '../game/session';
-import { FLOOR_Y, WORLD_W, type Prop } from '../game/props';
+import { FLOOR_Y, WORLD_W } from '../game/props';
 import type { DecorPlacement, RoomDef } from '../game/room';
-import { clamp, damp, easeInOut, lerp } from '../util/math';
+import { clamp, damp, lerp } from '../util/math';
 import { CatView, drawCat, catFootprint, type CatPose, type Expression } from './catArt';
 import { drawContainerBack, drawContainerFront, containerShadow } from './propArt';
 import { drawFurniture } from './furnitureArt';
@@ -73,14 +73,6 @@ interface Tile {
   rect: { x0: number; y0: number; x1: number; y1: number; ppu: number };
 }
 
-export interface HintGhost {
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
-  t: number;
-}
-
 export class Renderer {
   static nightAmbient: [number, number, number] = [108, 104, 180];
   readonly canvas: HTMLCanvasElement;
@@ -104,13 +96,8 @@ export class Renderer {
   session: Session | null = null;
   def: RoomDef | null = null;
   theme: Theme = THEMES.kitchen;
-  glow = 0;
-  glowTarget = 0;
-  hint: HintGhost | null = null;
   pointer: { x: number; y: number } | null = null;
   time = 0;
-  /** Props currently being dragged in the sandbox (drawn live, not cached). */
-  liveProps = new Set<number>();
   /** The house (null: a room). */
   stage: Stage | null = null;
   private tiles: Tile[] = [];
@@ -128,9 +115,6 @@ export class Renderer {
     this.theme = THEMES[session.def.theme] ?? THEMES.kitchen;
     this.views.clear();
     this.effects = [];
-    this.glow = 0;
-    this.glowTarget = 0;
-    this.hint = null;
     this.resetCamera(true);
     this.invalidate();
   }
@@ -186,10 +170,6 @@ export class Renderer {
   /** World units per css pixel (for scrolling by finger). */
   get unitsPerPx(): number {
     return 1 / (this.scale * this.cam.zoom);
-  }
-
-  focus(x: number, y: number, zoom: number): void {
-    this.camTarget = { x, y, zoom };
   }
 
   /** Keep a zoomed camera inside the painted room (no peeking past the edges). */
@@ -312,7 +292,7 @@ export class Renderer {
     this.paintGrain(b, r);
     b.restore();
     // container fronts (only tiles that have any keep a front layer)
-    const fronts = s.containers.filter((p) => !this.liveProps.has(p.uid) && p.y1 > r.y0 && p.y0 - 16 < r.y1);
+    const fronts = s.containers.filter((p) => p.y1 > r.y0 && p.y0 - 16 < r.y1);
     if (fronts.length || st.paintFront) {
       t.front = mk(t.front);
       const f = t.front.getContext('2d')!;
@@ -330,7 +310,7 @@ export class Renderer {
       this.ensureTiles();
       return;
     }
-    const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${s.props.map((p) => (this.liveProps.has(p.uid) ? `${p.uid}:live` : `${p.uid}:${p.x.toFixed(1)},${p.y.toFixed(1)}`)).join('|')}`;
+    const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${s.props.map((p) => `${p.uid}:${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('|')}`;
     if (key === this.layerKey && this.layerBack) return;
     this.layerKey = key;
     const r = this.visibleWorldRect();
@@ -362,7 +342,6 @@ export class Renderer {
     let fx1 = -Infinity;
     let fy1 = -Infinity;
     for (const p of s.containers) {
-      if (this.liveProps.has(p.uid)) continue;
       fx0 = Math.min(fx0, p.x0 - 12);
       fy0 = Math.min(fy0, p.y0 - 16);
       fx1 = Math.max(fx1, p.x1 + 12);
@@ -435,10 +414,9 @@ export class Renderer {
     drawShell(ctx, this.theme, r.x0, r.y0, r.x1, r.y1, seed);
     const decor = this.decor();
     for (const d of decor) if (d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel') drawDecor(ctx, d, this.theme, seed + d.x);
-    for (const p of s.furniture) if (!this.liveProps.has(p.uid)) drawFurniture(ctx, p, this.theme);
+    for (const p of s.furniture) drawFurniture(ctx, p, this.theme);
     for (const d of decor) if (!(d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel')) drawDecor(ctx, d, this.theme, seed + d.x);
     for (const p of s.containers) {
-      if (this.liveProps.has(p.uid)) continue;
       containerShadow(ctx, p);
       drawContainerBack(ctx, p);
     }
@@ -448,7 +426,7 @@ export class Renderer {
 
   private paintFront(ctx: Ctx): void {
     const s = this.session!;
-    for (const p of s.containers) if (!this.liveProps.has(p.uid)) drawContainerFront(ctx, p);
+    for (const p of s.containers) drawContainerFront(ctx, p);
   }
 
   /** Dollhouse cutaway edges around the room. */
@@ -614,7 +592,6 @@ export class Renderer {
     this.cam.y = lerp(this.cam.y, this.camTarget.y, k);
     this.cam.zoom = lerp(this.cam.zoom, this.camTarget.zoom, k);
     this.clampCamera();
-    this.glow = lerp(this.glow, this.glowTarget, damp(1.5, dt));
 
     const dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -634,15 +611,6 @@ export class Renderer {
       }
       st.underlay?.(ctx, dt);
     } else if (this.layerBack) ctx.drawImage(this.layerBack, lr.x0, lr.y0, lr.x1 - lr.x0, lr.y1 - lr.y0);
-    // live (dragged) props: back
-    for (const p of s.props) {
-      if (!this.liveProps.has(p.uid)) continue;
-      if (p.kind === 'furniture') drawFurniture(ctx, p, this.theme);
-      else {
-        containerShadow(ctx, p);
-        drawContainerBack(ctx, p);
-      }
-    }
     // cat shadows
     const poses = s.cats.map((cat) => {
       const v = this.view(cat);
@@ -696,7 +664,6 @@ export class Renderer {
       if (sw > 0 && sh > 0) ctx.drawImage(this.layerFront, sx, sy, sw, sh, lr.x0 + sx / ppu, lr.y0 + sy / ppu, sw / ppu, sh / ppu);
     }
     st?.liveFront?.(ctx, dt);
-    for (const p of s.props) if (this.liveProps.has(p.uid) && p.kind === 'container') drawContainerFront(ctx, p);
     for (let i = 0; i < s.cats.length; i++) {
       const cat = s.cats[i];
       if (poses[i].rim) drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'over');
@@ -711,22 +678,9 @@ export class Renderer {
     // purr waves
     for (const cat of s.cats) if (cat.seat) this.drawPurr(ctx, cat);
     if (this.def?.mood !== 'night' && !this.reducedMotion) this.drawMotes(ctx);
-    this.drawHint(ctx, dt);
     this.drawEffects(ctx, dt);
     // lamp-lit night rooms: dusk tint with warm pools of light
     if (this.def?.mood === 'night') this.drawNight(ctx);
-    // screen-space overlays
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (this.glow > 0.01) {
-      const g = ctx.createRadialGradient(this.W / 2, this.H * 0.45, 0, this.W / 2, this.H * 0.45, Math.max(this.W, this.H) * 0.75);
-      g.addColorStop(0, `rgba(255,214,130,${0.28 * this.glow})`);
-      g.addColorStop(1, `rgba(255,190,90,${0.12 * this.glow})`);
-      ctx.save();
-      ctx.globalCompositeOperation = 'soft-light';
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, this.W, this.H);
-      ctx.restore();
-    }
   }
 
   /** Dust motes drifting down the window's shaft of light. */
@@ -852,7 +806,7 @@ export class Renderer {
       if (g && cat.heldStill <= 40) look = clamp((g.tx - b.cx) / (b.p.radius * 2), -1, 1);
     } else if (cat.sinceTouch < 22) expression = 'squint';
     else if (b.airborneFrames > 6) expression = 'wide';
-    else if (seat) expression = s.complete || seat.cozy.score >= 78 ? 'happy' : 'content';
+    else if (seat) expression = seat.cozy.score >= 78 ? 'happy' : 'content';
     else if (cat.settled > 30 && b.breed.look.persona === 'sleepy') expression = 'sleepy';
     else look = Math.sin(v.t * 0.5 + cat.index) > 0.85 ? 0.8 : Math.sin(v.t * 0.5 + cat.index) < -0.9 ? -0.8 : 0;
     const tubeFace = this.stage?.inTube?.(cat);
@@ -893,9 +847,9 @@ export class Renderer {
       rim,
       seated: !!seat,
       resting,
-      purr: seat ? (s.complete ? 1 : 0.6) : 0,
+      purr: seat ? 0.6 : 0,
       grabbed: cat.grabbed,
-      glow: this.glow,
+      glow: 0,
       pinch,
     };
   }
@@ -937,8 +891,7 @@ export class Renderer {
 
   private drawPurr(ctx: Ctx, cat: Cat): void {
     const v = this.view(cat);
-    const s = this.session!;
-    const amp = s.complete ? 1 : 0.55;
+    const amp = 0.55;
     const t = this.time * 1.6 + cat.index;
     const ph = t % 1;
     const r = cat.body.p.radius;
@@ -954,55 +907,6 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
-  }
-
-  private drawHint(ctx: Ctx, dt: number): void {
-    const h = this.hint;
-    if (!h) return;
-    h.t += dt;
-    if (h.t > 4.2) {
-      this.hint = null;
-      return;
-    }
-    const cyc = (h.t % 1.4) / 1.4;
-    const e = easeInOut(clamp(cyc * 1.3, 0, 1));
-    const x = lerp(h.fromX, h.toX, e);
-    const y = lerp(h.fromY, h.toY, e) - Math.sin(e * Math.PI) * 26;
-    const fade = Math.min(1, h.t * 3, (4.2 - h.t) * 2);
-    ctx.save();
-    ctx.globalAlpha = fade * 0.85;
-    // dotted arc
-    ctx.strokeStyle = 'rgba(255,253,247,0.95)';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([2, 7]);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(h.fromX, h.fromY);
-    ctx.quadraticCurveTo((h.fromX + h.toX) / 2, Math.min(h.fromY, h.toY) - 52, h.toX, h.toY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // paw ghost
-    drawPaw(ctx, x, y, 11, 'rgba(255,253,247,0.95)', 'rgba(62,58,79,0.5)');
-    ctx.restore();
-  }
-
-  /** Draw a single prop live (sandbox drag preview). */
-  drawPropPreview(ctx: Ctx, p: Prop): void {
-    if (p.kind === 'furniture') drawFurniture(ctx, p, this.theme);
-    else {
-      drawContainerBack(ctx, p);
-      drawContainerFront(ctx, p);
-    }
-  }
-
-  /** Render the current room into a standalone canvas (photo mode). */
-  snapshot(width: number, height: number): HTMLCanvasElement {
-    const c = document.createElement('canvas');
-    c.width = width;
-    c.height = height;
-    const g = c.getContext('2d')!;
-    g.drawImage(this.canvas, 0, 0, width, height);
-    return c;
   }
 }
 

@@ -1,30 +1,24 @@
 // The house: who lives here, who's on the way, and what brings each cat
-// home; the treats you earn in the games and what you spend them on (the
-// basement, the attic, the roof garden, perches you put wherever you like); and where
-// everyone was. Two cats live here from the start; the other four move in as
-// you play, each waiting on something in one of the three games. Pure logic
-// plus localStorage, no DOM (the home screen shows it).
+// home; your own cat, as you made it; the treats you earn in the games and
+// what you spend them on (the basement, the attic, the roof garden, perches
+// you put wherever you like); and where everyone was. Two cats live here from
+// the start, and yours once you've made it; the other four move in as you
+// play, each waiting on something in one of the two games. Pure logic plus
+// localStorage, no DOM (the home screen shows it).
 
-import type { BreedId } from '../physics/breeds';
+import { setMyCat, type BreedId } from '../physics/breeds';
+import { PERSONALITIES, cleanDesign, type CatDesign } from '../physics/mycat';
 import type { RunReport } from '../proto/shell';
+import { TEMPERS } from './antics';
 import { LIVING_CEIL, LIVING_CUSHION_X, ROOF_DY, type ExtraFloor, type FloorId } from './layout';
 import { PERCH_ORDER, floorTop, perchBox, perchPrice, type PerchKind, type PerchSave } from './perches';
 
-export type GameId = 'fits' | 'jar' | 'drop';
+export type GameId = 'jar' | 'drop';
 
-/**
- * A finished If It Fits room (its id; whether it's the first time for it, or
- * for today's morning room; how cozy, and whether it was done in par), or a
- * Cat Jar or Cat Drop run.
- */
-export type FitsReport = { game: 'fits'; room: string; first?: boolean; cozy?: number; underPar?: boolean };
-export type HouseReport = FitsReport | RunReport;
+/** How a Cat Jar or Cat Drop run went (or is going). */
+export type HouseReport = RunReport;
 
 export interface HouseStats {
-  /** If It Fits rooms finished (every finish counts). */
-  fitsRooms: number;
-  /** Which rooms (ids), each once. */
-  fitsDone: string[];
   jarGames: number;
   /** Biggest cat made in Cat Jar: its tier (0 a kitten .. 5 the Void). */
   jarBiggest: number;
@@ -38,8 +32,8 @@ export interface HouseStats {
 }
 
 export interface HouseSave {
-  v: 5;
-  /** Cats living here, in the order they moved in. */
+  v: 6;
+  /** Cats living here, in the order they moved in ('mine' is yours). */
   residents: BreedId[];
   /** Cats who've earned their place: they arrive the next time you're home. */
   arriving: BreedId[];
@@ -66,6 +60,10 @@ export interface HouseSave {
   toy: { x: number; y: number } | null;
   /** There's been a scrap (the first one comes with a word on fish making it better). */
   scraped: boolean;
+  /** Your own cat, as made in the cat maker (null until it's made). */
+  cat: CatDesign | null;
+  /** The cat maker's been offered (on the first visit home, or the first since it came). */
+  catAsked: boolean;
 }
 
 export interface Hurt {
@@ -73,7 +71,7 @@ export interface Hurt {
   fed: number;
 }
 
-/** Everyone's name (the same cats as in the If It Fits rooms). */
+/** Everyone's name (yours is whatever you called it: see applyMyCat). */
 export const NAMES: Record<BreedId, string> = {
   kitten: 'Pip',
   tabby: 'Mochi',
@@ -81,38 +79,51 @@ export const NAMES: Record<BreedId, string> = {
   mainecoon: 'Juniper',
   chonk: 'Biscuit',
   void: 'Inkwell',
+  mine: 'Your cat',
 };
+
+/** Who a cat is, in a few words: "Pip the Kitten", or just your cat's name. */
+export function whoIs(b: BreedId): string {
+  return b === 'mine' ? NAMES.mine : `${NAMES[b]} the ${BREEDS_NAME[b]}`;
+}
+const BREEDS_NAME: Record<Exclude<BreedId, 'mine'>, string> = { kitten: 'Kitten', tabby: 'Tabby', persian: 'Persian', mainecoon: 'Maine Coon', chonk: 'Chonk', void: 'Void' };
+
+/** Make your cat the one in the house's save: its breed, name and temperament. */
+export function applyMyCat(h: Pick<HouseSave, 'cat'>): void {
+  setMyCat(h.cat);
+  NAMES.mine = h.cat?.name ?? 'Your cat';
+  const p = PERSONALITIES[h.cat?.personality ?? 'playful'];
+  TEMPERS.mine = { word: p.name.toLowerCase(), play: p.play, touchy: p.touchy, lazy: p.lazy, toy: p.toy };
+}
 
 /** Who lives here from the start. */
 export const FIRST_RESIDENTS: BreedId[] = ['kitten', 'tabby'];
 
 export interface MoveIn {
   breed: BreedId;
-  /** The game it happens in (and the room, for one in a particular If It Fits room). */
+  /** The game it happens in. */
   game: GameId;
-  room?: string;
   /** What brings them home, for the cats card. */
   how: string;
   met(s: HouseStats): boolean;
 }
 
-/** Cat Jar's chain: a Maine Coon is the fourth size (two Persians snuggled up). */
+/** Cat Jar's chain: a Persian is the third size (two tabbies snuggled up), a Maine Coon the fourth. */
+const JAR_PERSIAN = 2;
 const JAR_MAINECOON = 3;
-/** Inkwell lives in the third If It Fits room, and follows you home from it. */
-export const INKWELL_ROOM = 'midnight-study';
+/** Inkwell, a small night that wandered in, lives deep down in the dark. */
+export const INKWELL_DEPTH = 750;
 
 /**
- * The other four, roughly in the order a new player meets them: one early
- * one in each game, then one that takes a little more (measured with bots:
- * a fair Cat Drop run eats 20 to 60 fish; Cat Jar makes Maine Coons within
- * its first twenty drops, and even the Void within forty, so the last cat
- * comes from If It Fits).
+ * The other four, two in each game, roughly in the order a new player meets
+ * them: an early one and one that takes a little more (measured with bots: a
+ * fair Cat Drop run eats 20 to 60 fish and falls 400 to 1,300 m).
  */
 export const MOVE_INS: MoveIn[] = [
-  { breed: 'persian', game: 'fits', how: 'Finish a room in If It Fits', met: (s) => s.fitsRooms >= 1 },
-  { breed: 'mainecoon', game: 'jar', how: 'Make a Maine Coon in Cat Jar', met: (s) => s.jarBiggest >= JAR_MAINECOON },
+  { breed: 'persian', game: 'jar', how: 'Make a Persian in Cat Jar', met: (s) => s.jarBiggest >= JAR_PERSIAN },
   { breed: 'chonk', game: 'drop', how: 'Eat 25 fish in one Cat Drop', met: (s) => s.dropMostFish >= 25 },
-  { breed: 'void', game: 'fits', room: INKWELL_ROOM, how: 'Finish the Midnight Study in If It Fits', met: (s) => s.fitsDone.includes(INKWELL_ROOM) },
+  { breed: 'mainecoon', game: 'jar', how: 'Make a Maine Coon in Cat Jar', met: (s) => s.jarBiggest >= JAR_MAINECOON },
+  { breed: 'void', game: 'drop', how: `Fall ${INKWELL_DEPTH} m in one Cat Drop`, met: (s) => s.dropDeepest >= INKWELL_DEPTH },
 ];
 
 export const ALL_CATS: BreedId[] = [...FIRST_RESIDENTS, ...MOVE_INS.map((m) => m.breed)];
@@ -120,7 +131,7 @@ export const ALL_CATS: BreedId[] = [...FIRST_RESIDENTS, ...MOVE_INS.map((m) => m
 const KEY = 'cozy-house:v1';
 
 export function emptyStats(): HouseStats {
-  return { fitsRooms: 0, fitsDone: [], jarGames: 0, jarBiggest: 0, jarBest: 0, dropRuns: 0, dropDeepest: 0, dropMostFish: 0, dropBest: 0 };
+  return { jarGames: 0, jarBiggest: 0, jarBest: 0, dropRuns: 0, dropDeepest: 0, dropMostFish: 0, dropBest: 0 };
 }
 
 /** Where the roof garden began in a house saved before the living room grew (world y). */
@@ -143,7 +154,7 @@ function livingCushion(id: number): PerchSave {
 
 export function emptyHouse(): HouseSave {
   return {
-    v: 5,
+    v: 6,
     residents: [...FIRST_RESIDENTS],
     arriving: [],
     welcomed: false,
@@ -159,14 +170,13 @@ export function emptyHouse(): HouseSave {
     hurt: {},
     toy: null,
     scraped: false,
+    cat: null,
+    catAsked: false,
   };
 }
 
-/** Progress made before there was a house (If It Fits rooms, the games' best scores). */
+/** Progress made before there was a house (the games' best scores). */
 export interface Earlier {
-  fitsRooms: number;
-  /** Hand-made rooms finished (ids). */
-  fitsDone: string[];
   jarBest: number;
   dropBest: number;
 }
@@ -180,7 +190,7 @@ export function loadHouse(earlier?: Earlier): HouseSave {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<Omit<HouseSave, 'v'>> & { v?: number };
-      const h: HouseSave = { ...emptyHouse(), ...d, v: 5, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
+      const h: HouseSave = { ...emptyHouse(), ...d, v: 6, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
       if ((d.v ?? 1) < 2) {
         // the first house's Cat Jar had a sphynx between the kitten and the
         // tabby; and there were no treats yet: a bag of them to start with
@@ -225,9 +235,17 @@ export function loadHouse(earlier?: Earlier): HouseSave {
           if (w && Math.abs(w.y - OLD_MIDDLE_STEP.y) < 3 && w.x > OLD_MIDDLE_STEP.x0 && w.x < OLD_MIDDLE_STEP.x1) delete h.where[b];
         }
       }
-      if (!Array.isArray(h.stats.fitsDone)) h.stats.fitsDone = [];
-      h.residents = h.residents.filter((b) => ALL_CATS.includes(b));
-      h.arriving = h.arriving.filter((b) => ALL_CATS.includes(b) && !h.residents.includes(b));
+      // (If It Fits went: what it counted goes with it)
+      const st = h.stats as HouseStats & { fitsRooms?: unknown; fitsDone?: unknown };
+      delete st.fitsRooms;
+      delete st.fitsDone;
+      h.cat = cleanDesign(d.cat);
+      h.catAsked = d.catAsked === true;
+      const known = (b: BreedId): boolean => ALL_CATS.includes(b) || (b === 'mine' && !!h.cat);
+      h.residents = h.residents.filter(known);
+      h.arriving = h.arriving.filter((b) => known(b) && !h.residents.includes(b));
+      // (and the cats who moved in for it now come for something in the other games)
+      settle(h);
       if (!Number.isFinite(h.treats) || h.treats < 0) h.treats = 0;
       h.open = (Array.isArray(h.open) ? h.open : []).filter((f) => f === 'basement' || f === 'attic' || f === 'roof');
       h.perches = (Array.isArray(h.perches) ? h.perches : []).filter((p) => p && PERCH_ORDER.includes(p.kind) && Number.isFinite(p.x) && Number.isFinite(p.y));
@@ -247,8 +265,6 @@ export function loadHouse(earlier?: Earlier): HouseSave {
   }
   const h = emptyHouse();
   if (earlier) {
-    h.stats.fitsRooms = earlier.fitsRooms;
-    h.stats.fitsDone = [...earlier.fitsDone];
     h.stats.jarBest = earlier.jarBest;
     h.stats.dropBest = earlier.dropBest;
     settle(h);
@@ -280,11 +296,7 @@ export function settle(h: HouseSave): BreedId[] {
 /** Fold a report into the stats. Returns the cats it just earned (now on their way). */
 export function recordRun(h: HouseSave, r: HouseReport): BreedId[] {
   const s = h.stats;
-  if (r.game === 'fits') {
-    s.fitsRooms++;
-    if (!s.fitsDone.includes(r.room)) s.fitsDone.push(r.room);
-  }
-  else if (r.game === 'jar') {
+  if (r.game === 'jar') {
     if (r.over) s.jarGames++;
     s.jarBiggest = Math.max(s.jarBiggest, r.biggest);
     if (!r.daily) s.jarBest = Math.max(s.jarBest, r.score);
@@ -326,16 +338,11 @@ export function nextMoveIn(h: HouseSave, game?: GameId): MoveIn | null {
  * Cat Jar points per treat; Cat Drop: a treat for every two fish and every
  * fifty metres down. (Each game pays about the same for the time it takes,
  * ten or fifteen treats a minute: a whole jar, about 30, more for a good one;
- * a Cat Drop run, 20 to 60; a new If It Fits room, 25 to 35.)
+ * a Cat Drop run, 20 to 60.)
  */
 export const JAR_POINTS_PER_TREAT = 150;
 export const DROP_FISH_PER_TREAT = 2;
 export const DROP_METRES_PER_TREAT = 50;
-
-/** Treats for a finished If It Fits room: more the first time, a little more for a cozy one and for par. */
-export function fitsTreats(r: FitsReport): number {
-  return (r.first ? 25 : 5) + ((r.cozy ?? 0) >= 90 ? 5 : 0) + (r.underPar ? 5 : 0);
-}
 
 /** Treats a Cat Jar or Cat Drop run has earned so far (they're paid as it goes). */
 export function runTreats(r: RunReport): number {
@@ -347,15 +354,11 @@ export function runTreats(r: RunReport): number {
  * pays what the run has earned since the last one). Returns how many.
  */
 export function payTreats(h: HouseSave, r: HouseReport): number {
-  let add: number;
-  if (r.game === 'fits') add = fitsTreats(r);
-  else {
-    const total = runTreats(r);
-    const id = r.run ?? '';
-    const paid = h.run && h.run.id === id ? h.run.paid : 0;
-    add = Math.max(0, total - paid);
-    h.run = { id, paid: Math.max(paid, total) };
-  }
+  const total = runTreats(r);
+  const id = r.run ?? '';
+  const paid = h.run && h.run.id === id ? h.run.paid : 0;
+  const add = Math.max(0, total - paid);
+  h.run = { id, paid: Math.max(paid, total) };
   h.treats += add;
   h.earned += add;
   return add;

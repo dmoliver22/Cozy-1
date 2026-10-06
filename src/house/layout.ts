@@ -2,7 +2,7 @@
 // room in the middle (the home room, where everything starts: twice as tall
 // as a room, with a high wall to put perches up) and the basement right under
 // it, all in one world you scroll up and down. Each floor is laid out in the
-// same local frame as an If It Fits room (floor at FLOOR_Y) and moved up or
+// same local frame as a room (floor at FLOOR_Y) and moved up or
 // down by its `dy`, so the room painters and furniture work on every floor
 // unchanged. Between the floors: solid slabs. Three glass tubes join the
 // floors, there from the start but capped until you open the floor they go

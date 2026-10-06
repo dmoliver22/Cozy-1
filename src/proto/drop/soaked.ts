@@ -8,11 +8,12 @@ import type { CatView } from '../../render/catArt';
 import { mix, shadowOf, specular, type Ctx } from '../../render/paint';
 import { drawBubble } from './foam';
 
-const wet = new Map<string, Breed>();
+/** (by look: your own cat's changes when you restyle it) */
+const wet = new WeakMap<BreedLook, Breed>();
 
 /** The breed as it looks soaked: darker and a touch cooler, its fur lying flat. */
 export function wetBreed(b: Breed): Breed {
-  let w = wet.get(b.id);
+  let w = wet.get(b.look);
   if (w) return w;
   const l = b.look;
   // wet fur darkens, pale coats most of all, and goes a little cool
@@ -29,7 +30,7 @@ export function wetBreed(b: Breed): Breed {
     earTufts: false,
   };
   w = { ...b, look };
-  wet.set(b.id, w);
+  wet.set(b.look, w);
   return w;
 }
 

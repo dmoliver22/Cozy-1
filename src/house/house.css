@@ -1,6 +1,6 @@
 /* The house's own toast ("Duchess wants to move in!"): always on the page,
-   over the home room, If It Fits and the other games alike, so every rule
-   here is self-contained and every name starts with hh-. */
+   over the home room and the games alike, so every rule here is
+   self-contained and every name starts with hh-. */
 .hh-toast {
   position: fixed;
   left: 50%;

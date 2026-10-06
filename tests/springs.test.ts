@@ -14,7 +14,7 @@ import { tangled } from '../src/proto/drop/game';
  */
 function roof(kind: PerchKind, x: number, y: number, breed: BreedId) {
   const p = buildPerch({ id: 50, kind, x, y });
-  const s = new Session(houseRoom({ open: ['roof'], residents: [breed], where: { [breed]: { x: 140, y: FLOORS.roof.floorY } } }), { mode: 'sandbox', shell: () => [...houseShell(), ...p.shapes] });
+  const s = new Session(houseRoom({ open: ['roof'], residents: [breed], where: { [breed]: { x: 140, y: FLOORS.roof.floorY } } }), { shell: () => [...houseShell(), ...p.shapes] });
   const cat = s.cats[0];
   const fell = new WeakMap<SoftBody, number>();
   const step = (): void => {

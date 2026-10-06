@@ -1,9 +1,9 @@
-// Cat Jar: the numbers. World units (y down) like If It Fits, a portrait
+// Cat Jar: the numbers. World units (y down) like the house, a portrait
 // world centred on a big glass jar that stands on a kitchen counter.
 
 import { BREEDS, type BreedId, type BreedLook, type BreedPhysics } from '../../physics/breeds';
 
-/** Room width (the painted kitchen is 380 wide, like an If It Fits room). */
+/** Room width (the painted kitchen is 380 wide, like a room of the house). */
 export const WORLD_W = 380;
 /** Jar centre line. */
 export const CX = 190;

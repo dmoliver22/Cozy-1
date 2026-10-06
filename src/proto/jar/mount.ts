@@ -1,5 +1,5 @@
 // Cat Jar: drop squishy cats into a tall glass jar; two of the same snuggle
-// up and melt into a bigger cat. A "Suika" game on the If It Fits soft-body
+// up and melt into a bigger cat. A "Suika" game on the house's soft-body
 // engine.
 //
 // mountJar wires it together inside an element: the game (rules, physics), the

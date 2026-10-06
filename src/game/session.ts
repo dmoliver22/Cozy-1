@@ -1,20 +1,20 @@
-// A play session in one room: cats, containers, nudges ("paws"), undo, hints,
-// seating and the "Fits & sits" completion. Pure logic, no rendering.
+// The cats in a room (the house): carrying and booping them, and cats
+// pouring into containers and settling in ("if it fits, I sits"). Pure
+// logic, no rendering.
 
-import { BREEDS, breedArea, type BreedId } from '../physics/breeds';
+import type { BreedId } from '../physics/breeds';
 import type { Material, StaticShape } from '../physics/shapes';
-import type { BodySnapshot, SoftBody } from '../physics/softbody';
+import type { SoftBody } from '../physics/softbody';
 import type { World } from '../physics/world';
 import { clamp } from '../util/math';
-import { cozyScore, measureOverlap, shareFace, type CozyResult, type Overlap } from './fit';
-import { buildContainer, FLOOR_Y, WORLD_W, type ContainerPlacement, type Prop } from './props';
+import { cozyScore, measureOverlap, type CozyResult, type Overlap } from './fit';
+import { FLOOR_Y, WORLD_W, type Prop } from './props';
 import { SoftBody as Body } from '../physics/softbody';
 import { buildRoom, type RoomDef } from './room';
 
 const SETTLE_ENERGY = 400;
 const SETTLE_SPEED2 = 14 * 14;
 const SETTLE_FRAMES = 16;
-const COMPLETE_FRAMES = 40;
 /** Downward pull on the part of a cat inside a container opening (units/s^2). */
 const SLURP = 2600;
 
@@ -63,35 +63,9 @@ export type GameEvent =
   | { t: 'unseat'; cat: Cat }
   | { t: 'grab'; cat: Cat }
   | { t: 'release'; cat: Cat }
-  | { t: 'boop'; cat: Cat }
-  | { t: 'complete' }
-  | { t: 'undo' };
-
-interface UndoState {
-  bodies: BodySnapshot[];
-  seats: (SeatInfo | null)[];
-  paws: number;
-}
-
-export interface CatResult {
-  name: string;
-  breed: BreedId;
-  container: string;
-  score: number;
-  label: string;
-  face: string;
-}
-
-export interface RoomResult {
-  cats: CatResult[];
-  cozy: number;
-  paws: number;
-  par: number | undefined;
-  faces: string;
-}
+  | { t: 'boop'; cat: Cat };
 
 export interface SessionOptions {
-  mode?: 'puzzle' | 'sandbox';
   settleFrames?: number;
   /** The room's walls, floor and ceiling (the house has floors of its own). */
   shell?: () => StaticShape[];
@@ -116,20 +90,13 @@ const SHAPE_FLOW = 22;
 
 export class Session {
   readonly def: RoomDef;
-  readonly mode: 'puzzle' | 'sandbox';
   world!: World;
   props!: Prop[];
   containers!: Prop[];
   furniture!: Prop[];
   cats!: Cat[];
-  paws = 0;
-  hints = 0;
   frame = 0;
-  complete = false;
-  completeFrame = -1;
   events: GameEvent[] = [];
-  private allSeatedFrames = 0;
-  private undoStack: UndoState[] = [];
   private shapeToContainer = new Map<number, number>();
   private shapeIsFurniture = new Set<number>();
   private grabbing: Cat | null = null;
@@ -140,7 +107,6 @@ export class Session {
 
   constructor(def: RoomDef, opts: SessionOptions = {}) {
     this.def = def;
-    this.mode = opts.mode ?? 'puzzle';
     this.settleFrames = opts.settleFrames ?? 75;
     this.shell = opts.shell;
     this.load();
@@ -172,22 +138,12 @@ export class Session {
       heldStill: 0,
       intent: null,
     }));
-    this.paws = 0;
-    this.hints = 0;
     this.frame = 0;
-    this.complete = false;
-    this.completeFrame = -1;
-    this.allSeatedFrames = 0;
-    this.undoStack = [];
     this.grabbing = null;
     this.events = [];
-    // Evaluate starting seats (a cat may begin inside something in the sandbox).
+    // Evaluate starting seats (a cat may begin inside something).
     this.updateCats();
     this.events = [];
-  }
-
-  restart(): void {
-    this.load();
   }
 
   private lerpFrom = new Map<SoftBody, Drawn>();
@@ -224,7 +180,7 @@ export class Session {
       if (!m || m.x.length !== b.n) continue;
       m.sx.set(b.x);
       m.sy.set(b.y);
-      // an undo or a sandbox tidy teleports cats: never blend across that
+      // a cat put somewhere (popping out of a tube, say) teleports: never blend across that
       // (nor across skin that was untangled: its nodes traded places)
       const jump = Math.abs(b.x[0] - m.x[0]) + Math.abs(b.y[0] - m.y[0]);
       const fresh = jump > 40 || b.ringVersion !== m.ring;
@@ -373,7 +329,6 @@ export class Session {
       this.updateSeat(cat, best);
     }
     this.resolveClaims();
-    this.checkComplete();
   }
 
   /**
@@ -500,21 +455,6 @@ export class Session {
     }
   }
 
-  private checkComplete(): void {
-    if (this.complete || this.mode === 'sandbox' || this.cats.length === 0) return;
-    const all = this.cats.every((c) => c.seat && !c.grabbed);
-    this.allSeatedFrames = all ? this.allSeatedFrames + 1 : 0;
-    if (this.allSeatedFrames >= COMPLETE_FRAMES) {
-      for (const c of this.cats) {
-        const k = c.seat!.container;
-        c.seat!.cozy = cozyScore(c.overlaps[k].fill, c.overlaps[k].inside);
-      }
-      this.complete = true;
-      this.completeFrame = this.frame;
-      this.events.push({ t: 'complete' });
-    }
-  }
-
   // --- Player actions -------------------------------------------------------
 
   /** Cat under a world point, with some finger slop. */
@@ -545,42 +485,8 @@ export class Session {
     return best;
   }
 
-  private pushUndo(): void {
-    this.undoStack.push({
-      bodies: this.cats.map((c) => c.body.snapshot()),
-      seats: this.cats.map((c) => (c.seat ? { ...c.seat } : null)),
-      paws: this.paws,
-    });
-    if (this.undoStack.length > 40) this.undoStack.shift();
-  }
-
-  get canUndo(): boolean {
-    return this.undoStack.length > 0 && !this.complete;
-  }
-
-  undo(): boolean {
-    if (!this.canUndo) return false;
-    if (this.grabbing) this.endGrab();
-    const s = this.undoStack.pop()!;
-    this.cats.forEach((c, i) => {
-      c.body.restore(s.bodies[i]);
-      c.seat = s.seats[i];
-      c.settled = c.seat ? SETTLE_FRAMES : 0;
-      c.grabbed = false;
-      c.intent = null;
-    });
-    this.paws = s.paws;
-    this.allSeatedFrames = 0;
-    this.rememberPositions();
-    this.events.push({ t: 'undo' });
-    return true;
-  }
-
   beginGrab(cat: Cat, wx: number, wy: number): void {
-    if (this.complete) return;
     if (this.grabbing) this.endGrab();
-    this.pushUndo();
-    if (this.mode === 'puzzle') this.paws++;
     cat.body.startGrab(wx, wy);
     cat.grabbed = true;
     cat.sinceTouch = 0;
@@ -619,9 +525,6 @@ export class Session {
 
   /** Tap: a little hop away from the finger. */
   boop(cat: Cat, wx: number, _wy: number): void {
-    if (this.complete) return;
-    this.pushUndo();
-    if (this.mode === 'puzzle') this.paws++;
     const b = cat.body;
     b.computeCentroid();
     const side = clamp((b.cx - wx) / b.p.radius, -1, 1);
@@ -635,29 +538,7 @@ export class Session {
     this.events.push({ t: 'boop', cat });
   }
 
-  // --- Reporting -------------------------------------------------------------
-
-  seatedCount(): number {
-    return this.cats.filter((c) => c.seat).length;
-  }
-
-  results(): RoomResult {
-    const cats = this.cats.map((c) => {
-      const score = c.seat?.cozy.score ?? 0;
-      return {
-        name: c.name,
-        breed: c.breed,
-        container: c.seat ? this.containers[c.seat.container].name : '',
-        score,
-        label: c.seat?.cozy.label ?? '',
-        face: shareFace(score),
-      };
-    });
-    const cozy = cats.length ? Math.round(cats.reduce((a, c) => a + c.score, 0) / cats.length) : 0;
-    return { cats, cozy, paws: this.paws, par: this.def.par, faces: cats.map((c) => c.face).join('') };
-  }
-
-  // --- Sandbox editing -------------------------------------------------------
+  // --- The house -----------------------------------------------------------
 
   /** Colliders came or went (a perch, a tube): sort out again which are containers and which are furniture. */
   registerShapes(): void {
@@ -667,7 +548,7 @@ export class Session {
     for (const sh of this.world.statics) if (!this.shapeToContainer.has(sh.id)) this.shapeIsFurniture.add(sh.id);
   }
 
-  /** Drop a new cat into the room (sandbox). */
+  /** A new cat in the room (one moving in, in at the window). */
   addCat(breed: BreedId, x: number, y: number, name: string): Cat {
     const body = new Body(breed, x, y);
     this.world.addBody(body);
@@ -689,91 +570,5 @@ export class Session {
     };
     this.cats.push(cat);
     return cat;
-  }
-
-  addContainer(placement: ContainerPlacement): Prop {
-    const prop = buildContainer(placement);
-    for (const sh of prop.shapes) this.world.addStatic(sh);
-    this.containers.push(prop);
-    this.props.push(prop);
-    for (const c of this.cats) c.overlaps.push({ covered: 0, fill: 0, inside: 0 });
-    this.registerShapes();
-    return prop;
-  }
-
-  /** Rebuild a container at a new spot (sandbox drag). */
-  moveContainer(k: number, x: number, y: number): Prop {
-    const old = this.containers[k];
-    this.world.removeStaticsOfProp(old.uid);
-    const prop = buildContainer({ type: old.type as ContainerPlacement['type'], x, y, flip: old.flip, scale: old.scale, tint: old.tint }, old.uid);
-    for (const sh of prop.shapes) this.world.addStatic(sh);
-    this.containers[k] = prop;
-    this.props[this.props.indexOf(old)] = prop;
-    for (const c of this.cats) {
-      if (c.seat?.container === k) c.seat = null;
-      if (c.intent?.k === k) c.intent = null;
-    }
-    this.registerShapes();
-    return prop;
-  }
-
-  removeContainer(k: number): void {
-    const old = this.containers[k];
-    this.world.removeStaticsOfProp(old.uid);
-    this.containers.splice(k, 1);
-    this.props.splice(this.props.indexOf(old), 1);
-    for (const c of this.cats) {
-      c.overlaps.splice(k, 1);
-      if (c.seat) {
-        if (c.seat.container === k) c.seat = null;
-        else if (c.seat.container > k) c.seat.container--;
-      }
-      c.intent = null;
-    }
-    this.registerShapes();
-  }
-
-  removeCat(cat: Cat): void {
-    if (this.grabbing === cat) this.endGrab();
-    this.world.removeBody(cat.body);
-    this.cats.splice(this.cats.indexOf(cat), 1);
-    this.cats.forEach((c, i) => (c.index = i));
-  }
-
-  /** A gentle suggestion: which cat to nudge toward which container. */
-  hint(): { cat: Cat; container: Prop; tx: number; ty: number } | null {
-    const free = this.containers.map((_, k) => !this.cats.some((c) => c.seat && c.seat.container === k));
-    const unseated = this.cats.filter((c) => !c.seat);
-    if (!unseated.length) return null;
-    // Prefer the solver's plan when it still applies.
-    for (const step of this.def.plan ?? []) {
-      const cat = this.cats[step.cat];
-      if (!cat || cat.seat || !free[step.container]) continue;
-      const c = this.containers[step.container];
-      this.hints++;
-      return { cat, container: c, tx: step.tx, ty: step.ty };
-    }
-    // Otherwise: best estimated snugness among free containers below the cat.
-    let bestScore = -Infinity;
-    let pick: { cat: Cat; container: Prop; tx: number; ty: number } | null = null;
-    for (const cat of unseated) {
-      const area = breedArea(cat.breed);
-      for (let k = 0; k < this.containers.length; k++) {
-        if (!free[k]) continue;
-        const c = this.containers[k];
-        const ratio = area / c.capacity;
-        const snug = -Math.abs(Math.log(ratio / 1.35));
-        const below = c.opening!.y > cat.body.cy ? 0.6 : 0;
-        const dist = Math.abs(c.x - cat.body.cx) / WORLD_W;
-        const s = snug + below - dist * 0.8;
-        if (s > bestScore) {
-          bestScore = s;
-          const r = BREEDS[cat.breed].physics.radius;
-          pick = { cat, container: c, tx: (c.opening!.x0 + c.opening!.x1) / 2, ty: c.opening!.y - r };
-        }
-      }
-    }
-    if (pick) this.hints++;
-    return pick;
   }
 }

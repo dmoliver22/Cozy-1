@@ -2,13 +2,18 @@
 // is), a toast naming each room as the cat drops into it, and the start and
 // end cards (the end card sits up top, over the bath the cat ends up in).
 
-import { BREEDS, type BreedId } from '../../physics/breeds';
+import { BREEDS, hasMyCat, type BreedId } from '../../physics/breeds';
 import { faceSVG } from '../../ui/faces';
 import type { DropState } from './game';
 
-export const BREED_CHOICES: BreedId[] = ['tabby', 'kitten', 'persian', 'mainecoon', 'chonk'];
+/** The cats you can play: yours first, once you've made one. */
+export function breedChoices(): BreedId[] {
+  const six: BreedId[] = ['tabby', 'kitten', 'persian', 'mainecoon', 'chonk'];
+  return hasMyCat() ? ['mine', ...six] : six;
+}
 
 const BLURB: Partial<Record<BreedId, string>> = {
+  mine: 'Your own cat',
   tabby: 'All-rounder',
   kitten: 'Small & zippy',
   persian: 'Slow as honey',
@@ -78,7 +83,7 @@ export class DropUi {
       <div class="card drop-card" id="dStart" role="dialog" aria-label="Cat Drop">
         <h2>Cat Drop</h2>
         <p>Drag to steer, tap to bounce. Eat fish to get chonkier. Stay ahead of bath time!</p>
-        <div class="breeds" role="radiogroup" aria-label="Pick a cat">${BREED_CHOICES.map((b) => breedButton(b, b === breed)).join('')}</div>
+        <div class="breeds" role="radiogroup" aria-label="Pick a cat">${breedChoices().map((b) => breedButton(b, b === breed)).join('')}</div>
         <div class="flow" id="dFlow"></div>
         <div class="row">
           <button class="btn" id="dPlay">Play</button>

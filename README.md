@@ -1,21 +1,24 @@
 # If It Fits
 
-A cozy, no-fail soft-body puzzle. Nudge, tip and coax squishy cats into teacups,
-boots, boxes and sinks until every cat fits and sits. A new room every morning.
+A cozy house of squishy cats. Make a cat of your own, as firm as a loaf or as
+runny as a puddle, pick the cats up by the scruff and pour them into the
+vase, and play two games with them: **Cat Jar** and **Cat Drop**. More cats
+move in as you play.
 
-> Cats are liquid. Prove it: pour this chonk into a teacup.
+> Cats are liquid. Make one and prove it.
 
-It lives in a little house with two more games on the same cats: the page
-opens in the **living room**, a sunny room twice as tall as the others where
-your cats lounge, and everything starts from there: **If It Fits**, **Cat
-Jar** and **Cat Drop** are the big buttons along the bottom. Two cats live
-here at first; the other four **move in as you play**, each waiting on
-something in one of the games. Every game earns **treats**, spent on
-**perches** you put wherever you like (all the way up the living room's tall
-wall) and on opening up the rest of the house: a **basement** right under the
-living room, an **attic** over it and a **roof garden** up top, joined to it
-by glass tubes that are there from the start, capped and padlocked until you
-open the floor they go to. Scroll up and down to look round.
+The page opens in the **living room**, a sunny room twice as tall as the
+others, and that's the game's home screen and its sandbox at once: every cat
+can be carried about, booped and poured into things from the first second.
+**Cat Jar** and **Cat Drop** are the big buttons along the bottom. Two cats
+live here at first, and yours once you've made it; the other four **move in
+as you play**, each waiting on something in one of the games. Both games
+earn **treats**, spent on **perches** you put wherever you like (all the way
+up the living room's tall wall) and on opening up the rest of the house: a
+**basement** right under the living room, an **attic** over it and a **roof
+garden** up top, joined to it by glass tubes that are there from the start,
+capped and padlocked until you open the floor they go to. Scroll up and down
+to look round.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -28,21 +31,59 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-At home, tap one of the big buttons along the bottom to play. Your cats can
-be picked up and booped here too (carry one to the top or the bottom of the
-screen and the view scrolls along with it), and now and then one hops over to
-another spot, up a run of perches if you've built one: they love the perches.
-Tap the faces in the top bar for the cats card: who lives here, and what
-brings each of the others home. A cat who's earned their place says so at
-once, mid-game too, and hops in at the window the next time you're home.
+At home:
+
+- **Drag** a cat to pick it up by the scruff and carry it. The spot you pinch
+  stays right under your finger and glides along smoothly however jumpy the
+  touch; the skin there stretches up into a little tent as you lift, and the
+  rest of the cat dangles, long and droopy, sways when you move and hangs
+  straight when you hold still. Carry one to the top or the bottom of the
+  screen and the view scrolls along with it.
+- Let go over the vase or the basket (or let a cat **ooze off a shelf**) and
+  it pours in. If it fits, it sits, and purrs.
+- **Tap** a cat to boop it: a little hop.
+- Now and then one hops over to another spot, up a run of perches if you've
+  built one: they love the perches.
+- Tap the faces in the top bar for the cats card: your own cat, who lives
+  here, and what brings each of the others home. A cat who's earned their
+  place says so at once, mid-game too, and hops in at the window the next
+  time you're home.
+
+**Your own cat.** The first time you're home the welcome card offers to make
+one (and later, the cats card or the menu: make it, or restyle it any time).
+The cat maker has a live preview, your cat on a cushion, a soft body like any
+other (poke it and it hops), and:
+
+- a **name** (or a new one at random), and **🎲 Surprise me** for a whole cat
+  at random;
+- a **coat**: ginger, cream, caramel, brown, chocolate, grey, silver, blue,
+  black or white;
+- a **pattern**: plain, stripes, tuxedo, patches (a white cat with patches of
+  the coat's colour) or points (a Siamese);
+- **eyes**: the little dark dots every house cat has, or gold, green, blue or
+  copper;
+- **fur**, short to fluffy (a bib, and lynx tips at the fluffiest);
+- **size**, tiny to chonky;
+- **squish**, from **Loaf** to **Puddle**: how it holds together, and not
+  just how it looks. A loaf keeps its shape, springs back and hangs short
+  from the scruff; a puddle spreads out flat when it settles, droops long
+  when it's carried and pours like water. The readout says how it pours:
+  firm as a loaf, wobbles like jelly, pours like custard, pours like honey,
+  pours like a puddle;
+- a **personality**: playful, easygoing, sleepy, dramatic or mischievous
+  (its face, and how it gets on with the others at home).
+
+It moves in at the window, and it plays Cat Drop too: it's first in the
+picker.
 
 | Cat | Moves in when you... |
 | --- | --- |
 | Pip (kitten), Mochi (tabby) | live here from the start |
-| Duchess (Persian) | finish a room in If It Fits |
+| Your own cat | make it |
+| Duchess (Persian) | make a Persian in Cat Jar |
 | Juniper (Maine Coon) | make a Maine Coon in Cat Jar |
 | Biscuit (chonk) | eat 25 fish in one Cat Drop |
-| Inkwell (the Void) | finish the Midnight Study in If It Fits (she lives there) |
+| Inkwell (the Void) | fall 750 m in one Cat Drop |
 
 The house:
 
@@ -53,10 +94,9 @@ The house:
   herself into it), a laundry basket, and a **bouncy cushion** on the floor
   between them: drop a cat on it from up high and boing, up it goes, a little
   less each time, until it sits.
-- **Treats** come from every game: a new If It Fits room (more for a cozy one
-  in par), every 150 points in Cat Jar, fish and metres in Cat Drop, and a
-  little present the cats leave on the rug the first time you're home each
-  day. The **Shop** tin shows how many you have.
+- **Treats** come from both games: every 150 points in Cat Jar, fish and
+  metres in Cat Drop, and a little present the cats leave on the rug the
+  first time you're home each day. The **Shop** tin shows how many you have.
 - **The shop** opens up the basement (the lid comes off the funnel in the
   living room floor, to drop a cat down to it), the attic (a cosy loft under
   the roof, with a round window, string lights and an old crate; the cap
@@ -84,45 +124,21 @@ The house:
   **hurt**, with a plaster on and a sad face, and needs fish to feel better:
   tap it to feed it one, a treat each, until it's well (5 to 9).
 
-In If It Fits:
-
-- **Drag** a cat to pick it up by the scruff and carry it. The spot you pinch
-  stays right under your finger and glides along smoothly however jumpy the
-  touch; the skin there stretches up into a little tent as you lift (lift
-  fast and it stretches tall before the cat comes up after it), and the rest
-  of the cat dangles, long and droopy (a chonk droops like pudding), sways
-  when you move and hangs straight when you hold still. In the hand every cat
-  is soft and liquid: it flows into each new shape and never jitters.
-- Let go over a container (or let a cat **ooze off a shelf**) and it pours in.
-  If it fits, it sits.
-- **Tap** a cat to boop it: a little hop.
-- **Undo** is always free; there's no way to fail.
-- Snug fits earn **cozy points**; every nudge is a **paw**; **par** is what the
-  solver needed.
-- When the last cat settles, the camera pans across the room while the purring
-  builds (**Fits & sits**), then you can share a spoiler-free grid of cat faces.
-
-Handy URLs while developing: `?room=1|2|3` (hand-made rooms), `?daily=2026-10-05`
-(any morning), `?sandbox` (the photo room), `?game=fits|jar|drop` (home, then
-straight into a game).
+Handy URL while developing: `?game=jar|drop` (home, then straight into a
+game).
 
 ## What's in the box
 
 | Pitch | Where it lives |
 | --- | --- |
 | Soft-body cat rig (pressure-spring blob, 24-32 nodes, fixed-step physics) | `src/physics/` |
-| Breeds with their own flow: kitten = water, Persian = honey, chonk = pudding, tabby = custard, Maine Coon = cloud, plus a secret cat | `src/physics/breeds.ts` |
-| Shared prop library (teacup, mug, boot, box, shoebox, fruit bowl, sink, flower pot, laundry basket, saucepan, vase, bucket, slipper, mixing bowl; shelves, counters, stools, tables, fridges, bookcases...) | `src/game/props.ts`, art in `src/render/propArt.ts` |
-| Three hand-made rooms: Sunny Kitchen (the 5-second clip), Bath Time, Midnight Study | `src/game/rooms.ts` |
-| Cozy points by snugness, not failures | `src/game/fit.ts` |
-| A new room every morning, generated from the prop library, checked by a solver for a fair par | `src/game/generator.ts`, `src/game/solver.ts` |
-| Fits & sits reveal: camera pan, purrs swell, cat-face row turns gold | `src/app.ts`, `src/render/renderer.ts` |
-| Spoiler-free share grid | `src/game/share.ts` |
-| Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
+| Breeds with their own flow: kitten = water, Persian = honey, chonk = pudding, tabby = custard, Maine Coon = cloud, the Void = ink, and yours (loaf to puddle) | `src/physics/breeds.ts` |
+| Make your own cat: a design (coat, pattern, eyes, fur, size, squish, personality) made into a breed of its own, and the cat maker with its live preview | `src/physics/mycat.ts`, `src/house/catMaker.ts` |
+| Shared prop library (vase, laundry basket and the rest; shelves, counters, stools, tables, fridges, bookcases...) | `src/game/props.ts`, art in `src/render/propArt.ts` |
+| If it fits, I sits: a cat poured into something settles in and purrs | `src/game/session.ts`, `src/game/fit.ts` |
 | The house: four floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
 | Perches that move: a hammock that's a simulated sling, a bouncy cushion that squashes and throws a cat back up | `src/house/springs.ts`, art in `src/house/perchArt.ts` |
 | Cats with ways of their own at home: temperaments and moods, stalk, wiggle and pounce, a ball of yarn, scraps in a dust cloud, a hurt cat nursed back with fish | `src/house/antics.ts`, art in `src/house/anticsArt.ts` |
-| 5 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |
 
@@ -138,8 +154,8 @@ a cat dragged over a rim drapes over it like a sack instead of letting the
 wall slice through. Seated cats get rest damping so they loaf calmly, and a cat that
 has rested truly still for a moment falls asleep: it is frozen (no solver
 chatter at all) until a finger, a boop, a game nudge, a cat bumping into it or
-a moved prop wakes it. The face always floats to the top of the blob, so a cat
-poured into a teacup still reads as a loaf with two ears.
+a moved perch wakes it. The face always floats to the top of the blob, so a cat
+poured into a vase still reads as a loaf with two ears.
 
 **Painting.** Everything is painted in code with one shared kit
 (`src/render/paint.ts`): a single warm light from the upper left, painterly
@@ -149,21 +165,28 @@ textures (fur, wood grain, plaster, brush strokes, cardboard, weave) laid over
 the flat gouache colour. Cats are repainted every frame from the physics ring:
 locks of fur are worked into the silhouette, then coat markings, fur texture,
 form shading, occlusion underneath and a rim of light; ears with pink insides,
-dot eyes with highlights, whisker pads, little paws, and a slow breath while
+dot eyes (or coloured ones) with highlights, whisker pads, little paws, and a slow breath while
 resting. Ears follow the top of the head smoothly (eased in the head's frame),
 and fur lies flat wherever a cat presses against a wall or glass. Every
 container is glass, so you can watch a cat squish into it: the body is painted
 under the container's translucent front, its front paws over the rim, and it
-sits in a soft shadow on the container's floor. The rooms get plaster walls,
-wainscoting, plank floors, deep windows with a painted view, light shafts with
-drifting dust, and lamp-lit nights. The room and the props are painted once
-into cached layers.
+sits in a soft shadow on the container's floor. The house's rooms get plaster
+walls, wainscoting, plank floors, deep windows with a painted view and light
+shafts with drifting dust, all painted once into cached tiles.
 
 **Fitting.** Containers have a cavity polygon. A cat touching a container makes
 a sticky decision: pour in (a damped pull toward the opening plus a gentle
 "slurp" on the part already inside), slide off a rim it's balancing on, or, if
-it really doesn't fit, just perch. Cozy points come from how full the cavity is
-and how much of the cat is in it; a loaf poking out is perfect.
+it really doesn't fit, just perch. How snug it is comes from how full the
+cavity is and how much of the cat is in it; a loaf poking out is perfect.
+
+**Your cat.** A design becomes a breed of its own (`'mine'`): size sets the
+radius (22 to 40), and with it the ring's nodes, the weight, the hop and the
+voice; squish sets the skin's tension, a little shape memory at the loaf end,
+how far the skin stretches and how long it hangs from the scruff, how fast it
+pours and how wide it settles (about 1.25 times as wide as tall for a loaf,
+up to 2 for a puddle, at any size). The house, the faces, the portraits and
+Cat Drop all take it like any other cat (see docs/DESIGN.md).
 
 **The finger.** A drag picks the cat up by the scruff: a pinch of five ring
 nodes near the touch (from skin that faces up, so you never dangle a cat by
@@ -183,26 +206,11 @@ the whole cat. Nothing gets squashed: the scruff eases off whatever pushes
 back on the cat (furniture, a shelf it stands on, a cat underneath), a cat
 lying on top is gently lifted or rolls off instead, and any skin that still
 ends up crossed over itself is turned the right way round the same frame (see
-docs/DESIGN.md). Undo snapshots everything.
-
-**Mornings.** The date seeds an integer RNG. The generator composes the room
-from tested vignettes (a shelf over a cup, a counter beside a stool, a cabinet
-beside a box, a sill over a boot, a high shelf over a table) and decorates it.
-The solver then plays it like a person, dragging one cat at a time and letting
-go once the cat is over the opening, and only publishes rooms where every cat
-gets seated. The number of nudges it needed is par. The simulation only uses
-`+ - * /` and `sqrt` (plus a deterministic sine), so every device builds and
-checks the same room. To make mornings load instantly, `npm run precompute`
-runs the same generator and solver ahead of time and stores which variant
-passed, its par and the solver's plan (used for hints) in
-`src/game/daily-index.json` (about 100 bytes a day). Any date outside the index
-is generated and solved in a Web Worker on the player's device and cached.
-Changing the generator bumps `GENERATOR_VERSION`; re-run the precompute (a test
-checks the index still matches).
+docs/DESIGN.md).
 
 ## Cat Jar and Cat Drop
 
-Two more games built on the same cats, physics and paint. In the house they're
+Two games built on the same cats, physics and paint. In the house they're
 mounted over the page (`mountJar`, `mountDrop`: the page's stylesheet steps
 aside while one is up, and they share its sound and settings, a way home and
 run reports); each also still has a page of its own:
@@ -233,7 +241,7 @@ run reports); each also still has a page of its own:
   ahead of bath time: a few hundred simulated soap bubbles pouring down the
   house after you, drizzling as they come. Get caught and the foam fills the
   screen, then clears to your cat sitting soaked in a clawfoot bubble bath, with
-  your stats. Five breeds, plus a daily drop.
+  your stats. Your own cat and five breeds, plus a daily drop.
 
 They share `src/proto/kit.ts` (canvas, fixed-step loop with interpolation,
 tap/drag input, a cat painter) and `src/proto/shell.ts` (how a game sits in
@@ -245,13 +253,12 @@ game in `dist-proto/`.
 
 ```bash
 npm run dev           # dev server
-npm test              # unit tests (physics, scoring, solver, generator, saves, the house)
+npm test              # unit tests (physics, your cat, the house, the games)
 npm run e2e           # Playwright smoke tests (builds + previews first)
 npm run typecheck
 npm run build         # static site in dist/
 npm run build:single  # the whole house in one self-contained HTML file in dist-single/
 npm run build:protos  # Cat Jar and Cat Drop on their own, one HTML file each, in dist-proto/
-npm run precompute    # re-solve the next 200 mornings into src/game/daily-index.json
 ```
 
 For the e2e tests on a machine with a system Chromium:

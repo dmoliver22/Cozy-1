@@ -1,20 +1,23 @@
-// The home screen: the tall house you scroll up and down (the roof garden,
-// the living room with its tall wall, the basement), your cats and their
-// little lives (now and then one hops to another spot, up a run of perches if
-// there is one, or plays: see antics.ts; a cat hurt in a scrap is made better
-// with fish), the bar of big buttons into the three games, the treats the
-// games earn you and the shop they're spent in (opening up the basement and
-// the roof garden, perches you put wherever you like), the glass tubes
-// between the floors (capped and padlocked until the floor they go to is
-// open), the cats card (who lives here, what brings each of the others home),
-// cats moving in (they hop in at the window) and, the first time you're home
-// each day, a little present from the cats.
+// The home screen, where the page opens: the tall house you scroll up and
+// down (the roof garden, the attic, the living room with its tall wall, the
+// basement), a sandbox of cats to pick up, carry, boop and pour into things,
+// and their little lives (now and then one hops to another spot, up a run of
+// perches if there is one, or plays: see antics.ts; a cat hurt in a scrap is
+// made better with fish), your own cat (the cat maker: catMaker.ts), the bar
+// of big buttons into the two games, the treats the games earn you and the
+// shop they're spent in (opening up the basement, the attic and the roof
+// garden, perches you put wherever you like), the glass tubes between the
+// floors (capped and padlocked until the floor they go to is open), the cats
+// card (who lives here, what brings each of the others home), cats moving in
+// (they hop in at the window) and, the first time you're home each day, a
+// little present from the cats.
 
 import type { AudioEngine } from '../audio/audio';
 import { FLOOR_Y, WORLD_W, localFurniture } from '../game/props';
 import type { DecorPlacement, RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
-import { BREEDS, type BreedId } from '../physics/breeds';
+import { BREEDS, lookKey, type BreedId } from '../physics/breeds';
+import { randomDesign, type CatDesign } from '../physics/mycat';
 import type { StaticShape } from '../physics/shapes';
 import type { SoftBody } from '../physics/softbody';
 import { FRAME_DT, GRAVITY } from '../physics/world';
@@ -30,6 +33,7 @@ import { catPortrait } from '../ui/portraits';
 import { clamp } from '../util/math';
 import { localDateKey } from '../util/date';
 import { Antics, MOOD_WORDS, TEMPERS, moodOf } from './antics';
+import { CatMaker } from './catMaker';
 import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
 import { GIFT_SPOT, fittingBoxes, houseRoom } from './homeRoom';
@@ -38,6 +42,7 @@ import {
   ALL_CATS,
   FLOOR_PRICES,
   NAMES,
+  applyMyCat,
   arrive,
   buyFloor,
   buyPerch,
@@ -58,6 +63,7 @@ import {
   recordRun,
   storePerch,
   takeGift,
+  whoIs,
   writeHouse,
   type Earlier,
   type GameId,
@@ -105,22 +111,20 @@ export interface HomeHost {
   readonly audio: AudioEngine;
   /** The home room's session (while home). */
   readonly session: Session;
-  /** One line about If It Fits for its button ("new room", "done today"). */
-  fitsNote(): string;
   openOverlay(html: string, onBind?: (root: HTMLElement) => void): void;
   closeOverlay(): void;
   overlayOpen(): boolean;
   /** A finger is on a cat (the cats hold still for it). */
   busy(): boolean;
-  /** Into a game (for If It Fits, maybe a particular room). */
-  play(game: GameId, room?: string): void;
+  /** Into a game. */
+  play(game: GameId): void;
   /** Build the house again (a floor was opened): the cats stay where they are. */
   rebuild(): void;
   /** Where the finger carrying a cat is on screen (null if no cat is being carried). */
   carryFinger(): { x: number; y: number } | null;
 }
 
-const GAME_NAMES: Record<GameId, string> = { fits: 'If It Fits', jar: 'Cat Jar', drop: 'Cat Drop' };
+const GAME_NAMES: Record<GameId, string> = { jar: 'Cat Jar', drop: 'Cat Drop' };
 
 /** Seconds between a cat's hops, at the least and the most. */
 const HOP_GAP: [number, number] = [6, 13];
@@ -196,6 +200,8 @@ export class Home {
   private arrivalIn = -1;
   /** The cat who just arrived: their card shows once they've landed. */
   private newcomer: { cat: Cat; t: number } | null = null;
+  /** The cat maker, while it's open. */
+  private maker: CatMaker | null = null;
   private lastLabels = '';
   /** Perches out in the house (their colliders are in the world). */
   private perchProps: PerchProp[] = [];
@@ -236,6 +242,7 @@ export class Home {
     earlier: Earlier,
   ) {
     this.house = loadHouse(earlier);
+    applyMyCat(this.house);
     // a perch put up where a tube is now (the tubes used to come with their floor) goes back in the cupboard
     const fit = fittingBoxes(this.house, 'all');
     for (const p of this.house.perches) {
@@ -320,7 +327,6 @@ export class Home {
    */
   get sessionOptions(): SessionOptions {
     return {
-      mode: 'sandbox',
       shell: () => {
         this.perchProps = placedPerches(this.house).map((p) => buildPerch(p));
         return [...houseShell(), ...this.fittingShapes(), ...this.perchProps.flatMap((p) => p.shapes)];
@@ -654,7 +660,7 @@ export class Home {
     if (fresh.length) {
       const b = fresh[0];
       const more = fresh.length > 1 ? ` (and ${NAMES[fresh[1]]}!)` : '';
-      this.toast(b, `${NAMES[b]} the ${BREEDS[b].name} wants to move in!${more}`);
+      this.toast(b, `${whoIs(b)} wants to move in!${more}`);
     }
     if (treats > 0) {
       if (this.active) this.treatsGained(treats);
@@ -703,11 +709,10 @@ export class Home {
 
   private refreshBar(): void {
     const notes: Record<GameId, string> = {
-      fits: this.host.fitsNote(),
       jar: this.bestNote(loadBest('catjar.best')),
       drop: this.bestNote(loadBest('catdrop.best')),
     };
-    for (const game of ['fits', 'jar', 'drop'] as GameId[]) {
+    for (const game of ['jar', 'drop'] as GameId[]) {
       const btn = this.bar.querySelector<HTMLElement>(`[data-game=${game}]`);
       if (!btn) continue;
       (btn.querySelector('.tin-note') as HTMLElement).textContent = notes[game];
@@ -852,7 +857,8 @@ export class Home {
     if (this.newcomer) {
       const n = this.newcomer;
       n.t += dt;
-      if (!this.leaping(n.cat) && ((n.cat.settled > 20 && n.t > 1) || n.t > 4)) {
+      // (its card waits for any other card to be closed)
+      if (!this.leaping(n.cat) && ((n.cat.settled > 20 && n.t > 1) || n.t > 4) && !this.host.overlayOpen()) {
         this.newcomer = null;
         this.arrivalCard(n.cat.breed);
       }
@@ -864,6 +870,11 @@ export class Home {
       return;
     }
     if (this.host.overlayOpen() || this.host.busy() || this.placing) return;
+    // a house from before the cat maker: offer it, once (when nobody's arriving)
+    if (this.house.welcomed && !this.house.catAsked && !this.house.cat && this.since > 1.2) {
+      this.offerMaker();
+      return;
+    }
     this.hopIn -= dt;
     if (this.hopIn <= 0) {
       this.hopIn = HOP_GAP[0] + Math.random() * (HOP_GAP[1] - HOP_GAP[0]);
@@ -1653,19 +1664,92 @@ export class Home {
       `<div class="card" role="dialog" aria-label="Welcome home">
         <h2>Welcome home!</h2>
         <div class="hc-faces">${faces}</div>
-        <p class="sub">${this.names(this.house.residents)} live here. Play any game to earn treats, and more cats will move in.</p>
-        <p class="hc-games">The games are on the buttons along the bottom: <b>If It Fits</b>, <b>Cat Jar</b> and <b>Cat Drop</b>.</p>
-        <p class="hc-games">Spend treats in the <b>shop</b> on perches for the cats (all the way up the wall), and to open up the basement and the roof garden. Swipe up and down to look round the house.</p>
-        <div class="btns"><button class="btn primary" data-close>Let's play</button></div>
+        <p class="sub">${this.names(this.house.residents)} live here. Pick them up, carry them about, boop them, pour them into the vase.</p>
+        <p class="hc-games"><b>Make your own cat</b> to live here too: its coat, its fur, how big, and how squishy, from a firm loaf to a puddle.</p>
+        <p class="hc-games">Play <b>Cat Jar</b> and <b>Cat Drop</b> (the big buttons along the bottom) to earn treats for the <b>shop</b>, and more cats will move in. Swipe up and down to look round the house.</p>
+        <div class="btns"><button class="btn primary" data-act="make">Make my cat</button><button class="btn" data-close>Later</button></div>
       </div>`,
+      (root) => root.querySelector('[data-act=make]')!.addEventListener('click', () => this.showMaker()),
     );
     this.house.welcomed = true;
+    this.house.catAsked = true;
     this.house.gift = localDateKey();
     writeHouse(this.house);
   }
 
+  /** Once, for a house from before there was a cat maker: make your own cat? */
+  private offerMaker(): void {
+    this.house.catAsked = true;
+    writeHouse(this.house);
+    this.host.openOverlay(
+      `<div class="card" role="dialog" aria-label="Make your own cat">
+        <h2>Make your own cat!</h2>
+        <p class="sub">A cat of your very own, to live here with ${this.names(this.house.residents.filter((b) => b !== 'mine'))}.</p>
+        <p class="hc-games">Pick its coat and pattern, its eyes, how fluffy, how big, its personality, and how squishy it is: anything from a firm loaf to a puddle. It moves in right away, and it can play Cat Drop too.</p>
+        <div class="btns"><button class="btn primary" data-act="make">Make my cat</button><button class="btn" data-close>Maybe later</button></div>
+      </div>`,
+      (root) => root.querySelector('[data-act=make]')!.addEventListener('click', () => this.showMaker()),
+    );
+  }
+
+  /** The cat maker: make your own cat, or restyle it. */
+  showMaker(): void {
+    this.host.audio.click();
+    const fresh = !this.house.cat;
+    const taken = this.house.residents.filter((b) => b !== 'mine').map((b) => NAMES[b]);
+    const start = this.house.cat ?? randomDesign(Math.random, [...ALL_CATS.map((b) => NAMES[b])]);
+    const maker = new CatMaker(this.host, start, { fresh, taken, done: (d) => this.catMade(d, fresh) });
+    // (opening it closes whatever card was up, and that card's maker with it)
+    maker.open();
+    this.maker = maker;
+  }
+
+  /** The card's closed (by any means): the cat maker's preview stops with it. */
+  overlayClosed(): void {
+    this.maker?.stop();
+    this.maker = null;
+  }
+
+  /** Your cat, made or restyled. */
+  private catMade(d: CatDesign, fresh: boolean): void {
+    this.house.cat = d;
+    this.house.catAsked = true;
+    applyMyCat(this.house);
+    if (fresh || !this.house.residents.includes('mine')) {
+      // in at the window, first in the queue
+      if (!this.house.arriving.includes('mine')) this.house.arriving.unshift('mine');
+      writeHouse(this.house);
+      if (this.active && this.arrivalIn < 0 && !this.newcomer) this.arrivalIn = 0.5;
+      return;
+    }
+    writeHouse(this.house);
+    // (the house again, with your cat in its new look and squish, where it was)
+    this.host.rebuild();
+    // (hearts over it: from its body, as it hasn't been drawn in this house yet)
+    const cat = this.host.session.cats.find((c) => c.breed === 'mine');
+    if (cat) {
+      const b = cat.body;
+      b.computeCentroid();
+      this.host.renderer.hearts(b.cx, b.cy - b.p.radius - 8, 3);
+      this.host.renderer.puff(b.cx, b.cy, 5);
+    }
+  }
+
+  /** Something that changes when your cat's looks do (the top bar's faces). */
+  get catKey(): string {
+    return `${lookKey('mine')}:${NAMES.mine}`;
+  }
+
+  /** "2 of 6 cats live here, and Toffee". */
+  countLine(): string {
+    const h = this.house;
+    const six = h.residents.filter((b) => b !== 'mine').length;
+    return `${six} of ${ALL_CATS.length} cats live here${h.residents.includes('mine') ? `, and ${NAMES.mine}` : ''}`;
+  }
+
   private arrivalCard(b: BreedId): void {
     const m = moveInFor(b);
+    const mine = b === 'mine';
     this.host.audio.seat(96);
     const cat = this.host.session.cats.find((c) => c.breed === b);
     if (cat) {
@@ -1676,39 +1760,50 @@ export class Home {
       `<div class="card" role="dialog" aria-label="${NAMES[b]} moved in">
         <h2>${NAMES[b]} moved in!</h2>
         <div class="hc-portrait"></div>
-        <p class="sub">${NAMES[b]} the ${BREEDS[b].name} · ${BREEDS[b].flow}</p>
+        <p class="sub">${mine ? `Your very own cat · ${TEMPERS.mine.word} · ${BREEDS.mine.flow}` : `${whoIs(b)} · ${BREEDS[b].flow}`}</p>
         ${m ? `<p class="hc-why">${m.how}: done!</p>` : ''}
-        <p class="hc-count">${this.house.residents.length} of ${ALL_CATS.length} cats live here</p>
+        ${mine ? '<p class="hc-why">Restyle them any time: tap the faces up top.</p>' : ''}
+        <p class="hc-count">${this.countLine()}</p>
         <div class="btns"><button class="btn primary" data-close>Welcome home, ${NAMES[b]}</button></div>
       </div>`,
       (root) => root.querySelector('.hc-portrait')!.appendChild(catPortrait(b, 150, 92, { happy: true })),
     );
   }
 
-  /** Who lives here, and what brings each of the others home. */
+  /** Who lives here, and what brings each of the others home (yours first: make it, or restyle it). */
   showCats(): void {
     const h = this.house;
-    const rows = ALL_CATS.map((b) => {
+    const mineHere = h.residents.includes('mine') || h.arriving.includes('mine');
+    const row = (b: BreedId): string => {
       const here = h.residents.includes(b);
       const coming = h.arriving.includes(b);
       const m = moveInFor(b);
       const hurt = here ? h.hurt[b] : undefined;
       const mood = moodOf(b, localDateKey());
+      const what = b === 'mine' ? `your own cat, ${TEMPERS.mine.word}` : TEMPERS[b].word;
       const status = hurt
         ? `<small class="hc-hurt">hurt in a scrap · ${hurt.need - hurt.fed} more fish to feel better (tap to feed)</small>`
         : here
-          ? `<small>${TEMPERS[b].word}${mood ? `, ${MOOD_WORDS[mood]}` : ''} · ${BREEDS[b].flow}</small>`
+          ? `<small>${what}${mood ? `, ${MOOD_WORDS[mood]}` : ''} · ${BREEDS[b].flow}</small>`
           : coming
             ? '<small class="hc-coming">on the way home!</small>'
             : `<small>${m?.how ?? ''}</small>`;
-      const play = !here && !coming && m ? `<button class="hc-play" data-play="${m.game}" data-room="${m.room ?? ''}" aria-label="Play ${GAME_NAMES[m.game]}">Play</button>` : '';
-      return `<div class="hc-row ${here ? '' : 'away'}" data-breed="${b}"><span class="hc-pic"></span><span class="hc-who"><b>${here || coming ? NAMES[b] : '???'}</b>${status}</span>${play}</div>`;
-    }).join('');
+      const btn =
+        b === 'mine'
+          ? '<button class="hc-play" data-act="maker">Restyle</button>'
+          : !here && !coming && m
+            ? `<button class="hc-play" data-play="${m.game}" aria-label="Play ${GAME_NAMES[m.game]}">Play</button>`
+            : '';
+      return `<div class="hc-row ${here || b === 'mine' ? '' : 'away'}" data-breed="${b}"><span class="hc-pic"></span><span class="hc-who"><b>${here || coming ? NAMES[b] : '???'}</b>${status}</span>${btn}</div>`;
+    };
+    const make = mineHere
+      ? row('mine')
+      : `<div class="hc-row hc-make"><span class="hc-pic hc-plus" aria-hidden="true">+</span><span class="hc-who"><b>Your own cat</b><small>Make one: coat, fur, size, and how squishy</small></span><button class="hc-play" data-act="maker">Make</button></div>`;
     this.host.openOverlay(
       `<div class="card" role="dialog" aria-label="Your cats">
         <h2>Your cats</h2>
-        <p class="sub">${h.residents.length} of ${ALL_CATS.length} live here · cats move in as you play</p>
-        <div class="hc-rows">${rows}</div>
+        <p class="sub">${this.countLine()} · cats move in as you play</p>
+        <div class="hc-rows">${make}${ALL_CATS.map(row).join('')}</div>
         <div class="btns"><button class="btn" data-close>Close</button></div>
       </div>`,
       (root) => {
@@ -1717,10 +1812,11 @@ export class Home {
           const known = h.residents.includes(b) || h.arriving.includes(b);
           el.querySelector('.hc-pic')!.appendChild(catPortrait(b, 64, 46, { silhouette: !known, happy: known }));
         });
+        root.querySelectorAll<HTMLElement>('[data-act=maker]').forEach((el) => el.addEventListener('click', () => this.showMaker()));
         root.querySelectorAll<HTMLElement>('[data-play]').forEach((el) =>
           el.addEventListener('click', () => {
             this.host.closeOverlay();
-            this.host.play(el.dataset.play as GameId, el.dataset.room || undefined);
+            this.host.play(el.dataset.play as GameId);
           }),
         );
       },

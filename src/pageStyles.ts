@@ -1,6 +1,6 @@
-// The If It Fits page's stylesheet, on the page only while the house's own
-// screens (the home room, If It Fits) are: Cat Jar and Cat Drop bring their
-// own, and the two would fight over shared names (.card, .btn, body...).
+// The page's own stylesheet (the house), on the page only while the house is:
+// Cat Jar and Cat Drop bring their own, and the two would fight over shared
+// names (.card, .btn, body...).
 
 import css from './styles.css?inline';
 import { attachStyles } from './proto/shell';

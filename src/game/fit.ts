@@ -1,5 +1,5 @@
 // "If it fits, I sits": measuring how much of a container a cat fills and how
-// snug that is. Scoring rewards snugness, never punishes mistakes.
+// snug that is (a cat settles into a container that holds it).
 
 import type { SoftBody } from '../physics/softbody';
 import { smoothstep } from '../util/math';
@@ -89,12 +89,4 @@ export function cozyScore(fill: number, inside: number): CozyResult {
   else if (score >= 60) label = 'Comfy';
   else label = fill < 0.6 ? 'Roomy' : 'Overflowing';
   return { score, label, spill, fill };
-}
-
-/** Emoji face for the spoiler-free share grid. */
-export function shareFace(score: number): string {
-  if (score >= 92) return '😻';
-  if (score >= 78) return '😺';
-  if (score >= 60) return '😸';
-  return '😼';
 }

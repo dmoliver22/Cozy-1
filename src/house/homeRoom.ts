@@ -7,8 +7,8 @@ import type { CatPlacement, DecorPlacement, RoomDef } from '../game/room';
 import { BREEDS, type BreedId } from '../physics/breeds';
 import type { HouseSave } from './house';
 import { NAMES, isOpen } from './house';
-import { ATTIC_DY, ATTIC_FUNNEL, ATTIC_FURNITURE, BASEMENT_DY, CHIMNEY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, LOFT_HOOD, LOFT_STEP, OUTLET, RAFTER, SPOUT, TUBES, floorAt, type Tube } from './layout';
-import type { Box } from './perches';
+import { ATTIC_DY, ATTIC_FUNNEL, ATTIC_FURNITURE, BASEMENT_DY, CHIMNEY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, LIVING_CUSHION_X, LOFT_HOOD, LOFT_STEP, OUTLET, RAFTER, SPOUT, TUBES, floorAt, type Tube } from './layout';
+import { BOUNCE, type Box } from './perches';
 
 /** The top cat step, under the roof tube's hood. */
 export const TOP_STEP = { x0: 286, x1: 380, y: 128 };
@@ -79,6 +79,8 @@ export const SPOTS: Record<BreedId, { x: number; y: number }> = {
   chonk: { x: 318, y: 552 },
   // (poured into the vase)
   void: { x: VASE_X, y: 553 },
+  // yours, on the bouncy cushion
+  mine: { x: LIVING_CUSHION_X, y: FLOOR_Y - BOUNCE.h },
 };
 
 /** The glass of a tube (there from the start, capped or not). */

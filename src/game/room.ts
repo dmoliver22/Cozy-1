@@ -1,5 +1,5 @@
 // Room definitions: furniture + containers + decor + cats, all from the shared
-// prop library. Hand-made rooms and generated daily rooms use the same format.
+// prop library (the house is one: see house/homeRoom.ts).
 
 import type { BreedId } from '../physics/breeds';
 import { BREEDS } from '../physics/breeds';
@@ -54,28 +54,6 @@ export interface CatPlacement {
   name: string;
 }
 
-/** One scripted nudge, used by the solver and by hints. */
-export interface PlanStep {
-  cat: number;
-  container: number;
-  /** Grab point offset from the cat centroid at grab time. */
-  gx: number;
-  gy: number;
-  /** Drag target (world). */
-  tx: number;
-  ty: number;
-  /** Frames to drag before letting go. */
-  hold: number;
-  /** Optional waypoint (world): slide off an edge first, then go to the target. */
-  wx?: number;
-  wy?: number;
-  /** 'drag' or 'boop' (tap). */
-  kind: 'drag' | 'boop';
-  /** Frames per leg of the drag, and how near the opening's middle to let go (share of its width). */
-  move?: number;
-  tol?: number;
-}
-
 export interface RoomDef {
   id: string;
   name: string;
@@ -84,16 +62,8 @@ export interface RoomDef {
   containers: ContainerPlacement[];
   cats: CatPlacement[];
   decor: DecorPlacement[];
-  /** Nudges the solver needed (fewer is fine, more is fine too). */
-  par?: number;
-  plan?: PlanStep[];
-  /** First-run guided room. */
-  tutorial?: boolean;
   /** Lighting: sunny afternoon (default) or lamp-lit night. */
   mood?: 'day' | 'night';
-  /** Daily rooms: which generator variant passed the solver. */
-  variant?: number;
-  subtitle?: string;
 }
 
 export interface BuiltRoom {

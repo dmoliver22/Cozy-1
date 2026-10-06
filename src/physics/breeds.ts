@@ -1,7 +1,10 @@
-// The five breeds (+1 secret). Each pours differently: the flow model is the
-// puzzle variety, so these numbers are gameplay, not decoration.
+// The six cats' breeds, and your own cat's ('mine', from the cat maker: see
+// mycat.ts). Each pours differently: these numbers are how each one moves,
+// not decoration.
 
-export type BreedId = 'kitten' | 'persian' | 'chonk' | 'tabby' | 'mainecoon' | 'void';
+import { DEFAULT_DESIGN, designBreed, type CatDesign } from './mycat';
+
+export type BreedId = 'kitten' | 'persian' | 'chonk' | 'tabby' | 'mainecoon' | 'void' | 'mine';
 
 export interface BreedPhysics {
   /** Rest radius in world units (the world is 360 units wide). */
@@ -41,7 +44,7 @@ export interface BreedPhysics {
 }
 
 export type FacePersona = 'sleepy' | 'dramatic' | 'zippy' | 'polite' | 'fluffy' | 'void';
-export type FurPattern = 'none' | 'tabby' | 'patches' | 'fluff' | 'mane' | 'belly';
+export type FurPattern = 'none' | 'tabby' | 'patches' | 'fluff' | 'mane' | 'belly' | 'plain' | 'tuxedo' | 'patchy' | 'points';
 
 export interface BreedLook {
   body: string;
@@ -59,6 +62,12 @@ export interface BreedLook {
   earTufts: boolean;
   tailFluff: number;
   persona: FacePersona;
+  /** Painted like the Void: light lines on a dark coat (unset: only the Void is). */
+  dark?: boolean;
+  /** Softer lines, for a white or cream coat. */
+  pale?: boolean;
+  /** A fluffy bib under the chin. */
+  bib?: boolean;
 }
 
 export interface Breed {
@@ -68,7 +77,6 @@ export interface Breed {
   flow: string;
   flowShort: string;
   blurb: string;
-  secret?: boolean;
   physics: BreedPhysics;
   look: BreedLook;
   purr: { pitch: number; rate: number; rough: number };
@@ -302,7 +310,6 @@ export const BREEDS: Record<BreedId, Breed> = {
     flow: 'pours like ink',
     flowShort: 'ink',
     blurb: 'A small night that wandered in. Light as a shadow, fits in absolutely anything.',
-    secret: true,
     physics: {
       radius: 28,
       nodes: 28,
@@ -341,20 +348,28 @@ export const BREEDS: Record<BreedId, Breed> = {
     purr: { pitch: 0.95, rate: 1.0, rough: 0.4 },
     voice: { pitch: 1.1, length: 0.8 },
   },
+  // your own cat: replaced by whatever you make in the cat maker (setMyCat)
+  mine: designBreed(DEFAULT_DESIGN),
 };
 
-export const BREED_ORDER: BreedId[] = ['kitten', 'persian', 'chonk', 'tabby', 'mainecoon', 'void'];
-export const BASE_BREEDS: BreedId[] = ['kitten', 'persian', 'chonk', 'tabby', 'mainecoon'];
+let myCatMade = false;
+let myCatRev = 0;
 
-export const CAT_NAMES = [
-  'Biscuit', 'Mochi', 'Noodle', 'Pudding', 'Toffee', 'Pickle', 'Bean', 'Waffles', 'Olive', 'Tofu',
-  'Pumpkin', 'Muffin', 'Clementine', 'Dumpling', 'Marmalade', 'Crumpet', 'Pip', 'Juniper', 'Scone',
-  'Nutmeg', 'Miso', 'Pancake', 'Butter', 'Fig', 'Gnocchi', 'Bao', 'Sesame', 'Truffle', 'Kiwi', 'Maple',
-  'Peanut', 'Sushi', 'Custard', 'Ginger', 'Pretzel', 'Honey', 'Tater', 'Bagel', 'Crouton', 'Sprout',
-];
-
-/** Area of a breed's body in square world units. */
-export function breedArea(id: BreedId): number {
-  const r = BREEDS[id].physics.radius;
-  return Math.PI * r * r;
+/** Your cat, as you made it (null: not made yet, and 'mine' stays a stand-in). */
+export function setMyCat(d: CatDesign | null): void {
+  BREEDS.mine = designBreed(d ?? DEFAULT_DESIGN);
+  myCatMade = !!d;
+  myCatRev++;
 }
+
+/** Has your cat been made? */
+export function hasMyCat(): boolean {
+  return myCatMade;
+}
+
+/** A key that changes whenever a breed's looks do (only yours ever change): for caches of its pictures. */
+export function lookKey(b: BreedId): string {
+  return b === 'mine' ? `mine${myCatRev}` : b;
+}
+
+export const BREED_ORDER: BreedId[] = ['kitten', 'persian', 'chonk', 'tabby', 'mainecoon', 'void'];

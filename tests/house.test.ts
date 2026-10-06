@@ -8,10 +8,11 @@ import {
   DROP_METRES_PER_TREAT,
   FLOOR_PRICES,
   GIFT_TREATS,
-  INKWELL_ROOM,
+  INKWELL_DEPTH,
   JAR_POINTS_PER_TREAT,
   START_TREATS,
   WELCOME_BACK,
+  MOVE_INS,
   arrive,
   buyFloor,
   buyPerch,
@@ -45,28 +46,30 @@ describe('the house', () => {
     expect(h.residents).toEqual(['kitten', 'tabby']);
     expect(ALL_CATS).toHaveLength(6);
     expect(new Set(ALL_CATS).size).toBe(6);
+    // (two in each game: an early one, and one that takes a little more)
     expect(nextMoveIn(h)?.breed).toBe('persian');
-    expect(nextMoveIn(h, 'jar')?.breed).toBe('mainecoon');
+    expect(nextMoveIn(h, 'jar')?.breed).toBe('persian');
     expect(nextMoveIn(h, 'drop')?.breed).toBe('chonk');
+    expect(MOVE_INS.filter((m) => m.game === 'jar').map((m) => m.breed)).toEqual(['persian', 'mainecoon']);
+    expect(MOVE_INS.filter((m) => m.game === 'drop').map((m) => m.breed)).toEqual(['chonk', 'void']);
   });
 
-  it('a finished If It Fits room brings Duchess home, once', () => {
+  it('making a Persian in Cat Jar brings Duchess home, once', () => {
     const h = emptyHouse();
-    expect(recordRun(h, { game: 'fits', room: 'sunny-kitchen' })).toEqual(['persian']);
+    expect(recordRun(h, jar(1, false))).toEqual([]);
+    expect(recordRun(h, jar(2, false))).toEqual(['persian']);
     expect(h.arriving).toEqual(['persian']);
-    expect(recordRun(h, { game: 'fits', room: 'bath-time' })).toEqual([]);
+    expect(recordRun(h, jar(2, true))).toEqual([]);
     expect(arrive(h)).toBe('persian');
     expect(h.residents).toContain('persian');
     expect(h.arriving).toEqual([]);
     expect(arrive(h)).toBeNull();
-    expect(h.stats.fitsRooms).toBe(2);
-    expect(h.stats.fitsDone).toEqual(['sunny-kitchen', 'bath-time']);
   });
 
   it('Cat Jar and Cat Drop milestones count as soon as they happen, mid-run too', () => {
     const h = emptyHouse();
-    expect(recordRun(h, jar(2, false))).toEqual([]);
-    expect(recordRun(h, jar(3, false))).toEqual(['mainecoon']);
+    expect(recordRun(h, jar(1, false))).toEqual([]);
+    expect(recordRun(h, jar(3, false))).toEqual(['persian', 'mainecoon']);
     expect(h.stats.jarGames).toBe(0);
     recordRun(h, jar(3, true));
     expect(h.stats.jarGames).toBe(1);
@@ -75,23 +78,44 @@ describe('the house', () => {
     expect(h.stats.dropRuns).toBe(1);
     expect(h.stats.dropDeepest).toBe(140);
     expect(h.stats.dropMostFish).toBe(25);
-    expect(h.arriving).toEqual(['mainecoon', 'chonk']);
+    expect(h.arriving).toEqual(['persian', 'mainecoon', 'chonk']);
   });
 
-  it('Inkwell follows you home from the Midnight Study', () => {
+  it('Inkwell, a small night, comes home from deep down: a long fall in Cat Drop', () => {
     const h = emptyHouse();
-    recordRun(h, { game: 'fits', room: 'sunny-kitchen' });
-    expect(h.arriving).not.toContain('void');
-    expect(recordRun(h, { game: 'fits', room: INKWELL_ROOM })).toEqual(['void']);
-    expect(moveInFor('void')?.room).toBe(INKWELL_ROOM);
+    expect(recordRun(h, drop(INKWELL_DEPTH - 10, 5, false))).toEqual([]);
+    expect(recordRun(h, drop(INKWELL_DEPTH, 5, false))).toEqual(['void']);
+    expect(moveInFor('void')?.game).toBe('drop');
   });
 
-  it('a new house counts progress made before it', () => {
-    const h = loadHouse({ fitsRooms: 3, fitsDone: ['sunny-kitchen', INKWELL_ROOM], jarBest: 900, dropBest: 300 });
-    expect(h.arriving).toEqual(['persian', 'void']);
+  it('a new house counts the best scores made before it', () => {
+    const h = loadHouse({ jarBest: 900, dropBest: 300 });
     expect(h.stats.jarBest).toBe(900);
-    // nothing new to settle
+    expect(h.stats.dropBest).toBe(300);
+    expect(h.arriving).toEqual([]);
     expect(settle(h)).toEqual([]);
+  });
+
+  it('a house from when If It Fits was here keeps who moved in for it, and the rest now come for the other games', () => {
+    const store = new Map<string, string>();
+    const ls = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    (globalThis as { localStorage?: unknown }).localStorage = ls;
+    try {
+      // Duchess came for If It Fits; Inkwell's room wasn't done, but a long fall was
+      const stats = { ...emptyHouse().stats, fitsRooms: 2, fitsDone: ['sunny-kitchen'], dropDeepest: 900, jarBiggest: 1 };
+      store.set('cozy-house:v1', JSON.stringify({ ...emptyHouse(), v: 5, welcomed: true, residents: ['kitten', 'tabby', 'persian'], stats }));
+      const h = loadHouse();
+      expect(h.v).toBe(6);
+      expect(h.residents).toEqual(['kitten', 'tabby', 'persian']);
+      expect(h.arriving).toEqual(['void']);
+      expect(h.stats).not.toHaveProperty('fitsRooms');
+      expect(h.stats).not.toHaveProperty('fitsDone');
+      // and no cat of your own yet: the cat maker is offered
+      expect(h.cat).toBeNull();
+      expect(h.catAsked).toBe(false);
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 
   it('an older house moves its Cat Jar record down a size (the sphynx left the chain), and Noodle with it', () => {
@@ -103,11 +127,13 @@ describe('the house', () => {
       const old = { v: 1, residents: ['kitten', 'tabby', 'sphynx'], arriving: ['persian'], welcomed: true, stats: { ...emptyHouse().stats, jarBiggest: 4 } };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(5);
+      expect(h.v).toBe(6);
       expect(h.stats.jarBiggest).toBe(3);
       expect(h.treats).toBe(START_TREATS + WELCOME_BACK);
       expect(h.residents).toEqual(['kitten', 'tabby']);
-      expect(settle(h)).toEqual(['mainecoon']);
+      // (and the Maine Coon it made brings Juniper)
+      expect(h.arriving).toEqual(['persian', 'mainecoon']);
+      expect(settle(h)).toEqual([]);
       // once is enough
       writeHouse(h);
       expect(loadHouse().stats.jarBiggest).toBe(3);
@@ -136,7 +162,7 @@ describe('the house', () => {
       };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(5);
+      expect(h.v).toBe(6);
       // (up with the living room, and up again over the attic; and a bouncy cushion came for the living room)
       expect(h.perches.map((p) => [p.kind, p.y, floorAt(p.y)])).toEqual([
         ['cloud', FLOORS.roof.floorY - 200, 'roof'],
@@ -174,7 +200,7 @@ describe('the house', () => {
       };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(5);
+      expect(h.v).toBe(6);
       expect(h.perches.filter((p) => p.kind !== 'bounce').map((p) => [p.y, floorAt(p.y)])).toEqual([
         [FLOORS.roof.floorY - 200, 'roof'],
         [-400, 'living'],
@@ -189,9 +215,8 @@ describe('the house', () => {
 
   it('when everyone lives here there is nobody left to meet', () => {
     const h = emptyHouse();
-    recordRun(h, { game: 'fits', room: INKWELL_ROOM });
     recordRun(h, jar(5));
-    recordRun(h, drop(200, 30));
+    recordRun(h, drop(INKWELL_DEPTH + 50, 30));
     while (arrive(h));
     expect([...h.residents].sort()).toEqual([...ALL_CATS].sort());
     expect(nextMoveIn(h)).toBeNull();
@@ -200,7 +225,7 @@ describe('the house', () => {
 
 describe('the home room', () => {
   it('everyone fits in their spot and stays in the room', () => {
-    const s = new Session(houseRoom({ open: [], residents: ALL_CATS, where: {} }), { mode: 'sandbox', shell: houseShell });
+    const s = new Session(houseRoom({ open: [], residents: ALL_CATS, where: {} }), { shell: houseShell });
     for (let f = 0; f < 240; f++) s.step();
     for (const c of s.cats) {
       c.body.computeCentroid();
@@ -213,7 +238,6 @@ describe('the home room', () => {
     const seats = Object.fromEntries(s.cats.map((c) => [c.breed, c.seat ? s.containers[c.seat.container].type : null]));
     expect(seats.chonk).toBe('basket');
     expect(seats.void).toBe('vase');
-    expect(s.complete).toBe(false);
   });
 
   it('is twice as tall as a room, and the view stops down by its floor and up by its ceiling', () => {
@@ -245,7 +269,7 @@ describe('the home room', () => {
     expect(tubeShapes(loft, 1, false).length).toBeGreaterThan(tubeShapes(loft, 1, true).length);
     for (const open of [false, true]) {
       const def = houseRoom({ open: [], residents: ['kitten', 'tabby'], where: {} });
-      const s = new Session(def, { mode: 'sandbox', shell: () => [...houseShell(), ...tubeShapes(chute, 9002, open), ...tubeShapes(lift, 9001, open)] });
+      const s = new Session(def, { shell: () => [...houseShell(), ...tubeShapes(chute, 9002, open), ...tubeShapes(lift, 9001, open)] });
       const [kitten, tabby] = s.cats;
       tabby.body.placeAt(FUNNEL.x, FUNNEL.rimY - 60);
       // the kitten, on the top step, is carried up into the hood (as at home: anywhere in the living room)
@@ -289,15 +313,6 @@ describe('the home room', () => {
 });
 
 describe('treats and the shop', () => {
-  it('If It Fits pays more the first time, and a little more for a cozy room in par', () => {
-    const h = emptyHouse();
-    const t0 = h.treats;
-    expect(payTreats(h, { game: 'fits', room: 'sunny-kitchen', first: true, cozy: 95, underPar: true })).toBe(35);
-    expect(payTreats(h, { game: 'fits', room: 'sunny-kitchen', first: false, cozy: 60, underPar: false })).toBe(5);
-    expect(h.treats).toBe(t0 + 40);
-    expect(h.earned).toBe(40);
-  });
-
   it('a Cat Jar or Cat Drop run pays as it goes, each treat once', () => {
     const h = emptyHouse();
     const t0 = h.treats;
@@ -337,7 +352,7 @@ describe('treats and the shop', () => {
     const h = emptyHouse();
     const c = h.perches.find((p) => p.kind === 'bounce')!;
     expect(c.y).toBe(floorTop('bounce', 'living'));
-    const s = new Session(houseRoom(h), { mode: 'sandbox', shell: houseShell });
+    const s = new Session(houseRoom(h), { shell: houseShell });
     const taken = [...fittingBoxes(h, 'all'), ...s.props.map((p) => ({ x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1 }))];
     expect(placeProblem('bounce', c.x, c.y, ['living'], taken)).toBeNull();
     expect(s.containers.map((k) => k.type)).toEqual(['vase', 'basket']);
@@ -384,7 +399,7 @@ describe('perches', () => {
 
   it('a cat on a wall shelf sits on it', () => {
     const p = buildPerch({ id: 1, kind: 'shelf', x: 120, y: 300 });
-    const s = new Session(houseRoom({ open: [], residents: ['kitten'], where: { kitten: { x: 120, y: 300 } } }), { mode: 'sandbox', shell: () => [...houseShell(), ...p.shapes] });
+    const s = new Session(houseRoom({ open: [], residents: ['kitten'], where: { kitten: { x: 120, y: 300 } } }), { shell: () => [...houseShell(), ...p.shapes] });
     for (let f = 0; f < 240; f++) s.step();
     const c = s.cats[0].body;
     c.computeCentroid();
@@ -402,7 +417,7 @@ describe('the tall house', () => {
       ['tabby', FLOOR_Y],
       ['chonk', FLOORS.basement.floorY],
     ]);
-    const s = new Session(def, { mode: 'sandbox', shell: houseShell });
+    const s = new Session(def, { shell: houseShell });
     for (let f = 0; f < 300; f++) s.step();
     const at = s.cats.map((c) => {
       c.body.computeCentroid();
@@ -427,7 +442,7 @@ describe('the tall house', () => {
   it('a cat let go under the living room hood rides the tube up to the roof, and back down', () => {
     const lift = TUBES.find((t) => t.id === 'lift')!;
     const def = houseRoom({ open: ['roof'], residents: ['mainecoon'], where: {} });
-    const s = new Session(def, { mode: 'sandbox', shell: () => [...houseShell(), ...tubeShapes(lift, 9001)] });
+    const s = new Session(def, { shell: () => [...houseShell(), ...tubeShapes(lift, 9001)] });
     // put down on the top step, under the hood
     const cat = s.cats[0];
     cat.body.placeAt(330, 128 - cat.body.p.radius);
@@ -468,7 +483,7 @@ describe('the tall house', () => {
   it('down the chute to the basement, and sucked back up through the funnel', () => {
     const chute = TUBES.find((t) => t.id === 'chute')!;
     const def = houseRoom({ open: ['basement'], residents: ['kitten'], where: { kitten: { x: 140, y: FLOOR_Y } } });
-    const s = new Session(def, { mode: 'sandbox', shell: () => [...houseShell(), ...tubeShapes(chute, 9002)] });
+    const s = new Session(def, { shell: () => [...houseShell(), ...tubeShapes(chute, 9002)] });
     const cat = s.cats[0];
     const tubes = new Tubes(() => s.world);
     tubes.start(cat, chute, false);

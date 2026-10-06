@@ -176,7 +176,7 @@ export class SoftBody {
   /**
    * Let resting on another cat count as contact for rest damping, sleep and
    * airborne frames (normally only furniture and containers count). Off by
-   * default, so If It Fits keeps its tuned behaviour; a game where cats pile
+   * default, so the house keeps its tuned behaviour; a game where cats pile
    * up on each other (Cat Jar) turns it on, or the top of a pile never settles.
    */
   static restOnBodies = false;

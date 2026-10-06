@@ -1,6 +1,6 @@
 // Painting the scene: a sunny kitchen wall with a tiled backsplash, a butcher
 // block counter over mint cabinets, and on it the big glass jar. Like the
-// containers in If It Fits, the jar is painted in two layers straight from its
+// glass containers in the house, the jar is painted in two layers straight from its
 // physics parts: the back (far wall seen through the glass, the light on its
 // floor, the far half of the rim) goes under the cats, the front (the near
 // wall's veil, the glass seen edge-on, the near rim, streaks and glints, the

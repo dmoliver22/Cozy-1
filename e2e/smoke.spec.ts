@@ -1,51 +1,104 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-test('first visit: home, then If It Fits opens the guided kitchen', async ({ page }) => {
+// The first visit, and making your own cat.
+
+interface Handle {
+  kind: string;
+  session: { cats: { name: string; breed: string; body: { p: { radius: number } } }[] };
+}
+
+const cats = (page: Page): Promise<{ name: string; breed: string; r: number }[]> =>
+  page.evaluate(() => (window as unknown as { __app: Handle }).__app.session.cats.map((c) => ({ name: c.name, breed: c.breed, r: c.body.p.radius })));
+
+const saved = (page: Page): Promise<{ cat: Record<string, unknown> | null; residents: string[]; catAsked: boolean }> =>
+  page.evaluate(() => JSON.parse(localStorage.getItem('cozy-house:v1') ?? 'null'));
+
+async function firstVisit(page: Page): Promise<void> {
   await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+}
+
+test('first visit: the home is where you start, with two games along the bottom and a cat of your own to make', async ({ page }) => {
+  await firstVisit(page);
   await expect(page.getByRole('heading', { name: 'Welcome home!' })).toBeVisible();
-  await page.getByRole('button', { name: "Let's play" }).click();
-  await page.locator('#homeBar [data-game=fits]').click();
-  await expect(page.locator('#roomName')).toHaveText('Sunny Kitchen');
-  await expect(page.locator('.face')).toHaveCount(3);
-  await expect(page.locator('.coach')).toContainText('teacup');
+  await expect(page.getByRole('button', { name: 'Make my cat' })).toBeVisible();
+  await expect(page.locator('#homeBar [data-game]')).toHaveCount(2);
+  for (const name of ['Cat Jar', 'Cat Drop']) await expect(page.locator('#homeBar .tin', { hasText: name })).toBeVisible();
+  await expect(page.getByText('If It Fits')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Later' }).click();
+  expect((await cats(page)).map((c) => c.breed)).toEqual(['kitten', 'tabby']);
+  // (and it's there in the cats card for later)
+  await page.locator('.home-cats').click();
+  await expect(page.locator('.hc-make')).toBeVisible();
 });
 
-test('dragging the chonk pours him into the teacup', async ({ page }) => {
-  await page.goto('/?room=1');
-  await page.waitForFunction(() => (window as unknown as { __app?: unknown }).__app);
-  const pts = await page.evaluate(() => {
-    const app = (window as unknown as { __app: any }).__app;
-    const cat = app.session.cats[0];
-    cat.body.computeCentroid();
-    const from = app.renderer.worldToScreen(cat.body.cx + 14, cat.body.cy - 4);
-    const to = app.renderer.worldToScreen(166, 323);
-    return { from, to };
-  });
-  await page.mouse.move(pts.from.x, pts.from.y);
-  await page.mouse.down();
-  for (let i = 1; i <= 25; i++) {
-    await page.mouse.move(pts.from.x + ((pts.to.x - pts.from.x) * i) / 25, pts.from.y + ((pts.to.y - pts.from.y) * i) / 25);
-    await page.waitForTimeout(16);
-  }
-  await page.waitForTimeout(500);
-  await page.mouse.up();
-  await expect(page.locator('#pawCount')).toHaveText('1');
-  await expect(page.locator('.face.on')).toHaveCount(1, { timeout: 8000 });
+test('make your own cat: pick its looks and how squishy it is, and it moves in', async ({ page }) => {
+  await firstVisit(page);
+  await page.getByRole('button', { name: 'Make my cat' }).click();
+  await expect(page.locator('.card.maker')).toBeVisible();
+  await page.locator('[data-coat=black]').click();
+  await page.locator('[data-pattern=tuxedo]').click();
+  await page.locator('[data-eyes=green]').click();
+  await page.locator('[data-personality=sleepy]').click();
+  await page.locator('[data-slide=size]').fill('100');
+  await page.locator('[data-slide=squish]').fill('100');
+  await expect(page.locator('[data-flow]')).toHaveText('pours like a puddle');
+  await page.locator('[data-slide=squish]').fill('0');
+  await expect(page.locator('[data-flow]')).toHaveText('firm as a loaf');
+  await page.locator('#mkName').fill('Pebble');
+  await page.getByRole('button', { name: 'Bring Pebble home' }).click();
+  // in at the window, and a card once it's landed
+  await expect(page.getByRole('heading', { name: 'Pebble moved in!' })).toBeVisible({ timeout: 8000 });
+  await page.getByRole('button', { name: 'Welcome home, Pebble' }).click();
+  const here = await cats(page);
+  expect(here.map((c) => c.breed)).toEqual(['kitten', 'tabby', 'mine']);
+  expect(here[2]).toEqual({ name: 'Pebble', breed: 'mine', r: 40 });
+  await expect(page.locator('#roomSub')).toHaveText('3 cats live here');
+  const h = await saved(page);
+  expect(h.residents).toContain('mine');
+  expect(h.cat).toMatchObject({ name: 'Pebble', coat: 'black', pattern: 'tuxedo', eyes: 'green', size: 1, squish: 0, personality: 'sleepy' });
+  // restyle it: the house again, with your cat in its new coat, where it was
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await page.locator('.home-cats').click();
+  await page.getByRole('button', { name: 'Restyle' }).click();
+  await expect(page.getByRole('heading', { name: 'Restyle Pebble' })).toBeVisible();
+  await page.locator('[data-coat=ginger]').click();
+  await page.locator('[data-slide=size]').fill('0');
+  await page.getByRole('button', { name: 'Save Pebble' }).click();
+  await expect(page.locator('.card.maker')).toHaveCount(0);
+  expect((await saved(page)).cat).toMatchObject({ name: 'Pebble', coat: 'ginger', size: 0 });
+  expect((await cats(page)).find((c) => c.breed === 'mine')?.r).toBe(22);
 });
 
-test('finishing a room shows Fits & sits with a share button', async ({ page }) => {
-  await page.goto('/?room=1');
-  await page.waitForFunction(() => (window as unknown as { __app?: unknown }).__app);
-  const seated = await page.evaluate(() => (window as unknown as { __app: any }).__app.autoplay());
-  expect(seated).toBe(3);
-  await expect(page.getByRole('heading', { name: 'Fits & sits!' })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole('button', { name: 'Share' })).toBeVisible();
+test('your cat plays Cat Drop: first in the picker, and picked', async ({ page }) => {
+  await firstVisit(page);
+  await page.getByRole('button', { name: 'Make my cat' }).click();
+  await page.locator('#mkName').fill('Noodle');
+  await page.getByRole('button', { name: 'Bring Noodle home' }).click();
+  await expect(page.getByRole('heading', { name: 'Noodle moved in!' })).toBeVisible({ timeout: 8000 });
+  await page.getByRole('button', { name: 'Welcome home, Noodle' }).click();
+  await page.locator('#homeBar [data-game=drop]').click();
+  await expect(page.getByRole('heading', { name: 'Cat Drop' })).toBeVisible();
+  const first = page.locator('#dStart .breed').first();
+  await expect(first).toHaveAttribute('data-breed', 'mine');
+  await expect(first).toHaveAttribute('aria-checked', 'true');
+  await expect(first).toContainText('Noodle');
 });
 
-test('the sandbox lets you add a cat and take a photo', async ({ page }) => {
-  await page.goto('/?sandbox');
-  await page.locator('#sbCatsBtn').click();
-  await page.getByRole('button', { name: 'Add a Tabby' }).click();
-  await page.locator('#sbPhotoBtn').click();
-  await expect(page.getByRole('img', { name: 'A photo of your cats' })).toBeVisible();
+test('a house from before the cat maker is offered it, once', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() =>
+    localStorage.setItem('cozy-house:v1', JSON.stringify({ v: 5, residents: ['kitten', 'tabby', 'persian'], arriving: [], welcomed: true, stats: {}, gift: '2099-01-01' })),
+  );
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Make your own cat!' })).toBeVisible({ timeout: 6000 });
+  await page.getByRole('button', { name: 'Maybe later' }).click();
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await page.waitForTimeout(2500);
+  await expect(page.getByRole('heading', { name: 'Make your own cat!' })).toHaveCount(0);
+  expect((await saved(page)).catAsked).toBe(true);
 });

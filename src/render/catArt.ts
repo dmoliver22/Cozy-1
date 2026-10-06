@@ -13,7 +13,7 @@
 import type { BreedLook } from '../physics/breeds';
 import { NODE_RADIUS, type SoftBody } from '../physics/softbody';
 import { clamp } from '../util/math';
-import { LIGHT, hash01, lightGradient, lightOf, lineOf, mix, rgba, shadowOf, texPattern, type Box, type Ctx, type TexKind } from './paint';
+import { LIGHT, hash01, lightGradient, lightOf, lineOf, mix, rgb, rgba, shadowOf, texPattern, type Box, type Ctx, type TexKind } from './paint';
 
 /**
  * How a cat looks. 'stalk' is eyeing something up to pounce on (big dark
@@ -168,7 +168,12 @@ interface Ink {
   furAlpha: number;
   furScale: number;
   dark: boolean;
+  /** Coloured eyes (an iris with a pupil), rather than the little dark dots. */
+  iris: boolean;
 }
+
+/** Patterns with white (or pale) paws, chest and muzzle. */
+const PALE_FRONT = new Set(['patches', 'belly', 'tabby', 'mane', 'tuxedo', 'patchy']);
 
 const inkCache = new WeakMap<BreedLook, Ink>();
 
@@ -176,8 +181,9 @@ function inkFor(look: BreedLook): Ink {
   let ink = inkCache.get(look);
   if (ink) return ink;
   const base = look.body;
-  const dark = look.persona === 'void';
-  const pale = look.pattern === 'fluff';
+  const dark = look.dark ?? look.persona === 'void';
+  const pale = look.pale ?? look.pattern === 'fluff';
+  const [er, eg, eb] = rgb(look.eye);
   ink = {
     base,
     lit: dark ? lightOf(base, 0.32) : lightOf(base, 0.62),
@@ -196,15 +202,16 @@ function inkFor(look: BreedLook): Ink {
     noseDeep: shadowOf(look.nose, 0.45),
     eye: look.eye,
     cheek: look.cheek,
-    whisker: dark ? '#D9D2EE' : look.pattern === 'fluff' ? shadowOf(base, 0.55) : '#FFFDF8',
-    whiskerAlpha: dark ? 0.55 : look.pattern === 'fluff' ? 0.45 : 0.8,
+    whisker: dark ? '#D9D2EE' : pale ? shadowOf(base, 0.55) : '#FFFDF8',
+    whiskerAlpha: dark ? 0.55 : pale ? 0.45 : 0.8,
     mouth: dark ? '#9D90C2' : shadowOf(look.nose, 0.75),
-    paw: look.pattern === 'patches' || look.pattern === 'belly' || look.pattern === 'tabby' || look.pattern === 'mane' ? look.light : lightOf(base, 0.25),
-    muzzle: look.pattern === 'patches' || look.pattern === 'belly' || look.pattern === 'tabby' || look.pattern === 'mane' ? look.light : null,
+    paw: look.pattern === 'points' ? look.accent : PALE_FRONT.has(look.pattern) ? look.light : lightOf(base, 0.25),
+    muzzle: PALE_FRONT.has(look.pattern) ? look.light : null,
     fur: look.fluff > 0.6 ? 'fur' : 'furFine',
     furAlpha: dark ? 0.6 : look.fluff > 0.6 ? 0.62 : 0.48,
     furScale: look.fluff > 0.6 ? 0.36 : 0.26,
     dark,
+    iris: (Math.max(er, eg, eb) + Math.min(er, eg, eb)) / 510 > 0.45,
   };
   inkCache.set(look, ink);
   return ink;
@@ -784,6 +791,36 @@ function drawMarkings(ctx: Ctx, look: BreedLook, ink: Ink, v: CatView, r: number
       softBlob(ctx, fx, fy + r * 0.08, r * 0.34, r * 0.2, ink.light, 0.85);
       break;
     }
+    case 'plain': {
+      // one colour all over: just a paler tummy
+      softBlob(ctx, hx, box.y1 + r * 0.08, Math.max(r * 0.5, w * 0.28), Math.max(r * 0.4, h * 0.36), ink.light, 0.35);
+      break;
+    }
+    case 'tuxedo': {
+      // a crisp white shirt front: chest and tummy, a bib up to the chin, a blaze down the nose (and white socks)
+      softBlob(ctx, hx, box.y1 + r * 0.1, Math.max(r * 0.55, w * 0.3), Math.max(r * 0.55, h * 0.5), ink.light, 0.97);
+      softBlob(ctx, fx, fy + r * 0.5, r * 0.42, r * 0.36, ink.light, 0.95);
+      blaze(ctx, fx, fy, r, 0.26, ink.light);
+      break;
+    }
+    case 'patchy': {
+      // white, with patches of colour: a cap over the head and ears (parted by
+      // a white blaze), a big patch over the back and a little one on the flank
+      softBlob(ctx, fx - s * r * 0.3, fy - r * 0.3, r * 0.5, r * 0.4, ink.accent, 0.94);
+      softBlob(ctx, fx + s * r * 0.36, fy - r * 0.34, r * 0.36, r * 0.3, ink.accent, 0.9);
+      softBlob(ctx, hx - s * r * 0.55, box.y0 + h * 0.34, r * 0.62, r * 0.46, ink.accent, 0.94);
+      softBlob(ctx, hx + s * r * 0.72, box.y0 + h * 0.64, r * 0.3, r * 0.24, ink.accent, 0.88);
+      blaze(ctx, fx, fy, r, 0.2, ink.light);
+      break;
+    }
+    case 'points': {
+      // a Siamese: pale all over, the coat's colour in a mask round the nose
+      // (and on the ears and paws), deepening toward the middle of it
+      softBlob(ctx, fx, fy + r * 0.12, r * 0.48, r * 0.42, ink.accent, 0.66);
+      softBlob(ctx, fx, fy + r * 0.2, r * 0.3, r * 0.24, ink.accent, 0.5);
+      softBlob(ctx, hx, box.y1 + r * 0.28, w * 0.5, r * 0.3, ink.accent, 0.3);
+      break;
+    }
     case 'none': {
       // ink-black velvet: a cool sheen across the shoulders
       const sg = ctx.createRadialGradient(hx - r * 0.3, box.y0 + h * 0.28, 0, hx - r * 0.3, box.y0 + h * 0.28, r * 0.95);
@@ -795,6 +832,23 @@ function drawMarkings(ctx: Ctx, look: BreedLook, ink: Ink, v: CatView, r: number
       break;
     }
   }
+  // long fur: a fluffy bib under the chin (the cloud and the ruff have theirs)
+  if (look.bib && look.pattern !== 'fluff' && look.pattern !== 'mane') {
+    softBlob(ctx, fx, fy + r * 0.48, r * 0.5, r * 0.34, ink.light, 0.82);
+    furFlicks(ctx, fx, fy + r * 0.72, r * 0.46, r * 0.17, 7, ink.light, 0.72, v.seed);
+  }
+}
+
+/** A pale blaze from the brow down the nose to the muzzle, `width` of r wide at the bottom. */
+function blaze(ctx: Ctx, fx: number, fy: number, r: number, width: number, color: string): void {
+  ctx.fillStyle = rgba(color, 0.95);
+  ctx.beginPath();
+  ctx.moveTo(fx - r * 0.05, fy - r * 0.3);
+  ctx.quadraticCurveTo(fx, fy - r * 0.36, fx + r * 0.05, fy - r * 0.3);
+  ctx.quadraticCurveTo(fx + width * r * 0.85, fy + r * 0.1, fx + width * r * 1.2, fy + r * 0.3);
+  ctx.lineTo(fx - width * r * 1.2, fy + r * 0.3);
+  ctx.quadraticCurveTo(fx - width * r * 0.85, fy + r * 0.1, fx - r * 0.05, fy - r * 0.3);
+  ctx.fill();
 }
 
 /** A soft-edged patch of colour (two passes: a feathered halo and a core). */
@@ -892,6 +946,10 @@ function drawEar(ctx: Ctx, v: CatView, e: Ear, r: number, look: BreedLook, ink: 
     ctx.beginPath();
     ctx.arc(bx + dx * size, by + dy * size, size * 0.38, 0, Math.PI * 2);
     ctx.fill();
+  } else if (look.pattern === 'patchy' || look.pattern === 'points') {
+    // (ears in the patch's colour, or the points')
+    ctx.fillStyle = rgba(ink.accent, 0.88);
+    ctx.fill(P);
   }
   innerBands(ctx, P, box, ink.rim, size * 0.12, ink.rimAlpha * (px < 0 ? 0.8 : 0.35), 'light', 1);
   ctx.restore();
@@ -1090,7 +1148,7 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
         ctx.arc(exx, ey, er, 0, Math.PI * 2);
         ctx.fillStyle = ink.eye;
         ctx.fill();
-        if (ink.dark) {
+        if (ink.iris) {
           ctx.fillStyle = '#2A2438';
           ctx.beginPath();
           ctx.ellipse(exx, ey + er * 0.1, er * 0.22, er * 0.75, 0, 0, Math.PI * 2);
@@ -1118,12 +1176,19 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
         ctx.arc(exx, ey, er, 0, Math.PI * 2);
         ctx.fillStyle = ink.eye;
         ctx.fill();
-        if (ink.dark) {
-          // golden eyes with a soft pupil
+        if (ink.iris) {
+          // coloured eyes with a soft pupil (and, on a light coat, a dark rim to hold them)
           ctx.fillStyle = '#2A2438';
           ctx.beginPath();
           ctx.ellipse(exx + pose.look * 0.4, ey + er * 0.05, er * 0.42, er * 0.78, 0, 0, Math.PI * 2);
           ctx.fill();
+          if (!ink.dark) {
+            ctx.strokeStyle = 'rgba(58,47,63,0.75)';
+            ctx.lineWidth = 0.9 * fs;
+            ctx.beginPath();
+            ctx.arc(exx, ey, er, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         } else {
           const g = ctx.createRadialGradient(exx, ey + er * 0.55, 0, exx, ey + er * 0.55, er * 0.9);
           g.addColorStop(0, 'rgba(160,140,190,0.55)');

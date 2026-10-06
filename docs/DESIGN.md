@@ -1,15 +1,17 @@
 # Design notes
 
-Working notes for tuning *If It Fits*. The README covers the overview.
+Working notes for tuning the house of squishy cats (the page is still called
+*If It Fits*, after the puzzle it began as) and its two games. The README
+covers the overview.
 
 ## Pillars, and how the build keeps them
 
 | Pillar | Mechanism |
 | --- | --- |
 | Squishy, never gross | Cats are opaque rings with faces that float to the top; containers draw their front over the cat, so pours read as a loaf in a cup, never as goo. No fluid particles, no realistic anatomy. |
-| No fail | Undo snapshots the whole room and refunds the paw. Cats balanced on a rim slide off; cats that can't fit just perch. Nothing breaks, nothing times out. |
-| One room every morning, always fair | Date-seeded generator, solver-checked par, deterministic physics (only `+ - * /`, `sqrt`, and a polynomial sine). |
-| A sandbox worth photographing | Photo room with every breed and every container, drag-to-arrange, polaroid export. |
+| No fail | At home nothing breaks and nothing times out: cats balanced on a rim slide off, cats that can't fit just perch, a cat that tumbles into a funnel pops out downstairs. |
+| The home is the sandbox | The page opens in the house, not a menu: every cat can be picked up by the scruff, carried, booped and poured into the vase from the first second, and the games are buttons along the bottom. |
+| Your cat feels like yours | The cat maker's squish slider changes the physics, not just the picture: a loaf holds its shape, a puddle spreads out, droops long from the scruff and pours. |
 
 ## Breeds
 
@@ -23,10 +25,11 @@ Tension is the skin's constant line tension; viscosity damps deformation only.
 | Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 0.55 | the hero; droops the longest; sleepy z's when idle |
 | Tabby | 29 | custard | 700 | 8 | 0 | 0.66 | the polite reference cat |
 | Maine Coon | 37 | cloud | 700 | 9 | 0 | 0.62 | compresses to 78% of its area |
-| The Void | 28 | ink | 420 | 5 | 0 | 0.64 | secret; pours into anything |
+| The Void | 28 | ink | 420 | 5 | 0 | 0.64 | pours into anything |
+| Yours | 22 to 40 | loaf to puddle | 1.12 to 0.38-0.5 x r² | 11 to 3.5 | 0.006 to 0 | 0.74 to 0.56 | from the cat maker: see "Your own cat" |
 
-**Held by the scruff.** Every cat can be picked up, in puzzles, the photo room
-and at home alike, and goes where the finger takes it: a pinch of five ring
+**Held by the scruff.** Every cat can be picked up, at home and in the cat
+maker alike, and goes where the finger takes it: a pinch of five ring
 nodes near the touch is the scruff, picked from skin that faces up (never the
 underside, even on a cat squashed into a dent).
 
@@ -132,9 +135,6 @@ settles to its resting stretch; and carry every breed along a smooth path,
 checking its middle follows without shudder (its third difference per frame)
 and that it comes to hang straight.
 
-The solver carries cats the same way, holding them so their dangling bottom
-clears the rim, and steps a cat off its own perch, down, then in under it.
-
 ## Painting and layering
 
 Draw order each frame: cached back layer (room, furniture, decor, the far
@@ -165,7 +165,7 @@ nudge), whose smoothed centre speed is under 1.5 units/s (2.5 when seated or
 perched) and whose nodes each move under 0.5 units (1.2 when seated or perched)
 over two 20-frame windows falls asleep: its nodes are frozen and skipped by the
 solver. It wakes on a grab, a boop, a game nudge over 40 units/s², a moving or
-carried cat bumping into it, or any change to the furniture (sandbox). A
+carried cat bumping into it, or any change to the furniture (a perch put up). A
 sleeping cat is an immovable cushion for a neighbour settling gently against
 it. Seated cats get no more nudging at all, and a cat balanced on a rim it
 doesn't fit slides off on a slippery rim with a push that builds over 1/3 s,
@@ -215,7 +215,7 @@ that slumped under one could not be lifted (the finger pulled it straight into
 the overhang). Another test drops every breed beside every container, on both
 sides, and checks it can be lifted straight up.
 
-## Seating and cozy points
+## Seating ("if it fits, I sits")
 
 - A cat touching a container commits to an intent: **in** (damped pull toward the
   opening, "slurp" on the part already inside), **out** (it is balanced on a rim:
@@ -224,37 +224,17 @@ sides, and checks it can be lifted straight up.
   cavity is 55% full. One cat per container; the bigger overlap wins a tie.
 - `fill` = share of the cavity covered (sampled on a 4-unit grid, eroded 3 units
   from the walls). `spill` = share of the cat outside.
-- Score = `(0.2 + 0.8 * smoothstep(0.3, 0.86, fill)) * spillFactor`, where the
-  spill factor is 1 up to 68% spill, then falls to 0.55. Labels: Snug! >= 92,
-  Cozy >= 78, Comfy >= 60, else Roomy / Overflowing.
-
-## Daily generator
-
-Vignettes (built perch-left, mirrored by the composer): `dropShelf` (shelf over a
-floor container), `counterStool` (the hero layout), `cabinetFloor` (cabinet,
-crate, bookcase or fridge beside a floor container), `sillFloor` (window sill
-over a floor container), `shelfTable` (high shelf over a table container).
-Containers are picked to suit each cat's volume (ratio ~1 to 2.4 preferred) and
-the theme. Three-cat mornings that don't fit side by side add a kitten on a high
-shelf with a container in a free stretch of floor. Two-cat mornings often get a
-spare container, which makes the morning a choice.
-
-## Solver
-
-For each cat (lowest perch first, then the reverse order if that fails), try the
-intended container, then any other free container, then accept wherever the cat
-happily ends up. Gestures: drags with different targets and tolerances, two-leg
-drags that slide off the perch edge first when the container is tucked under it,
-and a boop. A drag lets go once the cat is over the opening and off its perch.
-Par is the number of gestures in the first full solution.
+- How snug = `(0.2 + 0.8 * smoothstep(0.3, 0.86, fill)) * spillFactor`, where
+  the spill factor is 1 up to 68% spill, then falls to 0.55. A snug cat (78 and
+  up) looks happy, a roomy one content; either way it purrs.
 
 ## Known limits / next steps
 
-- Three-cat rooms rely on the carried kitten; a wider vignette set (stacked
-  shelves, ramps) would allow three big cats.
-- Tipping containers (pouring a cat out of a cup) isn't in the first playable.
-- Purrs, glorps and music are synthesized; recorded purrs would sell the reveal
-  even more.
+- Tipping containers (pouring a cat out of a cup) isn't in.
+- Purrs, glorps and music are synthesized; recorded purrs would sell the cozy
+  moments even more.
+- The cat maker has no accessories yet (hats, bows, collars): a natural thing
+  for treats to buy.
 
 ## Cat Jar (prototype)
 
@@ -306,13 +286,16 @@ are what they are:
 
 ## The house
 
-One page, three games, and a home room in between (`src/house/`). Notes on
-the choices:
+One page: a home room, where the page opens and you can play with the cats
+straight away, and two games reached from it (`src/house/`). If It Fits, the
+puzzle the house grew out of (nudge the cats into teacups and sinks, a new
+room every morning), went: it was the first thing a new player met, and the
+least fun of the three, so the house became the sandbox and the way in.
+Notes on the choices:
 
-- **The home is an If It Fits room, four floors tall.** It's a `RoomDef`
-  like any other, run in sandbox mode (no paws, no "fits & sits"), so the
-  cats are the same soft bodies you can pick up, boop and pour into the vase
-  or the basket. The house stacks four floors in one world: the roof garden
+- **The home is a room, four floors tall.** It's a `RoomDef` like any other,
+  so the cats are the same soft bodies you can pick up, boop and pour into
+  the vase or the basket. The house stacks four floors in one world: the roof garden
   on top, the attic under it, the living room (where you start) and the
   basement under that (`layout.ts`). Each floor is laid out in the same local frame as a
   room (the top of a room's wall at 0, floor at `FLOOR_Y`) and moved by its
@@ -351,9 +334,9 @@ the choices:
   from the box, thinner, and leaves room for the cushion. The long shelf over them
   stops short of the cushion, so a cat dropped on it from up the wall gets
   there.
-- **The ways in are the big buttons along the bottom**: a bar of three tins,
-  each with the face of the next cat you can meet in that game peeking over
-  its lid, and the shop's. (Labels on things in the room said the same again,
+- **The ways in are the big buttons along the bottom**: a tin for each game,
+  with the face of the next cat you can meet in it peeking over its lid, and
+  the shop's. (Labels on things in the room said the same again,
   and a little jar of cats on a shelf and a hatch up to the attic were more
   things on the wall where perches go: they went.)
 - **Mounting.** Cat Jar and Cat Drop mount over the page and unmount again
@@ -362,15 +345,18 @@ the choices:
   steps aside while a game is up; a tiny inline style keeps the page hidden
   until it arrives. They share the page's AudioEngine and settings, so music
   carries on from room to game.
-- **Cats move in as you play.** Four milestones, one early one in each game
-  and one that takes a little more, measured with bots rather than guessed: a
-  Cat Drop bot steering for the openings falls 400-1,400 m and eats 17-62 fish
-  in a run (so "eat 25 fish" is a good run); in Cat Jar even random drops make
-  a Maine Coon within 20 drops and the Void within 40, so the Void isn't the
-  last milestone: Inkwell, who lives in the Midnight Study, follows you home
-  when you finish that room. (Noodle the sphynx, who moved in after a 100 m
-  drop, left with the sphynx; an older house's save moves its Cat Jar record
-  down a size to match the shorter chain.) The games
+- **Cats move in as you play.** Four milestones, two in each game, an early
+  one and one that takes a little more, measured with bots rather than
+  guessed: Duchess for a Persian in Cat Jar (two tabbies snuggled up) and
+  Juniper for a Maine Coon; Biscuit for 25 fish in one Cat Drop and Inkwell,
+  a small night that wandered in, for a 750 m fall (a bot steering for the
+  openings falls 400-1,300 m and eats 17-62 fish a run, so both are good
+  runs, and the fall the better one). Duchess and Inkwell used to come from
+  If It Fits rooms: a house that has them keeps them, and one that hasn't
+  gets them for the new milestones (met already, they're on the way at
+  once). (Noodle the sphynx, who moved in after a 100 m drop, left with the
+  sphynx; an older house's save moves its Cat Jar record down a size to match
+  the shorter chain.) The games
   report how a run is *going* (each 10 m and each fish; each new biggest cat),
   not just how it went, so a cat announces itself the moment it's earned, in a
   toast that shows over any game. A new house counts progress made before it
@@ -390,9 +376,8 @@ the choices:
   off loses much of its spring). Nobody leaps straight up into the underside
   of a ledge, or to where someone is or is on the way to.
 - **Treats.** Every game pays treats, about the same for the time it takes
-  (ten or fifteen a minute): a new If It Fits room 25 (5 for a replay), plus 5
-  for a cozy one and 5 for par; Cat Jar a treat per 150 points (~30 for a
-  whole jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).
+  (ten or fifteen a minute): Cat Jar a treat per 150 points (~30 for a whole
+  jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).
   The games report as they go, so a run is paid as it goes too: each report
   carries the run's id and pays what it's earned since the last one
   (`payTreats`), so leaving a game half way loses nothing and nothing is paid
@@ -426,7 +411,7 @@ the choices:
   sinks it, and a few frames later it's thrown back up, centred over the
   cushion (thrown as it came, it shot off the rounded edge), at 86% of the
   speed it came down at, so each bounce is lower until it just sits. While a
-  cat's bouncing, If It Fits' pull towards a container's opening is off: the
+  cat's bouncing, the pull towards a container's opening is off: the
   vase next door sucked a bouncing kitten in. Both are painted live, every
   frame (`Stage.liveFront`), the rest of the perches in the cached tiles.
 - **The tubes.** A funnel in the living room floor drops a cat that falls into
@@ -490,3 +475,69 @@ the choices:
   bounces back out. A cat knocked off something still falls in now and
   then (it's what the funnel is for): one that tumbles in by itself goes
   down without taking the view with it, and a note says where it went.
+
+## Your own cat
+
+The cat maker (`src/house/catMaker.ts`) makes a design (`CatDesign` in
+`src/physics/mycat.ts`: a name, a coat, a pattern, eyes, fur, size, squish
+and a personality) and the design becomes a breed of its own, `'mine'`, which
+`setMyCat` puts in `BREEDS`. Everything else (the house, its bookkeeping by
+breed, the faces, the portraits, Cat Drop) then treats it like any other cat.
+Its name, temperament and favourite spot (the bouncy cushion) sit beside the
+six cats' (`applyMyCat`); its pictures are cached under a key that changes
+with each restyle (`lookKey`).
+
+- **Looks.** Ten coats (the six cats' and the Cat Jar neighbours' palettes,
+  plus chocolate and white) and five patterns: plain (a paler tummy; a black
+  coat keeps the Void's velvet sheen), stripes (the tabby's mackerel stripes),
+  tuxedo (a crisp white shirt front, socks and a blaze, whatever the coat),
+  patches (a white cat with patches of the coat's colour: a cap over the head
+  and ears parted by a white blaze, a saddle and a spot; a black one is a
+  little cow) and points (a Siamese: pale all over, the coat's colour, made
+  deep enough to show on a pale coat, in a mask round the nose and on the
+  ears and paws). Eyes are the house's little dark dots or a colour, painted
+  as an iris with a pupil and, on a light coat, a dark rim; a black cat's dots
+  turn gold, or they wouldn't show. Fur goes from sleek to a fluffy outline
+  with a bib under the chin past halfway and lynx tips at the very end.
+  Personality picks the face (playful big-eyed, dramatic with lashes, sleepy
+  and dozing) and how it gets on at home (the antics' play, touchiness,
+  laziness and love of the yarn).
+- **Size** sets the radius, 22 (a kitten) to 40 (nearly a chonk), and with it
+  the ring's nodes, the weight, how high a boop hops and the voice and purr.
+- **Squish** is one slider from **Loaf** to **Puddle**, and it's physics:
+  skin tension from 1.12 r² down to 0.38 r² (0.5 r² for the biggest: a big
+  puddle spread flat struggled through Cat Drop's gaps), a little shape
+  memory at the loaf end and none past custard, a stretch limit from 2.15 to
+  2.6, a hang from the scruff from 0.74 (holds up) to 0.56 (drips long),
+  viscosity 11 to 3.5, plastic creep and the settled loaf's width rising
+  together. The middle is the tabby's custard. Settled on an empty floor, a
+  loaf stands about 1.25 times as wide as tall at any size, custard 1.45 to
+  1.5, a puddle 1.8 to 2.1 (measured: the tests check it at both ends of the
+  size range). The readout names it as the breeds are named: firm as a loaf,
+  wobbles like jelly, pours like custard, pours like honey, pours like a
+  puddle.
+- **The extremes hold together.** Carried round the house with shakes and
+  dropped, the four corners (tiny and chonky, loaf and puddle) never knot,
+  and in Cat Drop each gets a fair way down with a simple bot (tiny loaf
+  970-1,260 m, chonky puddle 360-570 m, about the Persian's).
+- **The preview** is a little world of its own: a cushion, walls and a
+  ceiling at the edges of the view, and your cat as a soft body built from
+  the draft (`SoftBody` takes a breed's physics and look as overrides, so the
+  real `'mine'` isn't touched until you save). A new size or squish drops a
+  fresh cat onto the cushion, so you see how it lands; a new coat repaints the
+  same cat where it is (its state is snapshotted into a body in the new
+  coat). Tap it to poke it into a hop.
+- **Where it's offered.** The welcome card's first button; once to a house
+  from before there was a maker (`catAsked`), when nothing else is on screen;
+  the cats card (a row of its own, Make or Restyle) and the menu. A new cat
+  hops in at the window like any cat moving in; a restyled one is rebuilt
+  where it was. Names keep to letters, numbers, spaces and `' . -` (they go
+  into the page's cards), 14 at most.
+- **In Cat Drop** it's first in the picker once made, and picked if you
+  haven't picked another before. A standalone `drop.html` reads it from the
+  house's save on the same site.
+- **The save** is v6: `cat` (the design, made safe on load: anything out of
+  range or unknown goes back to the default) and `catAsked`. A house that
+  says your cat lives here but has lost its design drops it from the
+  residents.
+

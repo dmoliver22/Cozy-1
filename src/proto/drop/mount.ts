@@ -9,14 +9,14 @@
 import protoCss from '../proto.css?inline';
 import dropCss from './drop.css?inline';
 import type { ImpactMaterial } from '../../audio/audio';
-import { BREEDS, type BreedId } from '../../physics/breeds';
+import { BREEDS, hasMyCat, type BreedId } from '../../physics/breeds';
 import { Listeners, Loop, bindPointer, loadBest, saveBest, makeStage, todaySeed } from '../kit';
 import { attachStyles, type Mounted, type ProtoShell } from '../shell';
 import { BathScene } from './bath';
 import { DropGame, SOAK, type DropState, type GameEvent } from './game';
 import { DropSfx } from './sfx';
 import { Suds } from './suds';
-import { BREED_CHOICES, DropUi } from './ui';
+import { DropUi, breedChoices } from './ui';
 import { DropView, type EndStage } from './view';
 
 const BEST_KEY = 'catdrop.best';
@@ -28,10 +28,11 @@ interface Prefs {
 }
 
 function loadPrefs(): Prefs {
-  const def: Prefs = { breed: 'tabby' };
+  // (your own cat, if you've made one)
+  const def: Prefs = { breed: hasMyCat() ? 'mine' : 'tabby' };
   try {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}') as Partial<Prefs>;
-    return { breed: BREED_CHOICES.includes(p.breed as BreedId) ? (p.breed as BreedId) : def.breed };
+    return { breed: breedChoices().includes(p.breed as BreedId) ? (p.breed as BreedId) : def.breed };
   } catch {
     return def;
   }

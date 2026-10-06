@@ -316,7 +316,7 @@ describe('soft-body cats', () => {
             { breed: held, x: 190, y: 330, name: 'h' },
           ],
         },
-        { settleFrames: 0, mode: 'sandbox' },
+        { settleFrames: 0 },
       );
       const [low, cat] = s.cats;
       for (let f = 0; f < 60; f++) s.step();
@@ -341,7 +341,7 @@ describe('soft-body cats', () => {
   });
 
   it('carrying cats round the house never leaves one knotted or inside out', () => {
-    const s = new Session(houseRoom({ open: [], residents: ALL_CATS, where: {} }), { mode: 'sandbox', shell: houseShell });
+    const s = new Session(houseRoom({ open: [], residents: ALL_CATS, where: {} }), { shell: houseShell });
     for (let f = 0; f < 90; f++) s.step();
     // pick each cat up and carry it a lap: up, through the room past the
     // furniture and the other cats, down into the box, quick shakes, and off
@@ -611,7 +611,7 @@ describe('soft-body cats', () => {
 
 /** A bare room with these cats in it, settled. */
 function openRoom(cats: { breed: BreedId; x: number; y: number }[]): Session {
-  const s = new Session({ id: 'open', name: 'open', theme: 'living', furniture: [], decor: [], containers: [], cats: cats.map((c, k) => ({ ...c, name: `c${k}` })) }, { mode: 'sandbox' });
+  const s = new Session({ id: 'open', name: 'open', theme: 'living', furniture: [], decor: [], containers: [], cats: cats.map((c, k) => ({ ...c, name: `c${k}` })) });
   for (let f = 0; f < 90; f++) s.step();
   return s;
 }

@@ -16,7 +16,7 @@ function house(
   opts: { offLimits?: AnticsHost['offLimits']; toy?: { x: number; y: number } } = {},
 ) {
   const offLimits = opts.offLimits ?? (() => false);
-  const s = new Session(houseRoom({ open: [], residents, where }), { mode: 'sandbox', shell: houseShell });
+  const s = new Session(houseRoom({ open: [], residents, where }), { shell: houseShell });
   const hurt = new Set<BreedId>();
   const hurtLog: BreedId[] = [];
   const host: AnticsHost = {

@@ -42,6 +42,8 @@ export const TEMPERS: Record<BreedId, Temper> = {
   mainecoon: { word: 'a gentle hunter', play: 0.6, touchy: 0.15, lazy: 0.25, toy: 0.75 },
   chonk: { word: 'sleepy', play: 0.15, touchy: 0.5, lazy: 0.8, toy: 0.4 },
   void: { word: 'mischievous', play: 0.7, touchy: 0.6, lazy: 0.2, toy: 0.3 },
+  // yours: whatever personality you gave it in the cat maker (see applyMyCat)
+  mine: { word: 'playful', play: 0.85, touchy: 0.1, lazy: 0.1, toy: 0.55 },
 };
 
 export type Mood = 'sunny' | 'grumpy' | 'dozy';
