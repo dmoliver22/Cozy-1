@@ -237,10 +237,8 @@ export class JarGame {
           break;
         }
       }
-      // (and now and then a neighbour's cat, in its own coat)
-      const r1 = this.rand();
-      const r2 = this.rand();
-      const c = t < COAT_TIERS ? pickCoat(n, r1, r2) : 0;
+      // (in any of its coats: its breed's own, or a neighbour's)
+      const c = t < COAT_TIERS ? pickCoat(this.rand()) : 0;
       this.queue.push({ tier: t, coat: c });
     }
   }
@@ -417,12 +415,13 @@ export class JarGame {
     // cats on top would otherwise hold it down like a lid), so a boop always
     // shows: the stack rises with it, and it pushes up a little harder.
     const stack = this.stackAbove(cat);
+    const heave = 1 + Math.min(0.4, 0.035 * stack.length);
     for (const o of stack) {
-      o.body.kick(0, -vy);
+      o.body.kick(0, -vy * heave);
       o.booped = this.frame;
       o.rest = 0;
     }
-    b.kick(side * vy * 0.3, -vy * (stack.length ? 1.25 : 1));
+    b.kick(side * vy * 0.3, -vy * (stack.length ? 1.25 * heave : 1));
     cat.booped = this.frame;
     cat.rest = 0;
     this.takeOff(cat);

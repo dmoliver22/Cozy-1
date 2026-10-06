@@ -136,26 +136,17 @@ export const COATS: Coat[][] = [
 export const COAT_TIERS = COATS.length;
 
 /**
- * The chance a drop is a neighbour's cat, after this many drops: none for
- * the first COAT_FROM, then more and more of them as the afternoon wears on,
- * up to COAT_SHARE after COAT_RAMP more; the second neighbour's cats start
- * coming round after COAT2_FROM drops. (Bots at a human pace: dropping at
- * random fills the jar in ~260 drops (240 to 290), aiming for twins in ~310
- * (210 to 400); with one neighbour's coats it took twice that, and with
- * none the jar never filled.)
+ * Every drop that comes in coats comes in any of the three (its breed's own,
+ * or one of the neighbours'), each as likely, from the very first drop. (The
+ * neighbours' cats used to come round only after a few drops, more of them as
+ * the afternoon wore on, and the start was too easy: plenty of twins, and the
+ * pile stayed low for a long time.)
  */
-export function coatChance(drops: number): number {
-  return drops < COAT_FROM ? 0 : Math.min(COAT_SHARE, ((drops - COAT_FROM + 1) / COAT_RAMP) * COAT_SHARE);
-}
-export const COAT_FROM = 6;
-export const COAT_RAMP = 400;
-export const COAT_SHARE = 0.6;
-export const COAT2_FROM = 40;
+export const COATS_PER_KIND = COATS[0].length + 1;
 
-/** Which coat a drop comes in, given the drops so far and two random numbers. */
-export function pickCoat(drops: number, r1: number, r2: number): number {
-  if (r1 >= coatChance(drops)) return 0;
-  return drops >= COAT2_FROM && r2 < 0.5 ? 2 : 1;
+/** Which coat a drop comes in, from a random number in 0..1. */
+export function pickCoat(r: number): number {
+  return Math.min(COATS_PER_KIND - 1, Math.floor(r * COATS_PER_KIND));
 }
 
 /** A kind's name and coat. */

@@ -264,7 +264,9 @@ are what they are:
 - **Taps never drop.** A tap boops the cat nearest the finger (no time limit,
   ~30 px of reach past the outline); dropping takes a sideways drag and
   release, or a tap on the waiting cat itself. A boop on a buried cat heaves
-  up everything piled on it, or the sleeping cats on top hold it down.
+  up everything piled on it (harder the more there is: a kitten at the
+  bottom of the whole jar still visibly hops), or the sleeping cats on top
+  would hold it down.
 - **The tall jar** is about two screens tall. The next cat hangs `DROP_GAP`
   over the top of the pile (so every drop falls about as far, and the view can
   stay on the pile); the camera follows that line and the player can look
@@ -282,16 +284,18 @@ are what they are:
   Kittens, Silver and Brown Tabbies, a Turkish Van and a Blue Persian), the
   same size with the same ways, that only snuggle up to a twin in the same
   coat; two of a coat make the next size in that coat, and at the Persian's
-  size any pair makes a Maine Coon. They turn up after the first few drops
-  and more often as the afternoon wears on (`coatChance`: none for 6 drops,
-  then up to 60% by drop 406; the second neighbour from drop 40), so the pile
-  slowly grows and where you drop a cat matters more and more. Twins melt
-  only after snuggling a moment (`SNUGGLE_FRAMES`), so a passing bump doesn't
-  count; a cat left alone dozes off (`dozeFrames`, sooner as the kitchen's
-  light warms toward evening) but always wakes when a twin cuddles up. Bots at
-  a human pace: random drops fill the jar in ~260 drops (240 to 290), aiming
-  for twins in ~310 (210 to 400); with one neighbour's coats it took twice
-  that, and with none the jar never fills.
+  size any pair makes a Maine Coon. Every drop comes in any of its three
+  coats, each as likely, from the first drop (`pickCoat`). (They used to come
+  round as the afternoon wore on, none for the first 6 drops and up to 60% by
+  drop 406, and the start was too easy: plenty of twins, and a pile that
+  stayed low for a long time.) Twins melt only after snuggling a moment
+  (`SNUGGLE_FRAMES`), so a passing bump doesn't count; a cat left alone dozes
+  off (`dozeFrames`, sooner as the kitchen's light warms toward evening) but
+  always wakes when a twin cuddles up. Bots at a human pace: random drops
+  fill the jar in ~105 drops (95 to 120), and aiming for twins doesn't do
+  much better (87 to 135): it takes planning, and boops. (With the neighbours
+  coming round gradually it was ~260 and ~310; with one neighbour's coats
+  twice that, and with none the jar never filled.)
 - **Performance.** A cat that's been truly still for 3/4 s is put to sleep in
   the physics (deep in a pile the engine's own test never fires), pictures of
   still cats are reused until their shape drifts, and off-screen cats aren't
@@ -375,7 +379,7 @@ the choices:
   of a ledge, or to where someone is or is on the way to.
 - **Treats.** Every game pays treats, about the same for the time it takes
   (ten or fifteen a minute): a new If It Fits room 25 (5 for a replay), plus 5
-  for a cozy one and 5 for par; Cat Jar a treat per 400 points (~100 for a
+  for a cozy one and 5 for par; Cat Jar a treat per 150 points (~30 for a
   whole jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).
   The games report as they go, so a run is paid as it goes too: each report
   carries the run's id and pays what it's earned since the last one

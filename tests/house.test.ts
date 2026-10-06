@@ -250,7 +250,7 @@ describe('treats and the shop', () => {
     const t0 = h.treats;
     const j = (score: number, run: string, over = false) => ({ game: 'jar' as const, daily: false, score, biggest: 1, drops: 10, over, run });
     expect(payTreats(h, j(JAR_POINTS_PER_TREAT * 5 + 10, 'a'))).toBe(5);
-    expect(payTreats(h, j(JAR_POINTS_PER_TREAT * 5 + 300, 'a'))).toBe(0);
+    expect(payTreats(h, j(JAR_POINTS_PER_TREAT * 6 - 10, 'a'))).toBe(0);
     expect(payTreats(h, j(JAR_POINTS_PER_TREAT * 9, 'a', true))).toBe(4);
     // a new game starts from nothing
     expect(payTreats(h, j(JAR_POINTS_PER_TREAT * 2, 'b'))).toBe(2);

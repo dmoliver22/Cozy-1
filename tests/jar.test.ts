@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COAT2_FROM, COAT_FROM, COAT_RAMP, COAT_SHARE, COAT_TIERS, DOZE_FIRST, DROP_GAP, JAR, LAST_TIER, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER, coatChance, kindName, pickCoat } from '../src/proto/jar/config';
+import { COAT_TIERS, DOZE_FIRST, DROP_GAP, JAR, LAST_TIER, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER, kindName, pickCoat } from '../src/proto/jar/config';
 import { JarGame } from '../src/proto/jar/game';
 import { polygonArea } from '../src/util/math';
 import type { SoftBody } from '../src/physics/softbody';
@@ -145,28 +145,17 @@ describe('Cat Jar', () => {
     expect(g3.cats.map((c) => [c.tier, c.coat])).toEqual([[3, 0]]);
   });
 
-  it('the neighbours\' cats turn up after the first few drops, more of them as the afternoon wears on', () => {
-    expect(coatChance(0)).toBe(0);
-    expect(coatChance(COAT_FROM - 1)).toBe(0);
-    expect(coatChance(COAT_FROM)).toBeGreaterThan(0);
-    for (let d = COAT_FROM; d < COAT_FROM + COAT_RAMP; d += 10) expect(coatChance(d + 10)).toBeGreaterThanOrEqual(coatChance(d));
-    expect(coatChance(COAT_FROM + COAT_RAMP)).toBeCloseTo(COAT_SHARE, 9);
-    expect(coatChance(5000)).toBeCloseTo(COAT_SHARE, 9);
-    // late in a game, about that share of the drops are the neighbours' cats, half of each neighbour's
-    const g = new JarGame('play', 5);
-    g.drops = COAT_FROM + COAT_RAMP + 10;
+  it('every coat drops from the very first drop, each about as often (no easy start)', () => {
+    expect([0, 0.2, 0.34, 0.5, 0.67, 0.99, 1].map(pickCoat)).toEqual([0, 0, 1, 1, 2, 2, 2]);
+    // the first three drops of a few hundred games: a third in each coat
     const count = [0, 0, 0];
-    for (let k = 0; k < 300; k++) {
-      g.setQueue([]);
+    for (let seed = 1; seed <= 300; seed++) {
+      const g = new JarGame('play', seed);
       for (const q of g.queue) if (q.tier < COAT_TIERS) count[q.coat]++;
     }
     const n = count[0] + count[1] + count[2];
-    expect((count[1] + count[2]) / n).toBeGreaterThan(COAT_SHARE - 0.07);
-    expect((count[1] + count[2]) / n).toBeLessThan(COAT_SHARE + 0.07);
-    expect(Math.abs(count[1] - count[2]) / n).toBeLessThan(0.08);
-    // the second neighbour comes round only after a while
-    for (let d = 0; d < COAT2_FROM; d++) for (const r2 of [0, 0.3, 0.7]) expect(pickCoat(d, 0, r2)).toBeLessThan(2);
-    expect(pickCoat(COAT2_FROM, 0, 0.2)).toBe(2);
+    for (const c of count) expect(Math.abs(c / n - 1 / 3)).toBeLessThan(0.05);
+    expect(kindName(0, 1)).toBe('Ginger Kitten');
     expect(kindName(2, 2)).toBe('Blue Persian');
   });
 

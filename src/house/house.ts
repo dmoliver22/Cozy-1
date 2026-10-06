@@ -295,10 +295,10 @@ export function nextMoveIn(h: HouseSave, game?: GameId): MoveIn | null {
 /**
  * Cat Jar points per treat; Cat Drop: a treat for every two fish and every
  * fifty metres down. (Each game pays about the same for the time it takes,
- * ten or fifteen treats a minute: a whole jar, ~100; a Cat Drop run, 20 to
- * 60; a new If It Fits room, 25 to 35.)
+ * ten or fifteen treats a minute: a whole jar, about 30, more for a good one;
+ * a Cat Drop run, 20 to 60; a new If It Fits room, 25 to 35.)
  */
-export const JAR_POINTS_PER_TREAT = 400;
+export const JAR_POINTS_PER_TREAT = 150;
 export const DROP_FISH_PER_TREAT = 2;
 export const DROP_METRES_PER_TREAT = 50;
 

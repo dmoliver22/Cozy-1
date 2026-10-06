@@ -50,7 +50,7 @@ The house:
   top and bottom naming the next stop) between the roof garden, up high in
   the living room, down by its floor, and the basement.
 - **Treats** come from every game: a new If It Fits room (more for a cozy one
-  in par), every 400 points in Cat Jar, fish and metres in Cat Drop, and a
+  in par), every 150 points in Cat Jar, fish and metres in Cat Drop, and a
   little present the cats leave on the rug the first time you're home each
   day. The **Shop** tin shows how many you have.
 - **The shop** opens up the basement (the lid comes off the funnel in the
@@ -205,15 +205,15 @@ run reports); each also still has a page of its own:
   Void; cats that only brush past each other don't), and each breed has its
   ways: kittens hop about before they settle, a tabby is steady, a Persian
   oozes into gaps, a Maine Coon squashes down to fit, and a chonk pops small
-  cats up. The neighbours' cats come round too: Ginger and Cream Kittens,
-  Silver and Brown Tabbies, a Turkish Van and a Blue Persian, the same sizes
-  and ways as the first three but only twins in the same coat snuggle, and
-  more of them turn up as the afternoon wears on (the kitchen's light warms
-  toward evening), so the jar slowly fills. Now and then a Little Void
-  drops: it melts into any cat and makes it one size bigger. A cat left lying
-  still dozes off (zzz) until something wakes it, and twins that touch always
-  snuggle. Tap a cat to boop it (a few boops per game; a buried cat heaves up
-  the ones on top of it). A tap never drops a cat. The game ends when the pile stays above the dashed line
+  cats up. The neighbours' cats are there from the first drop: Ginger and
+  Cream Kittens, Silver and Brown Tabbies, a Turkish Van and a Blue Persian,
+  the same sizes and ways as the first three but only twins in the same coat
+  snuggle, so every drop is one of nine kinds and twins take some finding.
+  Now and then a Little Void drops: it melts into any cat and makes it one
+  size bigger. A cat left lying still dozes off (zzz) until something wakes
+  it (sooner as the kitchen's light warms toward evening), and twins that
+  touch always snuggle. Tap a cat to boop it (a few boops per game; a buried
+  cat heaves up the ones on top of it). A tap never drops a cat. The game ends when the pile stays above the dashed line
   by the rim. Free play and a daily jar.
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on

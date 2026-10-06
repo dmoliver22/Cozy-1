@@ -291,9 +291,8 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
   const kindKey = (tier: number, coat: number): number => tier + coat * 100;
 
   /**
-   * Say what a breed does the first time it turns up in a game (in a player's
-   * first few games; the Little Void, and the neighbours' cats in their own
-   * coats, every time: they look like breeds you know, but aren't twins).
+   * Say what kind of cat it is, and what it does, the first time it turns up
+   * in a game (in a player's first few games; the Little Void every time).
    */
   function introduce(tier: number, coat: number, x: number, y: number): void {
     const key = kindKey(tier, coat);
@@ -301,7 +300,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     introduced.add(key);
     const T = TIERS[tier];
     if (tier === WILD) view.fx.label(x, y, 'Little Void: melts into any cat!', '#5B4E86', 12);
-    else if (coat > 0 || gamesPlayed <= 3) view.fx.label(x, y, `${kindName(tier, coat)} · ${T.trait}`, TRAIT_INK, 12);
+    else if (gamesPlayed <= 3) view.fx.label(x, y, `${kindName(tier, coat)} · ${T.trait}`, TRAIT_INK, 12);
   }
 
   function handle(events: JarEvent[]): void {
