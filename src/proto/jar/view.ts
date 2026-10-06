@@ -12,7 +12,7 @@ import { rgba, type Ctx } from '../../render/paint';
 import { clamp, easeOutBack } from '../../util/math';
 import { CatPainter, Lerp, type CatLook, type Stage } from '../kit';
 import { CAV, FRONT_RECT, floorShadow, paintBack, paintFront } from './art';
-import { CX, DOZE_RAMP, HOLD_Y, JAR, LINE_Y, TIERS, WILD, WORLD_BOTTOM, WORLD_TOP } from './config';
+import { COATS, CX, DOZE_RAMP, HOLD_Y, JAR, LINE_Y, TIERS, WILD, WORLD_BOTTOM, WORLD_TOP } from './config';
 import { Effects, heart } from './fx';
 import { JarGame, airborne, type Ghost, type JarCat } from './game';
 
@@ -705,7 +705,7 @@ export class JarView {
       const r = b.p.radius;
       const y0 = map(b.cy - r * 0.8);
       const y1 = map(b.cy + r * 0.8);
-      ctx.fillStyle = rgba(TIER_INK[c.tier], 0.9);
+      ctx.fillStyle = rgba(c.coat > 0 && c.tier < COATS.length ? COATS[c.tier].look.body : TIER_INK[c.tier], 0.9);
       roundRect(ctx, x - hw + 0.5, y0, g.w - 1, Math.max(1.5, y1 - y0), hw);
       ctx.fill();
     }

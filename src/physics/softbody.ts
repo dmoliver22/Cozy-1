@@ -3,7 +3,7 @@
 // surface tension. Viscosity damps deformation, never rigid motion, so a honey
 // Persian falls as fast as a water kitten but oozes much more slowly.
 
-import { BREEDS, type Breed, type BreedId, type BreedPhysics } from './breeds';
+import { BREEDS, type Breed, type BreedId, type BreedLook, type BreedPhysics } from './breeds';
 import { dcos, dsin, polygonArea, TAU } from '../util/math';
 
 export const NODE_RADIUS = 2.5;
@@ -315,11 +315,12 @@ export class SoftBody {
   /**
    * `physics` overrides the breed's numbers for this one body (other games
    * built on the engine use breeds at other sizes, e.g. a radius and node
-   * count per merge tier).
+   * count per merge tier), and `look` gives it a coat of its own.
    */
-  constructor(breedId: BreedId, cx: number, cy: number, physics?: Partial<BreedPhysics>) {
+  constructor(breedId: BreedId, cx: number, cy: number, physics?: Partial<BreedPhysics>, look?: BreedLook) {
     this.id = nextBodyId++;
-    this.breed = BREEDS[breedId];
+    // (a coat of its own: the same breed, painted another way)
+    this.breed = look ? { ...BREEDS[breedId], look } : BREEDS[breedId];
     this.p = physics ? { ...this.breed.physics, ...physics } : this.breed.physics;
     const n = (this.n = this.p.nodes);
     const r = this.p.radius;

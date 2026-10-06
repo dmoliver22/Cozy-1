@@ -270,17 +270,25 @@ are what they are:
   over the top of the pile (so every drop falls about as far, and the view can
   stay on the pile); the camera follows that line and the player can look
   around (drag, wheel, the gauge).
-- **Balance.** Soft cats pack and find their twins so well that the jar settles
-  into an equilibrium: random drops into a tall jar kept about ten cats in the
-  bottom third forever (bots, hundreds of drops, no game over). Bigger drops
-  don't help (they just make Voids sooner, and two Voids vanish). What does:
-  twins melt only after snuggling a moment (`SNUGGLE_FRAMES`), so a passing
-  bump doesn't count, and cats that lie still doze off and won't melt until
-  woken (`dozeFrames`, shorter as the game goes on, shown by the kitchen's
-  light warming toward evening). The bottom of the jar slowly fills with
-  sleepers, faster for loose play; careful play and well-spent boops last
-  longer. Bots at a human pace: random drops fill the jar in ~240 drops (the
-  old short jar: ~80); aiming and booping sleepers awake lasts past 800.
+- **Balance.** Soft cats pack and find their twins so well that, with one
+  kind of cat per size, the jar settles into an equilibrium: random drops into
+  a tall jar kept about ten cats in the bottom third forever (bots, hundreds of
+  drops, no game over). Bigger drops don't help (they just make Voids sooner,
+  and two Voids vanish), and making cats that had dozed off refuse to melt did
+  end games but looked broken: twins touching and not snuggling. What works is
+  more kinds of cat. Each of the four sizes that drop also comes in a second
+  coat (the neighbours' cats: Ginger Kitten, Russian Blue, Silver Tabby,
+  Turkish Van), the same size with the same ways, that only snuggles up to a
+  twin in the same coat; two of a coat make the next size in that coat, and at
+  the Persian's size either pair makes a Maine Coon. They turn up after the
+  first few drops and more often as the afternoon wears on (`coatChance`:
+  none for 6 drops, then up to 40% by drop 406), so the pile slowly grows and
+  where you drop a cat matters more and more. Twins melt only after snuggling
+  a moment (`SNUGGLE_FRAMES`), so a passing bump doesn't count; a cat left
+  alone dozes off (`dozeFrames`, sooner as the kitchen's light warms toward
+  evening) but always wakes when a twin cuddles up. Bots at a human pace:
+  random drops fill the jar in ~250 drops (160 to 380), aiming for twins in
+  ~260 (210 to 330); with no second coats it never fills.
 - **Performance.** A cat that's been truly still for 3/4 s is put to sleep in
   the physics (deep in a pile the engine's own test never fires), pictures of
   still cats are reused until their shape drifts, and off-screen cats aren't

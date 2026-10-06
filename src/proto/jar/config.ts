@@ -1,7 +1,7 @@
 // Cat Jar: the numbers. World units (y down) like If It Fits, a portrait
 // world centred on a big glass jar that stands on a kitchen counter.
 
-import type { BreedId, BreedPhysics } from '../../physics/breeds';
+import { BREEDS, type BreedId, type BreedLook, type BreedPhysics } from '../../physics/breeds';
 
 /** Room width (the painted kitchen is 380 wide, like an If It Fits room). */
 export const WORLD_W = 380;
@@ -103,6 +103,57 @@ export const TIERS: Tier[] = [
   tier('void', 'Little Void', 'wild', 20, { shape: 0.004, friction: 0.25 }),
 ];
 
+/**
+ * The neighbours' cats: each of the four kinds that drop also comes in a
+ * second coat, the same size with the same ways (a Ginger Kitten is just as
+ * bouncy as a Kitten), but it only snuggles up to a twin in the same coat.
+ * Two of a coat make the next kind in that coat, and at the top of the drops
+ * a pair of either (two Persians, or two Turkish Vans) makes a Maine Coon.
+ * With only one coat apiece the soft cats found their twins so easily that a
+ * pile never grew; twice the kinds of cat means fewer easy matches, so the
+ * jar slowly fills and where you drop a cat matters.
+ */
+export interface Coat {
+  name: string;
+  look: BreedLook;
+}
+
+const coat = (breed: BreedId, name: string, look: Partial<BreedLook>): Coat => ({ name, look: { ...BREEDS[breed].look, ...look } });
+
+/** The second coat of tiers 0..COAT_TIERS-1. */
+export const COATS: Coat[] = [
+  coat('kitten', 'Ginger Kitten', { body: '#E9A867', shade: '#CF8A49', light: '#FFF4E6', accent: '#C9773A', innerEar: '#F4B79A', nose: '#E58F8A', cheek: '#F3A98C' }),
+  coat('sphynx', 'Russian Blue', { body: '#9BA6B8', shade: '#7F8A9D', light: '#D3D9E4', accent: '#7A8598', innerEar: '#D3AAB8', nose: '#9C8FA6', cheek: '#C3A9C0', pattern: 'none', fluff: 0.12, earSize: 1.15, persona: 'polite' }),
+  coat('tabby', 'Silver Tabby', { body: '#BCC1CA', shade: '#9EA3AE', light: '#F4F4F6', accent: '#5E636E', innerEar: '#EBB2B4', nose: '#D98C92', cheek: '#EDB0B4' }),
+  coat('persian', 'Turkish Van', { body: '#F6F1EA', shade: '#E2D7CA', light: '#FFFFFF', accent: '#DF8F4A', innerEar: '#F2B6AC', nose: '#E0959A', cheek: '#F3B4A8', pattern: 'patches' }),
+];
+export const COAT_TIERS = COATS.length;
+
+/**
+ * The chance a drop comes in its second coat, after this many drops: none for
+ * the first COAT_FROM, then more and more of them as the afternoon wears on,
+ * up to COAT_SHARE after COAT_RAMP more. (Bots at a human pace: dropping at
+ * random fills the jar in ~250 drops (160 to 380), aiming for twins in ~260
+ * (210 to 330); with the second coats from the start, at half the drops,
+ * ~100-180; with no second coats the jar never fills.)
+ */
+export function coatChance(drops: number): number {
+  return drops < COAT_FROM ? 0 : Math.min(COAT_SHARE, ((drops - COAT_FROM + 1) / COAT_RAMP) * COAT_SHARE);
+}
+export const COAT_FROM = 6;
+export const COAT_RAMP = 400;
+export const COAT_SHARE = 0.4;
+
+/** A kind's name and coat. */
+export function kindName(tier: number, c: number): string {
+  return c > 0 && tier < COAT_TIERS ? COATS[tier].name : TIERS[tier].name;
+}
+export function kindLook(tier: number, c: number): BreedLook {
+  return c > 0 && tier < COAT_TIERS ? COATS[tier].look : BREEDS[TIERS[tier].breed].look;
+}
+/** What two of a kind make: the next tier, in the same coat while there is one. */
+export const nextCoat = (tier: number, c: number): number => (tier + 1 < COAT_TIERS ? c : 0);
+
 /** The top of the merge chain (two of these vanish). */
 export const LAST_TIER = 6;
 /** The Little Void: a wildcard drop. */
@@ -122,14 +173,12 @@ export const DROP_WEIGHTS = [0.37, 0.3, 0.21, 0.12];
  */
 export const SNUGGLE_FRAMES = 30;
 /**
- * A cat left lying still a while dozes off and won't snuggle up or melt till
- * something wakes it: a boop, a bump, a Little Void. As the game goes on the
- * cats get sleepier (from DOZE_FIRST frames down to DOZE_LAST by the drop
- * DOZE_RAMP, then slowly on to half that), so even a tall jar slowly fills
- * with sleepers, quicker when cats are left lying about, and boops are worth
- * saving. (Bots at a human pace: dropping at random fills the jar in ~240
- * drops, about four minutes; aiming and booping sleepers awake lasts past
- * 800. The short jar this replaced: ~80 and ~170.)
+ * A cat left lying still a while dozes off (eyes shut, a little z now and
+ * then; a dozing kitten stops scooting about), and wakes when it's booped,
+ * bumped, or a twin cuddles up to it: twins that touch always snuggle. As the
+ * game goes on the cats get sleepier (from DOZE_FIRST frames down to
+ * DOZE_LAST by the drop DOZE_RAMP, then slowly on to half that), and the
+ * kitchen's light warms toward evening with it.
  */
 export const DOZE_FIRST = 1800;
 export const DOZE_LAST = 300;

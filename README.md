@@ -168,13 +168,15 @@ run reports); each also still has a page of its own:
   chonk, the Void; cats that only brush past each other don't), and each
   breed has its ways: kittens hop about before they settle, a sphynx is firm
   and plugs holes, a Persian oozes into gaps, a Maine Coon squashes down to
-  fit, and a chonk pops small cats up. Now and then a Little Void drops: it
-  melts into any cat and makes it one size bigger. A cat left lying still
-  dozes off (zzz) and won't melt till it's woken, and as the afternoon wears
-  on (the kitchen's light warms toward evening) the cats doze off sooner, so
-  the bottom of the jar slowly fills with sleepers. Tap a cat to boop it awake
-  (a few boops per game; a buried cat heaves up the ones on top of it). A tap
-  never drops a cat. The game ends when the pile stays above the dashed line
+  fit, and a chonk pops small cats up. The neighbours' cats come round too:
+  a Ginger Kitten, a Russian Blue, a Silver Tabby and a Turkish Van, the same
+  sizes and ways as the first four but only twins in the same coat snuggle,
+  and more of them turn up as the afternoon wears on (the kitchen's light
+  warms toward evening), so the jar slowly fills. Now and then a Little Void
+  drops: it melts into any cat and makes it one size bigger. A cat left lying
+  still dozes off (zzz) until something wakes it, and twins that touch always
+  snuggle. Tap a cat to boop it (a few boops per game; a buried cat heaves up
+  the ones on top of it). A tap never drops a cat. The game ends when the pile stays above the dashed line
   by the rim. Free play and a daily jar.
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on

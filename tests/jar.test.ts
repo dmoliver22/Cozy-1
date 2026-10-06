@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DOZE_FIRST, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER } from '../src/proto/jar/config';
+import { COAT_FROM, COAT_RAMP, COAT_SHARE, COAT_TIERS, DOZE_FIRST, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER, coatChance, kindName } from '../src/proto/jar/config';
 import { JarGame } from '../src/proto/jar/game';
 import { polygonArea } from '../src/util/math';
 import type { SoftBody } from '../src/physics/softbody';
@@ -97,15 +97,77 @@ describe('Cat Jar', () => {
     expect(merged - touched).toBeGreaterThanOrEqual(SNUGGLE_FRAMES - 1);
   });
 
-  it('a cat left still too long dozes off and won\'t melt till a boop wakes it', () => {
+  it('a cat left still a while dozes off, and wakes when its twin cuddles up to it: they melt', () => {
     const g = new JarGame('play', 1);
     const sleeper = g.place(3, 130, F - 40);
     for (let f = 0; f < DOZE_FIRST + 30; f++) g.step();
     expect(g.dozing(sleeper)).toBe(true);
-    // a twin settles against it: they don't melt
+    // a twin settles against it, as gently as can be
     g.place(3, 130 + 37 * 2 + 5.5, F - 40);
+    let merged = -1;
+    for (let f = 0; f < 200 && merged < 0; f++) {
+      g.step();
+      if (g.snuggles().length) expect(g.dozing(sleeper)).toBe(false);
+      for (const e of g.drain()) if (e.t === 'merge') merged = f;
+    }
+    expect(merged).toBeGreaterThanOrEqual(SNUGGLE_FRAMES - 1);
+    expect(g.cats.map((c) => c.tier)).toEqual([4]);
+  });
+
+  it('only twins in the same coat snuggle, and two of a coat make the next kind in that coat', () => {
+    // a grey kitten and a ginger one side by side: not twins
+    const g = new JarGame('play', 1);
+    g.place(0, 150, F - 20);
+    g.place(0, 150 + 18.5 * 2 + 5.5, F - 20, 1);
     for (let f = 0; f < 200; f++) g.step();
-    expect(g.cats.map((c) => c.tier)).toEqual([3, 3]);
+    expect(g.cats.map((c) => [c.tier, c.coat])).toEqual([
+      [0, 0],
+      [0, 1],
+    ]);
+    // two ginger kittens melt into a Russian Blue (the sphynx's size, in their coat)
+    const g2 = new JarGame('play', 1);
+    g2.place(0, 150, F - 20, 1);
+    g2.place(0, 150 + 18.5 * 2 + 5.5, F - 20, 1);
+    for (let f = 0; f < 200; f++) g2.step();
+    expect(g2.cats.map((c) => [c.tier, c.coat])).toEqual([[1, 1]]);
+    expect(kindName(1, 1)).toBe('Russian Blue');
+    // at the top of the drops, either coat makes a Maine Coon
+    const g3 = new JarGame('play', 1);
+    g3.place(3, 130, F - 40, 1);
+    g3.place(3, 130 + 37 * 2 + 5.5, F - 40, 1);
+    for (let f = 0; f < 200; f++) g3.step();
+    expect(g3.cats.map((c) => [c.tier, c.coat])).toEqual([[4, 0]]);
+  });
+
+  it('the neighbours\' cats turn up after the first few drops, more of them as the afternoon wears on', () => {
+    expect(coatChance(0)).toBe(0);
+    expect(coatChance(COAT_FROM - 1)).toBe(0);
+    expect(coatChance(COAT_FROM)).toBeGreaterThan(0);
+    for (let d = COAT_FROM; d < COAT_FROM + COAT_RAMP; d += 10) expect(coatChance(d + 10)).toBeGreaterThanOrEqual(coatChance(d));
+    expect(coatChance(COAT_FROM + COAT_RAMP)).toBeCloseTo(COAT_SHARE, 9);
+    expect(coatChance(5000)).toBeCloseTo(COAT_SHARE, 9);
+    // late in a game, about that share of the drops come in the second coat
+    const g = new JarGame('play', 5);
+    g.drops = COAT_FROM + COAT_RAMP + 10;
+    let second = 0;
+    let n = 0;
+    for (let k = 0; k < 300; k++) {
+      g.setQueue([]);
+      for (const q of g.queue) {
+        if (q.tier >= COAT_TIERS) continue;
+        second += q.coat;
+        n++;
+      }
+    }
+    expect(second / n).toBeGreaterThan(COAT_SHARE - 0.07);
+    expect(second / n).toBeLessThan(COAT_SHARE + 0.07);
+  });
+
+  it('a boop wakes a dozing cat', () => {
+    const g = new JarGame('play', 1);
+    const sleeper = g.place(3, 130, F - 40);
+    for (let f = 0; f < DOZE_FIRST + 30; f++) g.step();
+    expect(g.dozing(sleeper)).toBe(true);
     expect(g.boop(sleeper, 120)).toBe(true);
     expect(g.dozing(sleeper)).toBe(false);
   });

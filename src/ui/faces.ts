@@ -1,17 +1,18 @@
 // Tiny painted SVG cat faces for the progress row, share card and results.
 
-import { BREEDS, type BreedId } from '../physics/breeds';
+import { BREEDS, type BreedId, type BreedLook } from '../physics/breeds';
 import { lightOf, lineOf, shadowOf } from '../render/paint';
 
-export function faceSVG(breed: BreedId, opts: { mood?: 'happy' | 'open' | 'sleepy'; size?: number } = {}): string {
-  const l = BREEDS[breed].look;
+/** `look` paints it in a coat of its own (with `key` naming that coat, for its gradients). */
+export function faceSVG(breed: BreedId, opts: { mood?: 'happy' | 'open' | 'sleepy'; size?: number; look?: BreedLook; key?: string } = {}): string {
+  const l = opts.look ?? BREEDS[breed].look;
   const mood = opts.mood ?? 'open';
   const size = opts.size ?? 26;
   const dark = l.persona === 'void';
   const eye = l.eye;
   const lid = dark ? eye : '#3A2F3F';
-  // gradient ids are per breed: identical definitions, so repeats are harmless
-  const id = `cf-${breed}`;
+  // gradient ids are per breed (or coat): identical definitions, so repeats are harmless
+  const id = `cf-${opts.key ?? breed}`;
   const eyes =
     mood === 'happy'
       ? `<path d="M8.4 15.3q1.8-2.2 3.6 0M16 15.3q1.8-2.2 3.6 0" stroke="${lid}" stroke-width="1.5" fill="none" stroke-linecap="round"/>`
@@ -25,7 +26,10 @@ export function faceSVG(breed: BreedId, opts: { mood?: 'happy' | 'open' | 'sleep
     l.pattern === 'tabby' || l.pattern === 'mane' || l.pattern === 'belly'
       ? `<path d="M12.6 8.2v2.2M14 7.8v2.4M15.4 8.2v2.2" stroke="${l.accent}" stroke-width="1.2" stroke-linecap="round" opacity=".6"/>`
       : '';
-  const blaze = l.pattern === 'patches' ? `<path d="M13.4 9.6q.6-.5 1.2 0l2.6 8.6h-6.4Z" fill="${l.light}" opacity=".95"/>` : '';
+  const blaze =
+    l.pattern === 'patches'
+      ? `<path d="M5.2 9.2q2.6-3.3 6.2-1.2q-.8 2.6-3.6 3.4q-1.9-.4-2.6-2.2Z" fill="${l.accent}" opacity=".5"/><path d="M13.4 9.6q.6-.5 1.2 0l2.6 8.6h-6.4Z" fill="${l.light}" opacity=".95"/>`
+      : '';
   const muzzle =
     l.pattern === 'none' || l.pattern === 'wrinkles'
       ? ''

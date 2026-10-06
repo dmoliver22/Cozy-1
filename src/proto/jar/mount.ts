@@ -14,7 +14,7 @@ import { PALETTE } from '../../render/paint';
 import { clamp } from '../../util/math';
 import { Listeners, Loop, bindPointer, loadBest, makeStage, saveBest, todaySeed } from '../kit';
 import { attachStyles, type Mounted, type ProtoShell } from '../shell';
-import { CHAIN_MAX, CX, JAR, LAST_TIER, TIERS, WILD } from './config';
+import { CHAIN_MAX, CX, JAR, LAST_TIER, TIERS, WILD, kindName } from './config';
 import { JarGame, outlineDistance, type JarCat, type JarEvent, type Mode } from './game';
 import { JarUI } from './ui';
 import { JarView } from './view';
@@ -44,7 +44,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
   /** Games started in this browser: the first few say what each breed does as it first turns up. */
   const GAMES_KEY = 'catjar.games';
   let gamesPlayed = loadBest(GAMES_KEY);
-  /** Tiers already introduced this game. */
+  /** Kinds (tier and coat, see kindKey) already introduced this game. */
   const introduced = new Set<number>();
 
   const ui = new JarUI(
@@ -284,16 +284,21 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
 
   const TRAIT_INK = '#8C7FA8';
 
+  /** One number per kind of cat (tier and coat). */
+  const kindKey = (tier: number, coat: number): number => tier + coat * 100;
+
   /**
    * Say what a breed does the first time it turns up in a game (in a player's
-   * first few games; the Little Void, every time).
+   * first few games; the Little Void, and the neighbours' cats in their own
+   * coats, every time: they look like breeds you know, but aren't twins).
    */
-  function introduce(tier: number, x: number, y: number): void {
-    if (introduced.has(tier)) return;
-    introduced.add(tier);
+  function introduce(tier: number, coat: number, x: number, y: number): void {
+    const key = kindKey(tier, coat);
+    if (introduced.has(key)) return;
+    introduced.add(key);
     const T = TIERS[tier];
     if (tier === WILD) view.fx.label(x, y, 'Little Void: melts into any cat!', '#5B4E86', 12);
-    else if (gamesPlayed <= 3) view.fx.label(x, y, `${T.name} · ${T.trait}`, TRAIT_INK, 12);
+    else if (coat > 0 || gamesPlayed <= 3) view.fx.label(x, y, `${kindName(tier, coat)} · ${T.trait}`, TRAIT_INK, 12);
   }
 
   function handle(events: JarEvent[]): void {
@@ -301,7 +306,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
       switch (e.t) {
         case 'spawn': {
           const T = TIERS[e.tier];
-          if (phase === 'play') introduce(e.tier, game.holdX, game.holdY(e.tier) - T.r * 1.5 - 14);
+          if (phase === 'play') introduce(e.tier, e.coat, game.holdX, game.holdY(e.tier) - T.r * 1.5 - 14);
           break;
         }
         case 'hop': {
@@ -391,9 +396,14 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     if (e.earned) fx.label(e.x, e.y - T.r - 8, '+1 boop', '#7FA877', 12);
     if (wild) fx.label(e.x, e.y - T.r - 8, 'one size up!', '#5B4E86', 12);
     // the first of a new kind this game: say hello (and, the first few games, what it does)
+    const coat = e.cat ? e.cat.coat : 0;
+    const name = kindName(e.tier + 1, coat);
     if (e.tier + 1 > topTier) {
-      introduced.add(e.tier + 1);
-      fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 4 ? `${T.name} · ${T.trait}!` : `${T.name}!`, '#6F8FB8', 13);
+      introduced.add(kindKey(e.tier + 1, coat));
+      fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 4 ? `${name} · ${T.trait}!` : `${name}!`, '#6F8FB8', 13);
+    } else if (coat > 0 && !introduced.has(kindKey(e.tier + 1, coat))) {
+      introduced.add(kindKey(e.tier + 1, coat));
+      fx.label(e.x, e.y - T.r - 8, `${name}!`, '#6F8FB8', 13);
     }
     if (e.tier + 1 > topTier) report(false);
     topTier = Math.max(topTier, e.tier + 1);
@@ -486,10 +496,11 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
         danger: game.danger,
         frame: game.frame,
         waiting: game.waiting ? game.waiting.tier : -1,
-        next: game.queue.slice(0, 3),
+        next: game.queue.slice(0, 3).map((k) => k.tier),
+        nextCoats: game.queue.slice(0, 3).map((k) => k.coat),
         cats: game.cats.map((c) => {
           c.body.computeCentroid();
-          return { id: c.id, tier: c.tier, breed: TIERS[c.tier].breed, x: +c.body.cx.toFixed(1), y: +c.body.cy.toFixed(1), top: +JarGame.top(c.body).toFixed(1), asleep: c.body.asleep };
+          return { id: c.id, tier: c.tier, coat: c.coat, breed: TIERS[c.tier].breed, x: +c.body.cx.toFixed(1), y: +c.body.cy.toFixed(1), top: +JarGame.top(c.body).toFixed(1), asleep: c.body.asleep };
         }),
       };
     },
@@ -507,9 +518,9 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     restart(mode: Mode = 'play', seed?: number): void {
       startGame(mode, seed);
     },
-    /** Force the upcoming drops (tiers 0..6). */
-    queue(tiers: number[]): void {
-      game.setQueue(tiers);
+    /** Force the upcoming drops (tiers 0..6, and coats 0 or 1). */
+    queue(tiers: number[], coats: number[] = []): void {
+      game.setQueue(tiers, coats);
     },
     /** Boop the cat with this id. */
     boop(id: number): boolean {
@@ -518,9 +529,9 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
       c.body.computeCentroid();
       return game.boop(c, c.body.cx - 5);
     },
-    /** Put a cat of a tier anywhere (tests). */
-    place(tier: number, x: number, y: number): number {
-      return game.place(tier, x, y).id;
+    /** Put a cat of a tier (and coat) anywhere (tests). */
+    place(tier: number, x: number, y: number, coat = 0): number {
+      return game.place(tier, x, y, coat).id;
     },
     /** Draw one frame now (for captures while the loop is paused). */
     render(dt = 1 / 60): void {
