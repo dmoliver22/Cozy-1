@@ -39,11 +39,10 @@ interface Gesture {
   sy: number;
   t0: number;
   dragging: boolean;
-  lx: number;
-  ly: number;
-  lt: number;
-  vx: number;
-  vy: number;
+  /** The finger's recent path while carrying (screen px, and when, ms), read back at each physics step. */
+  ts: number[];
+  xs: number[];
+  ys: number[];
 }
 
 interface Reveal {
@@ -56,6 +55,13 @@ interface Reveal {
 const REVEAL_PER_CAT = 1.25;
 /** Highest a carried cat's grab point may go (world y), so it stays in view. */
 const CARRY_TOP = 40;
+/**
+ * How far behind the finger a carried cat's hand is read (ms). Touches arrive
+ * in uneven bunches, not one per physics step; read a moment behind, the
+ * finger's path is always there to be read between two touches, so every
+ * step moves the hand on as smoothly as the finger really moved.
+ */
+const FINGER_LAG = 24;
 
 export class App {
   readonly canvas = $<HTMLCanvasElement>('game');
@@ -363,6 +369,8 @@ export class App {
     this.acc += dt;
     let steps = 0;
     while (this.acc >= FRAME_DT && steps < 4) {
+      // (the finger, where it was when this step ends)
+      this.feedFinger(t - (this.acc - FRAME_DT) * 1000);
       this.session.rememberPositions();
       this.session.step();
       this.acc -= FRAME_DT;
@@ -376,13 +384,38 @@ export class App {
     this.tickAmbient(dt);
     // Draw between the last two physics steps: smooth on 90/120 Hz screens
     // and through uneven frame times.
-    this.session.beginLerp(Math.min(1, this.acc / FRAME_DT));
+    this.session.beginLerp(Math.min(1, this.acc / FRAME_DT), dt);
     try {
       this.renderer.render(dt);
     } finally {
       this.session.endLerp();
     }
     this.updateHud();
+  }
+
+  /** Move the hand carrying a cat to where the finger was FINGER_LAG ms before `at`. */
+  private feedFinger(at: number): void {
+    const g = this.gesture;
+    if (!g || g.thing || !g.dragging || !this.session.grabbed) return;
+    const { ts, xs, ys } = g;
+    const n = ts.length;
+    if (n === 0) return;
+    const q = at - FINGER_LAG;
+    let x = xs[n - 1];
+    let y = ys[n - 1];
+    if (q <= ts[0]) {
+      x = xs[0];
+      y = ys[0];
+    } else if (q < ts[n - 1]) {
+      let k = n - 2;
+      while (k > 0 && ts[k] > q) k--;
+      const u = ts[k + 1] > ts[k] ? (q - ts[k]) / (ts[k + 1] - ts[k]) : 1;
+      x = xs[k] + (xs[k + 1] - xs[k]) * u;
+      y = ys[k] + (ys[k + 1] - ys[k]) * u;
+    }
+    const w = this.renderer.screenToWorld(x, y);
+    // cats can be carried anywhere in the room, but not up under the top bar
+    this.session.moveGrab(w.x, Math.max(w.y, CARRY_TOP), 0, 0);
   }
 
   private handleEvents(events: GameEvent[]): void {
@@ -1041,12 +1074,12 @@ export class App {
         }
         if (this.sandbox && this.sandbox.pickThing(w.x, w.y)) {
           c.setPointerCapture(e.pointerId);
-          this.gesture = { id: e.pointerId, catIndex: -1, thing: true, sx: p.x, sy: p.y, t0: now, dragging: true, lx: w.x, ly: w.y, lt: now, vx: 0, vy: 0 };
+          this.gesture = { id: e.pointerId, catIndex: -1, thing: true, sx: p.x, sy: p.y, t0: now, dragging: true, ts: [], xs: [], ys: [] };
         }
         return;
       }
       c.setPointerCapture(e.pointerId);
-      this.gesture = { id: e.pointerId, catIndex: cat.index, thing: false, sx: p.x, sy: p.y, t0: now, dragging: false, lx: w.x, ly: w.y, lt: now, vx: 0, vy: 0 };
+      this.gesture = { id: e.pointerId, catIndex: cat.index, thing: false, sx: p.x, sy: p.y, t0: now, dragging: false, ts: [], xs: [], ys: [] };
     });
     c.addEventListener('pointermove', (e) => {
       const g = this.gesture;
@@ -1065,16 +1098,29 @@ export class App {
         this.session.beginGrab(cat, start.x, start.y);
         g.dragging = true;
         c.classList.add('grabbing');
+        // (the finger's path starts where it touched down, so the cat is
+        // lifted from there smoothly rather than jumping to the finger)
+        g.ts.push(g.t0);
+        g.xs.push(g.sx);
+        g.ys.push(g.sy);
       }
       if (g.dragging) {
-        const dt = Math.max(1, now - g.lt) / 1000;
-        g.vx = g.vx * 0.6 + ((w.x - g.lx) / dt) * 0.4;
-        g.vy = g.vy * 0.6 + ((w.y - g.ly) / dt) * 0.4;
-        g.lx = w.x;
-        g.ly = w.y;
-        g.lt = now;
-        // cats can be carried anywhere in the room, but not up under the top bar
-        this.session.moveGrab(w.x, Math.max(w.y, CARRY_TOP), g.vx, w.y > CARRY_TOP ? g.vy : 0);
+        // (every touch the browser bunched into this event, each when it happened)
+        const all = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+        const shift = Math.abs(e.timeStamp - now) < 1000 ? 0 : now - e.timeStamp;
+        for (const ev of all.length ? all : [e]) {
+          const q = pos(ev);
+          const t = ev.timeStamp + shift;
+          if (g.ts.length && t < g.ts[g.ts.length - 1]) continue;
+          g.ts.push(t);
+          g.xs.push(q.x);
+          g.ys.push(q.y);
+        }
+        while (g.ts.length > 2 && g.ts[g.ts.length - 1] - g.ts[0] > 250) {
+          g.ts.shift();
+          g.xs.shift();
+          g.ys.shift();
+        }
       }
     });
     const end = (e: PointerEvent): void => {

@@ -44,15 +44,27 @@ export interface Grab {
   /** The middle of the pinch relative to the hand (it stays put under the finger). */
   midX: number;
   midY: number;
-  /**
-   * Lowest the pinch's middle may go this substep: no lower than it is while
-   * the cat stands on something (a finger pushing down slides a cat off its
-   * shelf, it doesn't squash it in).
-   */
-  low: number;
+  /** The scruff's distance from the body's middle, dangling (its rest stretch). */
+  rest: number;
+  /** How firmly the cat is standing on something under the scruff (0..1, eased). */
+  support: number;
+  /** The scruff's own speed (units/s), where it's going this substep, and where the hand was last substep. */
+  vx: number;
+  vy: number;
+  goalX: number;
+  goalY: number;
+  lastHx: number;
+  lastHy: number;
   /** Touch point relative to the centroid at grab time. */
   ax: number;
   ay: number;
+  /** The scruff's speed last substep, and its acceleration, eased (units/s^2). */
+  lastVx: number;
+  lastVy: number;
+  pullX: number;
+  pullY: number;
+  /** How far the fingers have gathered the pinched skin in (0..1). */
+  gathered: number;
 }
 
 /** Nodes either side of the middle one in the pinch. */
@@ -63,21 +75,46 @@ const PINCH_HALF = 2;
  * slides along it instead of being pulled through, however far the finger goes.
  */
 const PIN_STEP = 3;
-/** The same, while the skin around the pinch is pressed against something. */
-const PIN_STEP_PRESSED = 0.6;
 /** Substeps the skin where a pinch let go stays guarded against creasing (~1/4 s). */
 const LET_GO_SUBSTEPS = 120;
 /** Damping of a held cat's swing and wobble, relative to the pinch (per second). */
 const SWING_DAMP = 2.6;
+/**
+ * How thick a held cat is, at least (its viscosity, per second): springy
+ * breeds would otherwise bounce between squashed and stretched every time
+ * they're lifted, swung or bumped.
+ */
+const HELD_VISC = 60;
 /**
  * Shape stiffness toward the dangling shape while held: every breed goes long
  * in the hand, even the ones with no shape of their own (honey and pudding
  * just get there slowly, through their viscosity).
  */
 const HANG_SHAPE = 0.02;
-/** How strongly a held cat's body drifts sideways to hang under the pinch (per substep), and its cap (units). */
-const FOLLOW = 0.02;
-const FOLLOW_MAX = 0.6;
+/** Shape stiffness of a held cat that isn't dangling yet (being lifted off something). */
+const HOLD_SHAPE = 0.012;
+/**
+ * The scruff: the loose skin at the pinch is drawn up into a tent above the
+ * body, as tall as the load on it (radii per g of pull: the cat's weight,
+ * plus whatever the hand's acceleration adds), up to TENT_MAX of that, and
+ * easing to it at TENT_FREQ (rad/s), critically damped, so it stretches and
+ * settles without ever bouncing. How
+ * wide the tent is (radians round the ring either side of the pinch) and how
+ * much it narrows the skin in toward the pinch.
+ */
+export const TENT = 0.3;
+const TENT_MAX = 2.6;
+const TENT_FREQ = 11;
+const TENT_DAMP = 1;
+const TENT_WIDTH = 0.55;
+const TENT_NARROW = 0.5;
+/** How quickly the scruff feels a change in the hand's acceleration (s). */
+const PULL_EASE = 0.05;
+/** How far the fingers gather the pinched skin in (share of its spread), and how fast (per second). */
+const GATHER = 0.45;
+const GATHER_IN = 8;
+/** How firmly a dangling cat is turned back to hang straight down from its scruff (per pass). */
+const HANG_UPRIGHT = 0.01;
 /** How fast a picked-up cat goes long, and comes back round once let go (per second). */
 const HANG_IN = 5;
 const HANG_OUT = 3;
@@ -88,8 +125,45 @@ const HANG_OUT = 3;
  */
 const TETHER_STRETCH = 1.25;
 const TETHER_SLACK = 4;
-/** Drawn out this far past its tether, a caught part of the cat holds the pinch back. */
-const SNAG = 1.3;
+/**
+ * Share of a tether's overshoot taken up each pass (soft, so a swing eases to
+ * a stop), and the most it moves a node in one pass (units): a cat that comes
+ * free of a snag flows back under its scruff instead of snapping back.
+ */
+const TETHER_PULL = 0.5;
+const TETHER_STEP = 0.6;
+/**
+ * How quickly the scruff closes a gap to the hand (s), how fast it may close
+ * it (units/s: a cat that comes free of a snag swoops back to the finger,
+ * rather than jumping), and how fast its speed may change (units/s^2).
+ */
+const FOLLOW_TIME = 0.04;
+const CATCH_UP = 900;
+const ACCEL = 16000;
+/** Push-back (summed push-outs per substep, in radii) at which the scruff stops going that way. */
+const RESIST_FULL = 0.3;
+/**
+ * How far the finger may stretch the scruff from the body's middle, as a
+ * share of its dangling distance: freely up to SCRUFF_FREE, fading out by
+ * SCRUFF_MAX (beyond that the cat has to come along first). And how far it
+ * may press the scruff in toward the middle: freely down to SCRUFF_FIRM,
+ * fading out by SCRUFF_MIN.
+ */
+const SCRUFF_FREE = 1.2;
+const SCRUFF_MAX = 1.6;
+const SCRUFF_FIRM = 0.85;
+const SCRUFF_MIN = 0.55;
+/**
+ * How fast standing on something holds the scruff up, and lets it go (per
+ * substep), and how much of the scruff's speed down it stops (per substep).
+ */
+const SUPPORT_IN = 0.12;
+const SUPPORT_OUT = 0.05;
+const SUPPORT_HOLD = 0.5;
+/** How much of a touch is still felt one substep later. */
+const FELT_FADE = 0.7;
+/** How fast a carried cat may lift a cat lying on top of it (units/s). */
+const CAT_LIFT = 150;
 /** Frames a just-untangled cat in a finger is eased back toward its rest shape, and how firmly (per pass). */
 const KNOT_FRAMES = 4;
 const RESHAPE = 0.02;
@@ -130,8 +204,25 @@ export class SoftBody {
   readonly hangY: Float64Array;
   /** How far into its dangling shape the cat is (0..1, eases in when picked up). */
   hang = 0;
+  /**
+   * The scruff tent: how far the skin at the pinch is drawn up above the body
+   * (units; it springs back once let go), how fast that's changing, and where:
+   * the ring node in the middle of the pinch, and which way the scruff is from
+   * the body's middle in its own rest shape.
+   */
+  tent = 0;
+  private tentV = 0;
+  private tentMid = 0;
+  private tentUpX = 0;
+  private tentUpY = -1;
+  /** The tent laid over the rest shape this substep (body frame), and whether it's on. */
+  private readonly tentX: Float64Array;
+  private readonly tentY: Float64Array;
+  private tentOn = false;
+  /** Gravity, as the world last integrated it. */
+  private gravity = 0;
   /** How firmly each node is held by the finger (0 = free): the edges pull the free end. */
-  private readonly held: Float64Array;
+  readonly held: Float64Array;
   /** While held: the furthest each node may hang from the pinch (its dangling distance, plus a little stretch). */
   private readonly tether: Float64Array;
   /** Contact info from the last substep, per node. -1 = no contact. */
@@ -142,6 +233,26 @@ export class SoftBody {
   readonly bodyTouch: Uint8Array;
   readonly bodyNx: Float32Array;
   readonly bodyNy: Float32Array;
+  /**
+   * How hard what the cat is pressed against pushes it back (the sum of
+   * last substep's collision push-outs, eased over a few substeps; set by
+   * World): the finger holding it eases off that way.
+   */
+  resistX = 0;
+  resistY = 0;
+  /**
+   * While held: what each node has lately been pressed against (furniture or
+   * another cat), fading over a few substeps, and which way is out, so a
+   * touch that flickers on and off steers the scruff steadily.
+   */
+  private readonly feltW: Float32Array;
+  private readonly feltX: Float32Array;
+  private readonly feltY: Float32Array;
+  /** ...and whether that's a cat lying on top, which can be lifted (0..1). */
+  private readonly feltLift: Float32Array;
+  /** This substep's collision push-outs on a held cat, summed (World adds them up). */
+  pushX = 0;
+  pushY = 0;
   // Rest size (changed only by resize()).
   restLen: number;
   area0: number;
@@ -232,6 +343,13 @@ export class SoftBody {
     this.bodyTouch = new Uint8Array(n);
     this.bodyNx = new Float32Array(n);
     this.bodyNy = new Float32Array(n);
+    this.feltW = new Float32Array(n);
+    this.feltX = new Float32Array(n);
+    this.feltY = new Float32Array(n);
+    this.feltLift = new Float32Array(n);
+    this.tentX = new Float64Array(n);
+    this.tentY = new Float64Array(n);
+
     this.refX = new Float64Array(n);
     this.refY = new Float64Array(n);
     this.contactNx = new Float32Array(n);
@@ -466,6 +584,9 @@ export class SoftBody {
     }
     this.held.fill(0);
     for (let m = 0; m < count; m++) this.held[nodes[m]] = weights[m];
+    this.resistX = 0;
+    this.resistY = 0;
+    this.feltW.fill(0);
     buildHang(this.hangX, this.hangY, n, this.p.radius, this.p.hang, mid);
     normalizeShape(this.hangX, this.hangY, n, this.area0);
     // Turned so the pinch is where it is in the cat's own rest shape: cats
@@ -478,6 +599,9 @@ export class SoftBody {
       uy += this.qy[nodes[m]] * weights[m];
     }
     const ul = Math.sqrt(ux * ux + uy * uy);
+    this.tentMid = mid;
+    this.tentUpX = ul > 1e-9 ? ux / ul : 0;
+    this.tentUpY = ul > 1e-9 ? uy / ul : -1;
     if (ul > 1e-9) {
       // the rotation taking straight up (0, -1) to the pinch's way, (ux, uy)
       const c = -uy / ul;
@@ -518,9 +642,21 @@ export class SoftBody {
       spread,
       midX: mx / ws,
       midY: my / ws,
-      low: wy + my / ws,
+      rest: Math.max(this.p.radius * 0.5, Math.sqrt(hpx * hpx + hpy * hpy)),
+      support: 0,
+      vx: 0,
+      vy: 0,
+      goalX: wx + mx / ws,
+      goalY: wy + my / ws,
+      lastHx: wx,
+      lastHy: wy,
       ax: wx - this.cx,
       ay: wy - this.cy,
+      lastVx: 0,
+      lastVy: 0,
+      pullX: 0,
+      pullY: 0,
+      gathered: 0,
     };
     return this.grab;
   }
@@ -538,10 +674,17 @@ export class SoftBody {
 
   /** Frames left easing the crease out of a just-untangled cat (see untangle()). */
   knotted = 0;
+  /**
+   * Bumped whenever the ring's nodes trade places (untangling), so anything
+   * that follows node positions over time (drawing between steps) knows they
+   * don't line up with last time's.
+   */
+  ringVersion = 0;
 
   // --- Simulation pieces (called by World) ---------------------------------
 
   integrate(h: number, g: number): void {
+    this.gravity = g;
     const n = this.n;
     const sf = this.settleForce;
     const sx0 = this.settleX0;
@@ -560,14 +703,111 @@ export class SoftBody {
   }
 
   solveInternal(h: number, first = true): void {
+    if (first) this.stepTent(h);
     this.solveEdges(h);
     this.solveArea();
     this.solveShape();
     // every pass: the pinch is held after the body's own constraints tug at it
-    if (this.grab) this.solveGrab(first);
+    if (this.grab) this.solveGrab(first, h);
     // Once a substep is plenty, folding through takes many substeps; but a
     // pinch pulled against a wall can fold the skin in one pass, so after it too.
     if (first || this.grab) this.solveSelf();
+  }
+
+  /**
+   * The scruff tent, once a substep. Held, the skin at the pinch carries the
+   * cat: it's drawn up as far as the load on it, the cat's weight (what isn't
+   * stood on something) plus the pull of the hand's acceleration along it. A
+   * hand lifting fast stretches it tall and the body comes up after, a hand
+   * slowing at the top lets it spring back, and a scruff can't push: thrown
+   * up, or set down, the skin goes slack. Let go, it springs back flat.
+   */
+  private stepTent(h: number): void {
+    const g = this.grab;
+    const { n, x, y } = this;
+    const r = this.p.radius;
+    let target = 0;
+    if (g) {
+      let px = 0;
+      let py = 0;
+      let ws = 0;
+      for (let m = 0; m < g.count; m++) {
+        const i = g.nodes[m];
+        px += x[i] * g.weights[m];
+        py += y[i] * g.weights[m];
+        ws += g.weights[m];
+      }
+      px /= ws;
+      py /= ws;
+      let cx = 0;
+      let cy = 0;
+      for (let i = 0; i < n; i++) {
+        cx += x[i];
+        cy += y[i];
+      }
+      const ux = cx / n - px;
+      const uy = cy / n - py;
+      const ul = Math.sqrt(ux * ux + uy * uy);
+      const G = this.gravity;
+      if (ul > 1e-9 && G > 0) {
+        const fx = -g.pullX;
+        const fy = G * (1 - g.support) - g.pullY;
+        const load = (fx * ux + fy * uy) / (ul * G);
+        if (load > 0) target = TENT * r * (load < TENT_MAX ? load : TENT_MAX);
+      }
+    }
+    const w = TENT_FREQ;
+    this.tentV += (w * w * (target - this.tent) - 2 * TENT_DAMP * w * this.tentV) * h;
+    this.tent += this.tentV * h;
+    if (this.tent < 0) {
+      this.tent = 0;
+      if (this.tentV < 0) this.tentV = 0;
+    }
+    if (!g && this.tent < r * 0.002 && this.tentV < r * 0.01) {
+      this.tent = 0;
+      this.tentV = 0;
+    }
+    const T = this.tent;
+    this.tentOn = T > 0;
+    if (!this.tentOn) return;
+    // the skin round the pinch drawn up along the scruff's way, and in toward it
+    const { qx, qy, tentX, tentY } = this;
+    const upX = this.tentUpX;
+    const upY = this.tentUpY;
+    const narrow = TENT_NARROW * (T < TENT * r ? T / (TENT * r) : 1);
+    const W2 = TENT_WIDTH * TENT_WIDTH;
+    const cut = 9 * W2;
+    const fc = 0.01; // the bump at the cut, so it fades to nothing there
+    let mx = 0;
+    let my = 0;
+    const half = n / 2;
+    for (let i = 0; i < n; i++) {
+      let d = i - this.tentMid;
+      if (d > half) d -= n;
+      else if (d <= -half) d += n;
+      const u = (d / n) * TAU;
+      let ox = 0;
+      let oy = 0;
+      if (u * u < cut) {
+        const b = 1 / (1 + (u * u) / W2);
+        const k = (b * b - fc) / (1 - fc);
+        const along = qx[i] * upX + qy[i] * upY;
+        ox = (upX * T - (qx[i] - along * upX) * narrow) * k;
+        oy = (upY * T - (qy[i] - along * upY) * narrow) * k;
+      }
+      tentX[i] = ox;
+      tentY[i] = oy;
+      mx += ox;
+      my += oy;
+    }
+    // (centred, so it draws the skin up and lets the body down, rather than
+    // shifting the cat)
+    mx /= n;
+    my /= n;
+    for (let i = 0; i < n; i++) {
+      tentX[i] -= mx;
+      tentY[i] -= my;
+    }
   }
 
   /**
@@ -763,8 +1003,24 @@ export class SoftBody {
     // (and a cat in a finger, or just let go, that came untangled is eased
     // smooth again: the finger keeps squeezing out the same crease)
     const reshape = this.knotted > 0 && (this.grab !== null || this.letGo !== null) ? RESHAPE : 0;
-    const k = Math.max(this.p.shape * this.shapeMul, HANG_SHAPE * this.hang, reshape);
-    const { n, x, y, qx, qy } = this;
+    // (and a held cat keeps its shape from the moment it's picked up: lifted
+    // off a shelf it comes up in one piece, the scruff stretching, rather
+    // than the whole cat drawing out into a tube that then snaps free)
+    const k = Math.max(this.p.shape * this.shapeMul, HANG_SHAPE * this.hang, reshape, this.grab !== null ? HOLD_SHAPE : 0);
+    const { n, x, y } = this;
+    // (the rest shape with the scruff tent laid over it)
+    let qx: Float64Array = this.qx;
+    let qy: Float64Array = this.qy;
+    if (this.tentOn) {
+      const ax = scratchA(n);
+      const ay = scratchB(n);
+      for (let i = 0; i < n; i++) {
+        ax[i] = qx[i] + this.tentX[i];
+        ay[i] = qy[i] + this.tentY[i];
+      }
+      qx = ax;
+      qy = ay;
+    }
     let cx = 0;
     let cy = 0;
     for (let i = 0; i < n; i++) {
@@ -805,9 +1061,21 @@ export class SoftBody {
     const u = this.p.upright * (1 - this.hang);
     let gc = c + (1 - c) * u;
     let gs = s * (1 - u) + (c < -0.9 ? 0.02 * u : 0);
-    const gl = Math.sqrt(gc * gc + gs * gs);
+    let gl = Math.sqrt(gc * gc + gs * gs);
     gc /= gl;
     gs /= gl;
+    // (a dangling cat is turned, gently, back to hanging straight down from
+    // its scruff: it swings when carried, but not like a pendulum on a string)
+    if (this.grab && this.hang > 0) {
+      const v = HANG_UPRIGHT * this.hang;
+      const uc = gc + (-this.tentUpY - gc) * v;
+      const us = gs + (-this.tentUpX - gs) * v;
+      gl = Math.sqrt(uc * uc + us * us);
+      if (gl > 1e-6) {
+        gc = uc / gl;
+        gs = us / gl;
+      }
+    }
     for (let i = 0; i < n; i++) {
       const gx = cx + gc * qx[i] - gs * qy[i];
       const gy = cy + gs * qx[i] + gc * qy[i];
@@ -816,13 +1084,22 @@ export class SoftBody {
     }
   }
 
-  /** Hold the pinch at the hand; the rest of the cat hangs from it. */
-  private solveGrab(first: boolean): void {
+  /**
+   * The finger carries the scruff the way a hand would: the scruff has a
+   * speed of its own that keeps pace with the hand and closes any gap, but
+   * can only change so fast, so it never starts, stops or turns with a jolt.
+   * In the air it stays right under the finger and the rest of the cat hangs
+   * from it, swinging. What it's pressed against holds it back in
+   * proportion, like a hand feeling the cat catch; it stretches away from
+   * the body's middle only up to SCRUFF_MAX of its dangling distance, and
+   * isn't pushed in toward it past SCRUFF_MIN (press a cat down onto a shelf,
+   * or another cat, and it settles there instead of being squashed or
+   * folded). All of it fades in smoothly, so nothing snaps or shudders.
+   */
+  private solveGrab(first: boolean, h: number): void {
     const g = this.grab!;
-    const { n, x, y, contactShape, contactNx, contactNy, bodyTouch, bodyNx, bodyNy, held } = this;
-    // (the finger mustn't crush the cat, or one it bumps into, nor push it
-    // through either: what it touches, furniture or cats, steers the pinch)
-    // where the pinch's middle is now
+    const { n, x, y, held, contactShape, contactNx, contactNy, bodyTouch, bodyNx, bodyNy } = this;
+    // where the scruff (the pinch's middle) and the body's middle are now
     let px = 0;
     let py = 0;
     let ws = 0;
@@ -835,158 +1112,161 @@ export class SoftBody {
     }
     px /= ws;
     py /= ws;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < n; i++) {
+      cx += x[i];
+      cy += y[i];
+    }
+    cx /= n;
+    cy /= n;
     if (first) {
-      // Standing on something under the pinch, the pinch lifts and slides
-      // the cat but won't push down into what it stands on (it would fold the
-      // cat over itself): drag a cat down off a shelf and it slides to the
-      // edge and steps off (once the pinch is out past the edge, down it
-      // goes), then hangs to the finger. Only what's well below the pinch
-      // counts: a rim it's being pulled over is right under the pinch itself,
-      // and holding it up there would leave the cat straddling it.
-      // (and resting on another cat anywhere, it won't be pressed down into
-      // it: a cat can't be stepped off another one, and pressing down would
-      // squash the cat underneath)
+      // Standing on something under the scruff (furniture just below it, or
+      // another cat anywhere below), the scruff isn't pulled down: a finger
+      // pushing down slides a cat to the edge of its shelf and it steps off,
+      // rather than dragging its scruff down its side and under it, or
+      // squashing the cat underneath. Eased in and out over a few substeps,
+      // so it never jerks.
       const reach = this.p.radius * 0.6;
       const below = py + this.p.radius * 0.3;
-      let standing = false;
-      for (let i = 0; i < n && !standing; i++) {
+      let standing = 0;
+      for (let i = 0; i < n && standing === 0; i++) {
         if (y[i] < below) continue;
-        if (bodyTouch[i] !== 0 && bodyNy[i] < -0.45) standing = true;
-        else if (contactShape[i] !== -1 && contactNy[i] < -0.45 && x[i] > px - reach && x[i] < px + reach) standing = true;
+        if (bodyTouch[i] !== 0 && bodyNy[i] < -0.45) standing = 1;
+        else if (contactShape[i] !== -1 && contactNy[i] < -0.45 && x[i] > px - reach && x[i] < px + reach) standing = 1;
       }
-      const want = g.hy + g.midY;
-      g.low = standing && want > py ? py : want;
-      let bx = 0;
-      for (let i = 0; i < n; i++) bx += x[i];
-      bx /= n;
-      // The body drifts round to hang right under the pinch: a cat draped
-      // over the edge it was dragged off slides the rest of the way off, and
-      // ends up where the finger put it (sideways only: gravity does the rest).
-      // (Not into a wall it's pressed against: that would only crumple it.)
-      let fx = (px - bx) * FOLLOW;
-      if (fx > FOLLOW_MAX) fx = FOLLOW_MAX;
-      else if (fx < -FOLLOW_MAX) fx = -FOLLOW_MAX;
-      const against = -0.5 * (fx > 0 ? fx : -fx);
-      for (let i = 0; i < n && fx !== 0; i++) {
-        if ((contactShape[i] !== -1 && contactNx[i] * fx < against) || (bodyTouch[i] !== 0 && bodyNx[i] * fx < against)) fx = 0;
+      g.support += (standing - g.support) * (standing > g.support ? SUPPORT_IN : SUPPORT_OUT);
+      const { feltW, feltX, feltY, feltLift } = this;
+      for (let i = 0; i < n; i++) {
+        if (contactShape[i] !== -1) {
+          feltW[i] = 1;
+          feltX[i] = contactNx[i];
+          feltY[i] = contactNy[i];
+          feltLift[i] = 0;
+        } else if (bodyTouch[i] !== 0) {
+          feltW[i] = 1;
+          feltX[i] = bodyNx[i];
+          feltY[i] = bodyNy[i];
+          feltLift[i] = 1 - catPushback(bodyNy[i]);
+        } else feltW[i] *= FELT_FADE;
       }
-      if (fx !== 0) for (let i = 0; i < n; i++) x[i] += fx * (1 - held[i]);
     }
-    // 1) The pinch moves as one piece toward the hand, a few units a pass at
-    //    most, and slides along whatever any part of it is pressed against
-    //    (a pinch split by a thin wall would fold the skin over it).
-    let dx = g.hx + g.midX - px;
-    // (held up off what it stands on)
-    let dy = Math.min(g.hy + g.midY, g.low) - py;
-    // (nor any part of the cat into the furniture it's pressed against: the
-    // finger would only squash it, so it slides along instead; another cat it
-    // bumps into gets pushed, but not by its head, which would plough in)
-    // Pressed against something round the pinch, the hand eases off and the
-    // pinch creeps (a hand feels the cat catch on a rim and stops yanking):
-    // the skin gets the time to slide round the obstacle instead of folding.
-    const near2 = this.p.radius * this.p.radius * 0.64;
-    let pressed = false;
-    for (let i = 0; i < n; i++) {
-      const wall = contactShape[i] !== -1;
-      let cat = bodyTouch[i] !== 0;
-      if (!wall && !cat) continue;
-      const ux = x[i] - px;
-      const uy = y[i] - py;
-      if (ux * ux + uy * uy <= near2) pressed = true;
-      else cat = false;
-      if (wall) {
-        const into = dx * contactNx[i] + dy * contactNy[i];
+    if (first) {
+      // 1) The scruff keeps pace with the hand and closes any gap within
+      //    FOLLOW_TIME. But its speed can only change so fast, like a real
+      //    hand's: whatever the rules below make of the way it wants to go,
+      //    it eases into it, so nothing starts, stops or turns with a jolt.
+      const hvx = (g.hx - g.lastHx) / h;
+      const hvy = (g.hy - g.lastHy) / h;
+      g.lastHx = g.hx;
+      g.lastHy = g.hy;
+      // (closing a gap no faster than it can still stop in: no overshoot)
+      const gx = g.hx + g.midX - px;
+      const gy = g.hy + g.midY - py;
+      const gl = Math.sqrt(gx * gx + gy * gy);
+      const close = gl > 1e-9 ? Math.min(gl / FOLLOW_TIME, Math.sqrt(1.6 * ACCEL * gl), CATCH_UP) / gl : 0;
+      let vx = hvx + gx * close;
+      let vy = hvy + gy * close;
+      // (held up off what it stands on)
+      if (vy > 0) vy *= 1 - g.support;
+      // What it's pressed against pushes back, and the scruff eases off that
+      // way in proportion, like a hand feeling the cat catch: a brush past
+      // the furniture barely slows it; a cat jammed against a wall, stood on
+      // a shelf or pressed onto another cat stops coming.
+      const rl0 = Math.sqrt(this.resistX * this.resistX + this.resistY * this.resistY);
+      if (rl0 > 1e-6) {
+        const ux = this.resistX / rl0;
+        const uy = this.resistY / rl0;
+        const into = vx * ux + vy * uy;
         if (into < 0) {
-          dx -= into * contactNx[i];
-          dy -= into * contactNy[i];
+          const k = smooth(0, RESIST_FULL * this.p.radius, rl0);
+          vx -= into * ux * k;
+          vy -= into * uy * k;
         }
       }
-      if (cat) {
-        const into = dx * bodyNx[i] + dy * bodyNy[i];
+      // How far it may stretch the scruff from the body's middle, or press it in.
+      const rx = px - cx;
+      const ry = py - cy;
+      const rl = Math.sqrt(rx * rx + ry * ry);
+      if (rl > 1e-6) {
+        const ux = rx / rl;
+        const uy = ry / rl;
+        const rho = rl / (g.rest + this.tent * 0.8);
+        const out = vx * ux + vy * uy;
+        const keep = out > 0 ? 1 - smooth(SCRUFF_FREE, SCRUFF_MAX, rho) : smooth(SCRUFF_MIN, SCRUFF_FIRM, rho);
+        vx -= ux * out * (1 - keep);
+        vy -= uy * out * (1 - keep);
+      }
+      let ax = vx - g.vx;
+      let ay = vy - g.vy;
+      const al = Math.sqrt(ax * ax + ay * ay);
+      const amax = ACCEL * h;
+      if (al > amax) {
+        ax *= amax / al;
+        ay *= amax / al;
+      }
+      g.vx += ax;
+      g.vy += ay;
+      if (g.vy > 0) g.vy *= 1 - g.support * SUPPORT_HOLD;
+      // The scruff itself is never driven into what the skin round it is
+      // pressed against, furniture or cat: it stops that way and slides along
+      // (driven in, the pinched skin pokes through a thin floor or folds over
+      // a rim). A bump, not a jolt: only its speed into the thing stops. A
+      // cat lying on top of it is lifted, but only gently: it has time to
+      // come up as a whole, or roll off, rather than being speared.
+      const near2 = this.p.radius * this.p.radius * 0.64;
+      const { feltW, feltX, feltY, feltLift } = this;
+      for (let i = 0; i < n; i++) {
+        const w = feltW[i];
+        if (w < 0.02) continue;
+        const ux = x[i] - px;
+        const uy = y[i] - py;
+        if (ux * ux + uy * uy > near2) continue;
+        const into = g.vx * feltX[i] + g.vy * feltY[i] + feltLift[i] * CAT_LIFT;
         if (into < 0) {
-          dx -= into * bodyNx[i];
-          dy -= into * bodyNy[i];
+          g.vx -= into * feltX[i] * w;
+          g.vy -= into * feltY[i] * w;
         }
       }
+      // (how hard the scruff is being swung about, felt by the tent)
+      const ease = h < PULL_EASE ? h / PULL_EASE : 1;
+      g.pullX += ((g.vx - g.lastVx) / h - g.pullX) * ease;
+      g.pullY += ((g.vy - g.lastVy) / h - g.pullY) * ease;
+      g.lastVx = g.vx;
+      g.lastVy = g.vy;
+      g.gathered += (1 - g.gathered) * Math.min(1, h * GATHER_IN);
     }
-    // The finger can't pull the cat apart: where part of it is caught on
-    // something (skin hooked over a rim, a cat wedged deep in a vase) and has
-    // been drawn out well past its dangling length, the pinch goes no further
-    // from it until it catches up (it oozes out like toothpaste instead).
-    const tether = this.tether;
-    for (let i = 0; i < n; i++) {
-      if (held[i] > 0) continue;
-      const ux = x[i] - px;
-      const uy = y[i] - py;
-      const u2 = ux * ux + uy * uy;
-      const L = tether[i] * SNAG;
-      if (u2 <= L * L) continue;
-      const u = Math.sqrt(u2);
-      const away = -(dx * ux + dy * uy) / u;
-      if (away > 0) {
-        dx += (ux / u) * away;
-        dy += (uy / u) * away;
+    if (first) {
+      // 2) Where the scruff is to be at the end of this substep: where it was
+      //    at the start of it, moved on at its own speed (its skin already
+      //    coasts on its momentum, so this is a target, not an extra push).
+      //    Every pass draws it there.
+      let sx0 = 0;
+      let sy0 = 0;
+      for (let m = 0; m < g.count; m++) {
+        const i = g.nodes[m];
+        sx0 += this.px[i] * g.weights[m];
+        sy0 += this.py[i] * g.weights[m];
       }
+      g.goalX = sx0 / ws + g.vx * h;
+      g.goalY = sy0 / ws + g.vy * h;
     }
-    // (sliding along a slanted face mustn't take it down past where it may go)
-    if (dy > 0 && py + dy > g.low) dy = g.low > py ? g.low - py : 0;
-    const step = pressed ? PIN_STEP_PRESSED : PIN_STEP;
+    let dx = g.goalX - px;
+    let dy = g.goalY - py;
+    // (a few units a pass at most: less than the thinnest glass is thick, so
+    // nothing is ever pulled through a wall, however far the finger goes)
     const d2 = dx * dx + dy * dy;
-    if (d2 > step * step) {
-      const k = step / Math.sqrt(d2);
+    if (d2 > PIN_STEP * PIN_STEP) {
+      const k = PIN_STEP / Math.sqrt(d2);
       dx *= k;
       dy *= k;
     }
-    // Moving the pinch into the cat pushes the whole cat (skin can't be
-    // pushed in through a body: it would fold in behind the pinch), unless
-    // the cat is up against something that way, and then the pinch stays.
-    const a = g.nodes[0];
-    const b = g.nodes[g.count - 1];
-    const ox = y[b] - y[a];
-    const oy = x[a] - x[b];
-    const ol = Math.sqrt(ox * ox + oy * oy);
-    if (ol > 1e-9) {
-      const nx = ox / ol;
-      const ny = oy / ol;
-      const into = -(dx * nx + dy * ny);
-      if (into > 0) {
-        let blocked = false;
-        for (let i = 0; i < n && !blocked; i++) {
-          if (held[i] > 0) continue;
-          if ((contactShape[i] !== -1 && contactNx[i] * nx + contactNy[i] * ny > 0.5) || (bodyTouch[i] !== 0 && bodyNx[i] * nx + bodyNy[i] * ny > 0.5)) blocked = true;
-        }
-        // (the whole cat, pinch and all, so the skin round the pinch isn't sheared)
-        dx += into * nx;
-        dy += into * ny;
-        if (!blocked) {
-          for (let i = 0; i < n; i++) {
-            x[i] -= nx * into;
-            y[i] -= ny * into;
-          }
-          px -= nx * into;
-          py -= ny * into;
-        }
-      }
-    }
-    // Skin right at the pinch resting on a rim: the pinch is lifted up over
-    // it rather than held level with it, where the rim would come up between
-    // the two sides of the pinch and fold them over each other.
-    const reach = this.p.radius * 0.6;
-    for (let i = 0; i < n; i++) {
-      const up = (contactShape[i] !== -1 && contactNy[i] <= -0.45) || (bodyTouch[i] !== 0 && bodyNy[i] <= -0.45);
-      if (!up) continue;
-      const ux = x[i] - px;
-      const uy = y[i] - py;
-      if (ux > -reach && ux < reach && uy > -4 && uy < 14) {
-        if (dy > -1) dy = -1;
-        break;
-      }
-    }
-    // 2) The pinched skin stays gathered: no pinched node strays further
-    //    from the middle of the pinch than it was when picked up. Gathered,
-    //    never held in a fixed pattern: fingers turn with the cat, so when it
-    //    swings round or flops over the hand the pinch turns too, instead of
-    //    crossing the skin over itself.
+    // 3) The pinched skin stays gathered: no pinched node strays further
+    //    from the middle of the pinch than it was when picked up (less, as
+    //    the fingers close on it: the skin bunches up between them).
+    //    Gathered, never held in a fixed pattern: fingers turn with the cat,
+    //    so when it swings round or flops over the hand the pinch turns too,
+    //    instead of crossing the skin over itself.
     for (let m = 0; m < g.count; m++) {
       const i = g.nodes[m];
       let ex = 0;
@@ -997,7 +1277,7 @@ export class SoftBody {
         const ux = x[i] - px;
         const uy = y[i] - py;
         const u = Math.sqrt(ux * ux + uy * uy);
-        const r0 = g.spread[m];
+        const r0 = g.spread[m] * (1 - GATHER * g.gathered);
         if (u > r0) {
           const k = ((u - r0) / u) * g.weights[m] * 0.5;
           ex = -ux * k;
@@ -1007,26 +1287,26 @@ export class SoftBody {
       x[i] += dx + ex;
       y[i] += dy + ey;
     }
-    // 3) Nothing hangs further from the pinch than it would dangling, plus a
+    // 4) Nothing hangs further from the scruff than it would dangling, plus a
     //    little stretch: a quick flick of the finger swings the whole cat
     //    along instead of drawing it out into a strand that folds over itself.
-    //    (A few units a pass at most, like the pinch, so a node drawn round a
-    //    wall slides along it rather than through it.)
-    const cx = px + dx;
-    const cy = py + dy;
+    //    (A few units a pass at most, and along whatever the skin is pressed
+    //    against rather than into it.)
+    const sx = px + dx;
+    const sy = py + dy;
+    const tether = this.tether;
     for (let i = 0; i < n; i++) {
       const free = 1 - held[i];
-      const ux = x[i] - cx;
-      const uy = y[i] - cy;
+      const ux = x[i] - sx;
+      const uy = y[i] - sy;
       const u2 = ux * ux + uy * uy;
-      const L = tether[i];
+      const L = tether[i] + this.tent;
       if (u2 <= L * L) continue;
       const u = Math.sqrt(u2);
-      let pull = (u - L) * free;
-      if (pull > PIN_STEP) pull = PIN_STEP;
+      let pull = (u - L) * free * TETHER_PULL;
+      if (pull > TETHER_STEP) pull = TETHER_STEP;
       let mx = -(ux / u) * pull;
       let my = -(uy / u) * pull;
-      // (along whatever it's pressed against, not into it)
       if (contactShape[i] !== -1) {
         const into = mx * contactNx[i] + my * contactNy[i];
         if (into < 0) {
@@ -1124,7 +1404,10 @@ export class SoftBody {
     const wRest = calm ? wKeep * (1 - Math.min(1, REST_SPIN * h)) : wKeep;
     const nmx = mvx * lin;
     const nmy = mvy * lin;
-    const visc = (this.p.viscosity + (calm ? REST_VISC : 0)) * h;
+    // (a cat in the hand is honey-thick, whatever its breed: it flows into
+    // each new shape, never jiggles)
+    const v0 = this.grab && this.p.viscosity < HELD_VISC ? HELD_VISC : this.p.viscosity;
+    const visc = (v0 + (calm ? REST_VISC : 0)) * h;
     const keep = visc >= 1 ? 0 : 1 - visc;
     const air = 1 - 0.08 * h;
     let e = 0;
@@ -1288,6 +1571,7 @@ export class SoftBody {
 
   /** Swap nodes end for end along the ring from `from` to `to` (indices may run past n). */
   private reverseNodes(from: number, to: number): void {
+    this.ringVersion++;
     const n = this.n;
     const per = [this.x, this.y, this.px, this.py, this.vx, this.vy];
     const touch = [this.contactNx, this.contactNy, this.bodyNx, this.bodyNy];
@@ -1407,6 +1691,9 @@ export class SoftBody {
     this.knotted = s.knotted;
     this.held.fill(0);
     this.letGo = null;
+    this.tent = 0;
+    this.tentV = 0;
+    this.tentOn = false;
     this.contactShape.set(s.contactShape);
     this.contactNx.set(s.contactNx);
     this.contactNy.set(s.contactNy);
@@ -1471,6 +1758,23 @@ export function normalizeShape(xs: Float64Array, ys: Float64Array, n: number, ar
       ys[i] *= s;
     }
   }
+}
+
+/**
+ * How much a push from another cat (its way out, y down) holds a carried cat
+ * back: a cat underneath or alongside does, standing its ground; one on top
+ * doesn't (lifted from under it, it just comes too, or rolls off).
+ */
+export function catPushback(ny: number): number {
+  return 1 - smooth(0.2, 0.5, ny);
+}
+
+/** 0 below a, 1 above b, easing in between (either way round). */
+function smooth(a: number, b: number, v: number): number {
+  let t = (v - a) / (b - a);
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
 }
 
 /**

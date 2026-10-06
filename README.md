@@ -42,9 +42,12 @@ attic hatch the next time you're home.
 In If It Fits:
 
 - **Drag** a cat to pick it up by the scruff and carry it. The spot you pinch
-  stays right under your finger; the rest of the cat dangles, long and droopy
-  (a chonk droops like pudding, a sphynx springs back), swings when you move
-  and goes calm when you hold still.
+  stays right under your finger and glides along smoothly however jumpy the
+  touch; the skin there stretches up into a little tent as you lift (lift
+  fast and it stretches tall before the cat comes up after it), and the rest
+  of the cat dangles, long and droopy (a chonk droops like pudding), sways
+  when you move and hangs straight when you hold still. In the hand every cat
+  is soft and liquid: it flows into each new shape and never jitters.
 - Let go over a container (or let a cat **ooze off a shelf**) and it pours in.
   If it fits, it sits.
 - **Tap** a cat to boop it: a little hop.
@@ -117,16 +120,22 @@ and how much of the cat is in it; a loaf poking out is perfect.
 
 **The finger.** A drag picks the cat up by the scruff: a pinch of five ring
 nodes near the touch (from skin that faces up, so you never dangle a cat by
-its tummy) is pinned to the finger, moving as one piece and a few units per
-constraint pass at most, so it slides along glass instead of being pulled
-through it, and turning with the cat as it swings. The rest of the cat hangs
-from the pinch and takes a dangling shape (each breed has its own droop,
-`hang`), with its swing damped relative to the pinch, and can't be drawn out
-much past it: a flick swings the whole cat. Nothing gets squashed: a cat isn't
-pushed down into what it stands on (drag one down off a shelf and it slides to
-the edge and steps off) or into another cat, a part caught on a rim holds the
-finger back rather than tearing over it, and any skin that still ends up
-crossed over itself is turned the right way round the same frame (see
+its tummy). The finger's path is read back at each physics step a moment
+behind it, so uneven touch timing never shakes the cat, and the scruff
+follows it like a hand would: with a speed of its own that keeps pace and
+closes any gap but only changes so fast, a few units per constraint pass at
+most, so it slides along glass instead of being pulled through it, turning
+with the cat as it swings. The skin there stretches up into a tent as tall as
+the load on it (the cat's weight plus the pull of the hand's acceleration) and
+eases back. A held cat is honey-thick (its wobble is damped hard) and is
+drawn a moment behind its own shape, so it flows rather than jitters. The
+rest of the cat hangs from the pinch and takes a dangling
+shape (each breed has its own droop, `hang`), with its swing damped and eased
+back to hanging straight, and can't be drawn out much past it: a flick swings
+the whole cat. Nothing gets squashed: the scruff eases off whatever pushes
+back on the cat (furniture, a shelf it stands on, a cat underneath), a cat
+lying on top is gently lifted or rolls off instead, and any skin that still
+ends up crossed over itself is turned the right way round the same frame (see
 docs/DESIGN.md). Undo snapshots everything.
 
 **Mornings.** The date seeds an integer RNG. The generator composes the room

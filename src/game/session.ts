@@ -95,6 +95,23 @@ export interface SessionOptions {
   settleFrames?: number;
 }
 
+/** Where a cat was drawn from and to (see Session.beginLerp), and its flowing shape. */
+interface Drawn {
+  x: Float64Array;
+  y: Float64Array;
+  sx: Float64Array;
+  sy: Float64Array;
+  ring: number;
+  /** The shape it's drawn with while held (node offsets from its middle), how much, and whether that's started. */
+  fx: Float64Array;
+  fy: Float64Array;
+  fw: number;
+  fOn: boolean;
+}
+
+/** How quickly a held cat's drawn shape eases after its real one (per second). */
+const SHAPE_FLOW = 22;
+
 export class Session {
   readonly def: RoomDef;
   readonly mode: 'puzzle' | 'sandbox';
@@ -167,7 +184,7 @@ export class Session {
     this.load();
   }
 
-  private lerpFrom = new Map<SoftBody, { x: Float64Array; y: Float64Array; sx: Float64Array; sy: Float64Array }>();
+  private lerpFrom = new Map<SoftBody, Drawn>();
   private lerping = false;
 
   /** Remember where every cat is before the next step (for smooth drawing). */
@@ -176,20 +193,23 @@ export class Session {
       const b = cat.body;
       let m = this.lerpFrom.get(b);
       if (!m || m.x.length !== b.n) {
-        m = { x: new Float64Array(b.n), y: new Float64Array(b.n), sx: new Float64Array(b.n), sy: new Float64Array(b.n) };
+        m = { x: new Float64Array(b.n), y: new Float64Array(b.n), sx: new Float64Array(b.n), sy: new Float64Array(b.n), ring: 0, fx: new Float64Array(b.n), fy: new Float64Array(b.n), fw: 0, fOn: false };
         this.lerpFrom.set(b, m);
       }
       m.x.set(b.x);
       m.y.set(b.y);
+      m.ring = b.ringVersion;
     }
   }
 
   /**
    * For drawing only: put every cat `alpha` of the way from where it was
    * before the last step to where it is now, so motion stays smooth on
-   * screens faster than the 60 Hz simulation. Always pair with endLerp().
+   * screens faster than the 60 Hz simulation. A cat in the hand is drawn
+   * flowing from one shape to the next (see drawFlowing). `dt` is the time
+   * since the last frame drawn. Always pair with endLerp().
    */
-  beginLerp(alpha: number): void {
+  beginLerp(alpha: number, dt = 1 / 60): void {
     if (this.lerping) return;
     this.lerping = true;
     for (const cat of this.cats) {
@@ -199,13 +219,59 @@ export class Session {
       m.sx.set(b.x);
       m.sy.set(b.y);
       // an undo or a sandbox tidy teleports cats: never blend across that
+      // (nor across skin that was untangled: its nodes traded places)
       const jump = Math.abs(b.x[0] - m.x[0]) + Math.abs(b.y[0] - m.y[0]);
-      if (jump > 40) continue;
-      for (let i = 0; i < b.n; i++) {
-        b.x[i] = m.x[i] + (m.sx[i] - m.x[i]) * alpha;
-        b.y[i] = m.y[i] + (m.sy[i] - m.y[i]) * alpha;
+      const fresh = jump > 40 || b.ringVersion !== m.ring;
+      if (!fresh) {
+        for (let i = 0; i < b.n; i++) {
+          b.x[i] = m.x[i] + (m.sx[i] - m.x[i]) * alpha;
+          b.y[i] = m.y[i] + (m.sy[i] - m.y[i]) * alpha;
+        }
       }
+      this.drawFlowing(cat, m, dt, fresh);
     }
+  }
+
+  /**
+   * A cat in the hand is drawn a moment behind its own shape (the shape eases
+   * after it, about 1/20 s behind; where it is, never): however it's tugged,
+   * bumped or snagged, what you see flows from one shape to the next like
+   * something liquid, and never flickers. Let go, it eases back to exact.
+   */
+  private drawFlowing(cat: Cat, m: Drawn, dt: number, fresh: boolean): void {
+    const b = cat.body;
+    const want = cat.grabbed ? 1 : 0;
+    m.fw += (want - m.fw) * Math.min(1, dt * (want > m.fw ? 12 : 8));
+    if (m.fw < 0.01) {
+      m.fw = 0;
+      m.fOn = false;
+      return;
+    }
+    const n = b.n;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < n; i++) {
+      cx += b.x[i];
+      cy += b.y[i];
+    }
+    cx /= n;
+    cy /= n;
+    const k = 1 - Math.exp(-dt * SHAPE_FLOW);
+    const snap = fresh || !m.fOn;
+    for (let i = 0; i < n; i++) {
+      const ox = b.x[i] - cx;
+      const oy = b.y[i] - cy;
+      if (snap) {
+        m.fx[i] = ox;
+        m.fy[i] = oy;
+      } else {
+        m.fx[i] += (ox - m.fx[i]) * k;
+        m.fy[i] += (oy - m.fy[i]) * k;
+      }
+      b.x[i] = cx + ox + (m.fx[i] - ox) * m.fw;
+      b.y[i] = cy + oy + (m.fy[i] - oy) * m.fw;
+    }
+    m.fOn = true;
   }
 
   endLerp(): void {

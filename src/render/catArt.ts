@@ -327,7 +327,10 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   // Ears: where the top of the outline crosses either side of the head, eased
   // in the head's frame so they ride along smoothly instead of hopping between
   // nodes. A grabbed cat's ears go out sideways; content cats wiggle them.
-  const spread = Math.min(r * 0.6, (ol.x1 - ol.x0) * 0.3);
+  // (held by the scruff, they sit out on the shoulders, clear of the skin
+  // drawn up between them)
+  const spread0 = Math.min(r * 0.6, (ol.x1 - ol.x0) * 0.3);
+  const spread = spread0 + Math.max(0, Math.min(r * 0.68, (ol.x1 - ol.x0) * 0.42) - spread0) * v.dangle;
   const ke = snap || !v.earInit ? 1 : ease(v.dt, 16);
   const ka = snap || !v.earInit ? 1 : ease(v.dt, 12);
   const wiggle = pose.purr > 0 ? Math.sin(v.t * 2.2 + v.phase) * 0.05 * pose.purr : 0;

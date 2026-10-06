@@ -2,7 +2,7 @@
 // Only + - * / and sqrt are used so every device simulates the same room the
 // same way, which is what lets the daily solver promise a fair par.
 
-import { NODE_RADIUS, SoftBody } from './softbody';
+import { catPushback, NODE_RADIUS, SoftBody } from './softbody';
 import type { StaticShape } from './shapes';
 
 export const FRAME_DT = 1 / 60;
@@ -104,7 +104,16 @@ export class World {
         }
         for (const b of bodies) if (!b.asleep) this.collideStatics(b, h, s === 0 && first, first);
       }
-      for (const b of bodies) if (!b.asleep) b.finishSubstep(h);
+      for (const b of bodies) {
+        if (b.grab) {
+          // what pushed back this substep, eased (a held cat feels it)
+          b.resistX += (b.pushX - b.resistX) * RESIST_EASE;
+          b.resistY += (b.pushY - b.resistY) * RESIST_EASE;
+          b.pushX = 0;
+          b.pushY = 0;
+        }
+        if (!b.asleep) b.finishSubstep(h);
+      }
     }
     for (const b of bodies) {
       b.frameUpdate(FRAME_DT);
@@ -220,6 +229,10 @@ export class World {
         }
         x[i] += nX * depth;
         y[i] += nY * depth;
+        if (b.grab) {
+          b.pushX += nX * depth;
+          b.pushY += nY * depth;
+        }
         // Positional Coulomb friction
         const dxs = x[i] - px[i];
         const dys = y[i] - py[i];
@@ -328,6 +341,11 @@ export class World {
   }
 }
 
+/** How quickly a held cat's felt push-back follows what's pushing it (per substep). */
+const RESIST_EASE = 0.5;
+/** How much pressing into another cat counts toward what a held cat feels. */
+const CAT_PUSH = 2;
+
 /** How much of a node's radius the skin between nodes keeps from a corner. */
 const CORNER_SKIN = 0.5;
 
@@ -362,6 +380,41 @@ export function collideBodies(a: SoftBody, b: SoftBody): void {
 /** Kinetic energy per unit mass above which a cat bumping a sleeper wakes it. */
 const BUMP_ENERGY = 300;
 
+/**
+ * When one of two touching cats is being carried: which ways the other one is
+ * being pushed by everything else it touches (furniture, other cats). One
+ * pushed back toward the carried cat can't give way to it.
+ */
+const PIN_X = new Float64Array(64);
+const PIN_Y = new Float64Array(64);
+let pinCount = 0;
+
+function gatherPins(o: SoftBody): void {
+  pinCount = 0;
+  for (let q = 0; q < o.n && pinCount < PIN_X.length; q++) {
+    if (o.contactShape[q] !== -1) {
+      PIN_X[pinCount] = o.contactNx[q];
+      PIN_Y[pinCount++] = o.contactNy[q];
+    } else if (o.bodyTouch[q] !== 0) {
+      PIN_X[pinCount] = o.bodyNx[q];
+      PIN_Y[pinCount++] = o.bodyNy[q];
+    }
+  }
+}
+
+/** How firmly the other cat is held in place against being pushed away along -(ux, uy) (0..1). */
+function pinnedAgainst(ux: number, uy: number): number {
+  let best = 0;
+  for (let k = 0; k < pinCount; k++) {
+    const d = PIN_X[k] * ux + PIN_Y[k] * uy;
+    if (d > best) best = d;
+  }
+  if (best <= 0.2) return 0;
+  if (best >= 0.6) return 1;
+  const t = (best - 0.2) / 0.4;
+  return t * t * (3 - 2 * t);
+}
+
 function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number; maxX: number; maxY: number }): void {
   const pad = NODE_RADIUS * 2;
   const skin = NODE_RADIUS * 2;
@@ -370,6 +423,8 @@ function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number;
   const by = b.y;
   const wa = a.asleep ? 0 : a.invNodeMass;
   const wb = b.asleep ? 0 : b.invNodeMass;
+  if (a.grab) gatherPins(b);
+  else if (b.grab) gatherPins(a);
   for (let i = 0; i < a.n; i++) {
     const px = a.x[i];
     const py = a.y[i];
@@ -448,6 +503,20 @@ function nodesVsBody(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number;
     b.bodyTouch[j1] = 1;
     b.bodyNx[j1] = -nX;
     b.bodyNy[j1] = -nY;
+    // (how deep a held cat presses into another counts in full: a squashy
+    // cat gives way rather than pushing back, but it mustn't be squashed.
+    // Except a cat lying on top of it, lifted: that one just comes too,
+    // unless something above holds it down)
+    if (a.grab) {
+      const k = depth * CAT_PUSH * Math.max(catPushback(nY), pinnedAgainst(nX, nY));
+      a.pushX += nX * k;
+      a.pushY += nY * k;
+    }
+    if (b.grab) {
+      const k = depth * CAT_PUSH * Math.max(catPushback(-nY), pinnedAgainst(-nX, -nY));
+      b.pushX -= nX * k;
+      b.pushY -= nY * k;
+    }
     a.x[i] += nX * lambda * wa;
     a.y[i] += nY * lambda * wa;
     b.x[j0] -= nX * lambda * w0;

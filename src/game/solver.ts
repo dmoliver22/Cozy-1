@@ -4,6 +4,7 @@
 // the number of nudges it needed becomes the room's par.
 
 import { breedArea } from '../physics/breeds';
+import { TENT } from '../physics/softbody';
 import { Session } from './session';
 import type { PlanStep, RoomDef } from './room';
 
@@ -27,7 +28,7 @@ export interface SolveOptions {
   maxFrames?: number;
 }
 
-const SETTLE_LIMIT = 260;
+const SETTLE_LIMIT = 420;
 
 interface Gesture {
   kind: 'drag' | 'boop';
@@ -99,8 +100,9 @@ export function gesturesFor(session: Session, catIndex: number, k: number): Gest
   const r = b.p.radius;
   const dir = Math.sign(mid - b.cx) || 1;
   // Held by the scruff (its top, about 0.7 r over where it's grabbed) a cat
-  // hangs about 2 r / sqrt(hang) long: hold it so its bottom clears the rim.
-  const above = op.y + r * 0.6 - (2 * r) / Math.sqrt(b.p.hang);
+  // hangs about 2 r / sqrt(hang) long, and its scruff stretches TENT r more:
+  // hold it so its bottom clears the rim.
+  const above = op.y + r * 0.6 - (2 * r) / Math.sqrt(b.p.hang) - r * TENT;
   const out: Gesture[] = [];
   const dist = Math.abs(mid - b.cx);
   const mv = Math.round(Math.min(40, 16 + dist / 5));

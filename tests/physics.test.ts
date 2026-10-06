@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BREED_ORDER, BREEDS, type BreedId } from '../src/physics/breeds';
-import { SoftBody, crossingAt } from '../src/physics/softbody';
+import { SoftBody, TENT, crossingAt } from '../src/physics/softbody';
 import { World } from '../src/physics/world';
 import { CONTAINER_TYPES, buildContainer, roomShell } from '../src/game/props';
 import { Session } from '../src/game/session';
@@ -379,6 +379,203 @@ describe('soft-body cats', () => {
     }
   });
 
+  it('the scruff stretches as a cat is lifted, more the harder, and springs back once it hangs', () => {
+    for (const breed of ['kitten', 'chonk'] as const) {
+      const peak: Record<string, number> = {};
+      for (const lift of [80, 24]) {
+        const s = openRoom([{ breed, x: 190, y: 560 }]);
+        const cat = s.cats[0];
+        const b = cat.body;
+        b.computeCentroid();
+        const r = b.p.radius;
+        const y0 = b.cy - r * 0.8;
+        s.beginGrab(cat, b.cx, y0);
+        let most = 0;
+        for (let f = 1; f <= lift + 150; f++) {
+          const t = Math.min(1, f / lift);
+          s.moveGrab(190, y0 - 200 * t * t * (3 - 2 * t), 0, 0);
+          s.step();
+          if (f <= lift) most = Math.max(most, b.tent / r);
+        }
+        peak[lift] = most;
+        // hanging still: the skin at the scruff drawn up to its resting
+        // stretch, with the scruff the top of the cat
+        expect(b.tent / r, `${breed} lifted in ${lift}`).toBeGreaterThan(TENT * 0.8);
+        expect(b.tent / r, `${breed} lifted in ${lift}`).toBeLessThan(TENT * 1.2);
+        const g = b.grab!;
+        let top = Infinity;
+        for (let m = 0; m < g.count; m++) top = Math.min(top, b.y[g.nodes[m]]);
+        for (let i = 0; i < b.n; i++) expect(b.y[i], `${breed} node ${i}`).toBeGreaterThan(top - 1);
+        // let go, the skin springs back
+        s.endGrab();
+        for (let f = 0; f < 60; f++) s.step();
+        expect(b.tent).toBe(0);
+      }
+      // yanked up, the scruff stretches further than lifted gently
+      expect(peak[24], breed).toBeGreaterThan(peak[80] + 0.1);
+      expect(peak[24], breed).toBeGreaterThan(0.45);
+    }
+  });
+
+  it('a cat lying on top of the one being picked up comes up too, or rolls off, never speared', () => {
+    for (const [low, high] of [
+      ['kitten', 'tabby'],
+      ['persian', 'mainecoon'],
+    ] as const) {
+      // (all the cats in a row on the floor: the tabby ends up lying on the
+      // kitten, the Maine Coon on the Persian)
+      const s = openRoom(ALL_CATS.map((breed, k) => ({ breed, x: 40 + k * 50, y: 560 })));
+      const under = s.cats.find((c) => c.breed === low)!;
+      const over = s.cats.find((c) => c.breed === high)!;
+      under.body.computeCentroid();
+      over.body.computeCentroid();
+      expect(over.body.cy, `${high} on ${low}`).toBeLessThan(under.body.cy - under.body.p.radius * 0.8);
+      const b = under.body;
+      const r = b.p.radius;
+      const x0 = b.cx;
+      const y0 = b.cy - r * 0.8;
+      s.beginGrab(under, x0, y0);
+      for (let f = 1; f <= 240; f++) {
+        const t = Math.min(1, f / 40);
+        s.moveGrab(x0, y0 + (200 - y0) * t * t * (3 - 2 * t), 0, 0);
+        s.step();
+        for (const c of s.cats) {
+          const area = polygonArea(c.body.x, c.body.y, c.body.n) / c.body.area0;
+          expect(crossingAt(c.body.x, c.body.y, c.body.n), `${c.breed} (${high} on ${low}) frame ${f}`).toBe(-1);
+          expect(area, `${c.breed} (${high} on ${low}) frame ${f}`).toBeGreaterThan(0.6);
+        }
+      }
+      // it came up to the finger
+      b.computeCentroid();
+      expect(b.cy, `${low} under ${high}`).toBeLessThan(200 + r * 2.5);
+    }
+  });
+
+  it('a carried cat follows a smooth path smoothly, swings a little and comes to hang straight', () => {
+    for (const breed of BREED_ORDER) {
+      const s = openRoom([{ breed, x: 120, y: 560 }]);
+      const cat = s.cats[0];
+      const b = cat.body;
+      b.computeCentroid();
+      const r = b.p.radius;
+      const legs: [number, number, number][] = [
+        [b.cx, b.cy - r * 0.8, 0],
+        [120, 220, 40],
+        [280, 220, 50],
+        [200, 320, 40],
+        [200, 320, 90],
+      ];
+      s.beginGrab(cat, legs[0][0], legs[0][1]);
+      const cx: number[] = [];
+      const cy: number[] = [];
+      let swing = 0;
+      let tilt = 0;
+      for (let k = 1; k < legs.length; k++) {
+        const [ax, ay] = legs[k - 1];
+        const [bx, by, frames] = legs[k];
+        for (let f = 1; f <= frames; f++) {
+          const t = f / frames;
+          const e = t * t * (3 - 2 * t);
+          s.moveGrab(ax + (bx - ax) * e, ay + (by - ay) * e, 0, 0);
+          s.step();
+          b.computeCentroid();
+          cx.push(b.cx);
+          cy.push(b.cy);
+          const g = b.grab!;
+          let px = 0;
+          let py = 0;
+          let ws = 0;
+          for (let m = 0; m < g.count; m++) {
+            px += b.x[g.nodes[m]] * g.weights[m];
+            py += b.y[g.nodes[m]] * g.weights[m];
+            ws += g.weights[m];
+          }
+          tilt = (Math.abs(Math.atan2(px / ws - b.cx, b.cy - py / ws)) * 180) / Math.PI;
+          if (k > 1 && k < 4) swing = Math.max(swing, tilt);
+        }
+      }
+      // no shudder: the third difference of the body's middle (per frame) stays small
+      const jerk: number[] = [];
+      for (let i = 3; i < cx.length; i++) jerk.push(Math.hypot(cx[i] - 3 * cx[i - 1] + 3 * cx[i - 2] - cx[i - 3], cy[i] - 3 * cy[i - 1] + 3 * cy[i - 2] - cy[i - 3]));
+      jerk.sort((p, q) => p - q);
+      const mean = jerk.reduce((p, q) => p + q, 0) / jerk.length;
+      expect(mean, breed).toBeLessThan(0.6);
+      expect(jerk[Math.floor(jerk.length * 0.95)], breed).toBeLessThan(2.5);
+      // it swings as it's carried, but not like a pendulum on a string, and
+      // hangs straight once the finger stops
+      expect(swing, breed).toBeLessThan(60);
+      expect(tilt, breed).toBeLessThan(8);
+    }
+  });
+
+  it('a cat whose skin was just untangled is drawn where it is, not blended across the change', () => {
+    const s = openRoom([{ breed: 'tabby', x: 190, y: 400 }]);
+    const b = s.cats[0].body;
+    s.rememberPositions();
+    s.step();
+    const now = Array.from(b.x);
+    b.ringVersion++;
+    s.beginLerp(0.5);
+    expect(Array.from(b.x)).toEqual(now);
+    s.endLerp();
+    // (and an ordinary step is blended)
+    s.rememberPositions();
+    const before = Array.from(b.x);
+    s.step();
+    const after = Array.from(b.x);
+    s.beginLerp(0.5);
+    expect(b.x[3]).toBeCloseTo((before[3] + after[3]) / 2, 9);
+    s.endLerp();
+    expect(Array.from(b.x)).toEqual(after);
+  });
+
+  it('a cat in the hand is drawn flowing a moment behind its own shape, never behind where it is', () => {
+    const s = openRoom([{ breed: 'kitten', x: 190, y: 560 }]);
+    const cat = s.cats[0];
+    const b = cat.body;
+    b.computeCentroid();
+    const x0 = b.cx;
+    const y0 = b.cy - b.p.radius * 0.8;
+    s.beginGrab(cat, x0, y0);
+    const mid = (xs: ArrayLike<number>): number => Array.from(xs).reduce((p, q) => p + q, 0) / xs.length;
+    let lagged = 0;
+    for (let f = 1; f <= 90; f++) {
+      // up, then a quick shake
+      const t = Math.min(1, f / 20);
+      s.moveGrab(x0 + (f > 30 ? 40 * Math.sin(f * 0.6) : 0), y0 - 150 * t * t * (3 - 2 * t), 0, 0);
+      s.rememberPositions();
+      s.step();
+      const realX = Array.from(b.x);
+      const realY = Array.from(b.y);
+      s.beginLerp(1, 1 / 60);
+      // where it is: exactly where the physics has it
+      expect(mid(b.x)).toBeCloseTo(mid(realX), 6);
+      expect(mid(b.y)).toBeCloseTo(mid(realY), 6);
+      let off = 0;
+      for (let i = 0; i < b.n; i++) off = Math.max(off, Math.hypot(b.x[i] - realX[i], b.y[i] - realY[i]));
+      lagged = Math.max(lagged, off);
+      s.endLerp();
+      expect(Array.from(b.x)).toEqual(realX);
+    }
+    // its shape was drawn behind, a little
+    expect(lagged).toBeGreaterThan(0.5);
+    expect(lagged).toBeLessThan(b.p.radius);
+    // let go, the drawing comes back to exact
+    s.endGrab();
+    for (let f = 0; f < 60; f++) {
+      s.rememberPositions();
+      s.step();
+      s.beginLerp(1, 1 / 60);
+      s.endLerp();
+    }
+    s.rememberPositions();
+    s.step();
+    const realX = Array.from(b.x);
+    s.beginLerp(1, 1 / 60);
+    expect(Array.from(b.x)).toEqual(realX);
+    s.endLerp();
+  });
+
   it('a cat that lands with a spin settles where it lands instead of rolling away', () => {
     for (const breed of ['tabby', 'mainecoon', 'chonk'] as const) {
       const world = new World();
@@ -406,6 +603,13 @@ describe('soft-body cats', () => {
     }
   });
 });
+
+/** A bare room with these cats in it, settled. */
+function openRoom(cats: { breed: BreedId; x: number; y: number }[]): Session {
+  const s = new Session({ id: 'open', name: 'open', theme: 'living', furniture: [], decor: [], containers: [], cats: cats.map((c, k) => ({ ...c, name: `c${k}` })) }, { mode: 'sandbox' });
+  for (let f = 0; f < 90; f++) s.step();
+  return s;
+}
 
 /** Number of pairs of non-adjacent ring edges that cross each other. */
 function ringCrossings(b: SoftBody): number {

@@ -12,8 +12,8 @@ export const HANDMADE: RoomDef[] = [
     par: 3,
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
-      { cat: 0, container: 0, gx: 15, gy: -4, tx: 166, ty: 322, hold: 40, kind: 'drag', move: 38, tol: 0.3 },
-      { cat: 2, container: 2, gx: -11, gy: -3, tx: 306, ty: 321, hold: 40, kind: 'drag', wx: 243, wy: 321, move: 22, tol: 0.3 },
+      { cat: 0, container: 0, gx: 15, gy: -4, tx: 166, ty: 309, hold: 40, kind: 'drag', move: 38, tol: 0.3 },
+      { cat: 2, container: 2, gx: -11, gy: -3, tx: 306, ty: 311, hold: 40, kind: 'drag', wx: 243, wy: 311, move: 22, tol: 0.3 },
       { cat: 1, container: 1, gx: 8, gy: -2, tx: 250, ty: 184, hold: 40, kind: 'drag', move: 28, tol: 0.3 },
     ],
     tutorial: true,
@@ -51,9 +51,9 @@ export const HANDMADE: RoomDef[] = [
     par: 3,
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
-      { cat: 0, container: 0, gx: 13, gy: -4, tx: 140, ty: 319, hold: 50, kind: 'drag', move: 36, tol: 0.25 },
-      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 377, hold: 40, kind: 'drag', wx: 263, wy: 377, move: 23, tol: 0.3 },
-      { cat: 1, container: 1, gx: -8, gy: -2, tx: 172, ty: 110, hold: 60, kind: 'drag', move: 43, tol: 0.15 },
+      { cat: 0, container: 0, gx: 13, gy: -4, tx: 153, ty: 319, hold: 40, kind: 'drag', move: 36, tol: 0.3 },
+      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 368, hold: 40, kind: 'drag', wx: 263, wy: 368, move: 23, tol: 0.3 },
+      { cat: 1, container: 1, gx: -8, gy: -2, tx: 172, ty: 106, hold: 40, kind: 'drag', move: 35, tol: 0.3 },
     ],
     furniture: [
       { type: 'cabinet', x0: 0, x1: 106, y: 352 },
@@ -87,9 +87,9 @@ export const HANDMADE: RoomDef[] = [
     par: 3,
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
-      { cat: 0, container: 0, gx: 15, gy: -4, tx: 173, ty: 285, hold: 50, kind: 'drag', move: 40, tol: 0.25 },
-      { cat: 2, container: 2, gx: -11, gy: -3, tx: 312, ty: 326, hold: 20, kind: 'drag', wx: 255, wy: 326, move: 20, tol: 0.45 },
-      { cat: 1, container: 1, gx: -10, gy: -3, tx: 195, ty: 78, hold: 60, kind: 'drag', move: 42, tol: 0.15 },
+      { cat: 0, container: 0, gx: 15, gy: -4, tx: 190, ty: 285, hold: 40, kind: 'drag', move: 40, tol: 0.3 },
+      { cat: 2, container: 2, gx: -11, gy: -3, tx: 312, ty: 317, hold: 40, kind: 'drag', wx: 255, wy: 317, move: 20, tol: 0.3 },
+      { cat: 1, container: 1, gx: -10, gy: -3, tx: 195, ty: 69, hold: 60, kind: 'drag', move: 42, tol: 0.15 },
     ],
     furniture: [
       { type: 'bookcase', x0: 0, x1: 118, y: 322 },
