@@ -13,9 +13,9 @@ here at first; the other four **move in as you play**, each waiting on
 something in one of the games. Every game earns **treats**, spent on
 **perches** you put wherever you like (all the way up the living room's tall
 wall) and on opening up the rest of the house: a **basement** right under the
-living room and a **roof garden** up top, joined to it by glass tubes that are
-there from the start, capped and padlocked until you open the floor they go
-to. Scroll up and down to look round.
+living room, an **attic** over it and a **roof garden** up top, joined to it
+by glass tubes that are there from the start, capped and padlocked until you
+open the floor they go to. Scroll up and down to look round.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -47,19 +47,28 @@ once, mid-game too, and hops in at the window the next time you're home.
 The house:
 
 - **Scroll** up and down (drag the wall, a mouse wheel, or the pills at the
-  top and bottom naming the next stop) between the roof garden, up high in
-  the living room, down by its floor, and the basement.
+  top and bottom naming the next stop) between the roof garden, the attic, up
+  high in the living room, down by its floor, and the basement.
+- **The living room** has a tall glass vase (Inkwell's favourite: she pours
+  herself into it), a laundry basket, and a **bouncy cushion** on the floor
+  between them: drop a cat on it from up high and boing, up it goes, a little
+  less each time, until it sits.
 - **Treats** come from every game: a new If It Fits room (more for a cozy one
   in par), every 150 points in Cat Jar, fish and metres in Cat Drop, and a
   little present the cats leave on the rug the first time you're home each
   day. The **Shop** tin shows how many you have.
 - **The shop** opens up the basement (the lid comes off the funnel in the
-  living room floor, to drop a cat down to it) and the roof garden (the cap
-  comes off the suction hood over the cat steps, to whoosh a cat up to it);
-  a tap on a capped tube takes you to the shop. It sells perches: a wall
-  shelf, a beanbag, a cushion ledge, a hammock, a wicker pod, a cloud shelf
-  (it floats, even out in the sky over the roof) and a cat tree. Drag a new
-  perch where you'd like it; press and hold one to move it.
+  living room floor, to drop a cat down to it), the attic (a cosy loft under
+  the roof, with a round window, string lights and an old crate; the cap
+  comes off the hood high up the left wall, to whoosh a cat up to it, and a
+  funnel in its floor drops it back down) and the roof garden (the cap comes
+  off the suction hood over the cat steps); a tap on a capped tube takes you
+  to the shop. It sells perches: a wall shelf, a beanbag, a cushion ledge,
+  more bouncy cushions, a cat bed (cats curl up in it for a doze), a hammock
+  (a real sling: it dips and sways as a cat lands in it, and sags deeper
+  under a heavy one), a wicker pod, a cloud shelf (it floats, even out in the
+  sky over the roof) and a cat tree. Drag a new perch where you'd like it;
+  press and hold one to move it.
 - **The tubes**: drop a cat into the funnel, or let one go under a hood, and
   it squeezes through the glass like a sausage and pops out on the other
   floor; the view goes along with it.
@@ -110,7 +119,8 @@ straight into a game).
 | Fits & sits reveal: camera pan, purrs swell, cat-face row turns gold | `src/app.ts`, `src/render/renderer.ts` |
 | Spoiler-free share grid | `src/game/share.ts` |
 | Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
-| The house: three floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
+| The house: four floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
+| Perches that move: a hammock that's a simulated sling, a bouncy cushion that squashes and throws a cat back up | `src/house/springs.ts`, art in `src/house/perchArt.ts` |
 | Cats with ways of their own at home: temperaments and moods, stalk, wiggle and pounce, a ball of yarn, scraps in a dust cloud, a hurt cat nursed back with fish | `src/house/antics.ts`, art in `src/house/anticsArt.ts` |
 | 5 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |

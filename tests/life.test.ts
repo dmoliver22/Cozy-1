@@ -187,13 +187,13 @@ describe('the cats at home', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.01);
     // (Mochi and Pip up on the long shelf with a mouth just past its end, and
     // the yarn out of reach up on the top step)
-    let mouthX = 215;
+    let mouthX = 245;
     const mouth = (x: number, y: number): boolean => x < mouthX && y > 250 && y < 345;
-    const { antics, cat } = house(['kitten', 'tabby'], { kitten: { x: 345, y: 338 }, tabby: { x: 250, y: 338 } }, { offLimits: mouth, toy: { x: 330, y: 128 } });
+    const { antics, cat } = house(['kitten', 'tabby'], { kitten: { x: 345, y: 338 }, tabby: { x: 280, y: 338 } }, { offLimits: mouth, toy: { x: 330, y: 128 } });
     expect(antics.turn(cat('kitten'))).toBe(false);
     expect(antics.stalks).toEqual([]);
     // (with the mouth further off, Mochi's fair game)
-    mouthX = 150;
+    mouthX = 180;
     expect(antics.turn(cat('kitten'))).toBe(true);
     expect(antics.stalks[0].target).toEqual({ kind: 'cat', cat: cat('tabby') });
   });

@@ -309,12 +309,12 @@ are what they are:
 One page, three games, and a home room in between (`src/house/`). Notes on
 the choices:
 
-- **The home is an If It Fits room, three floors tall.** It's a `RoomDef`
+- **The home is an If It Fits room, four floors tall.** It's a `RoomDef`
   like any other, run in sandbox mode (no paws, no "fits & sits"), so the
-  cats are the same soft bodies you can pick up, boop and pour into the box
-  or the basket. The house stacks three floors in one world: the roof garden
-  on top, the living room in the middle (where you start) and the basement
-  under it (`layout.ts`). Each floor is laid out in the same local frame as a
+  cats are the same soft bodies you can pick up, boop and pour into the vase
+  or the basket. The house stacks four floors in one world: the roof garden
+  on top, the attic under it, the living room (where you start) and the
+  basement under that (`layout.ts`). Each floor is laid out in the same local frame as a
   room (the top of a room's wall at 0, floor at `FLOOR_Y`) and moved by its
   `dy`, so the room painters and the furniture (`FurniturePlacement.dy`) work
   on every floor unchanged. The living room is twice as tall: its wall goes
@@ -324,22 +324,33 @@ the choices:
   (`SessionOptions.shell`: side walls top to bottom, a solid slab between
   floors, a lid on the sky) instead of a room's walls, so a cat can only
   change floors through a tube. The renderer takes the house as a `Stage`: it
-  paints it in four cached tiles (the one on screen at once, the others a
-  frame each after that), and the camera scrolls between four stops: the
-  roof, up high in the living room, down by its floor, the basement (a finger
+  paints it in five cached tiles (the one on screen at once, the others a
+  frame each after that), and the camera scrolls between five stops: the
+  roof, the attic, up high in the living room, down by its floor, the
+  basement (a finger
   drag with a fling that settles on the nearest stop, a mouse wheel, a pill
   at the top and bottom of the view naming the next stop up and down; and a
   cat carried to the top or the bottom of the screen takes the view along
   with it, up and down the tall wall). The house's own art: the roof garden
   (sky, neighbours' roofs, a deck, a railing with bunting, a chimney a cat
-  can sit on), the attic between the roof and the living room, the living
-  room's tall wall (a high window, pictures, bunting under the ceiling, the
-  lamp on a long cord) and its ceiling with the roof tube's pipe going up
-  through it, and the basement den (warm plaster with brick showing, joists
-  and a copper pipe overhead, a high window, string lights, the bookcase that
-  used to be upstairs). A house saved before the living room grew has its
-  roof garden's perches and cats moved up with the roof, and a perch that's
-  where a tube now always is goes back in the cupboard.
+  can sit on), the attic (a room-tall loft under the roof's slope: timber
+  rafters into the top corners, a round window, string lights, a pendant
+  lamp, a rug, an old crate, a cabinet and a shelf; while it's shut, dust
+  sheets over everything and a shade over the lot), the living room's tall
+  wall (a high window, pictures, bunting under the ceiling, the lamp on a
+  long cord) and its ceiling with the tubes' pipes going up through it, and
+  the basement den (warm plaster with brick showing, joists and a copper
+  pipe overhead, a high window, string lights, the bookcase that used to be
+  upstairs). A house saved before the living room grew, or before the attic
+  went in under the roof, has its roof garden's perches and cats moved up
+  with the roof, and a perch that's where a tube now always is goes back in
+  the cupboard.
+- **The living room's floor**: the funnel, a tall thin glass vase (where
+  Inkwell starts, poured in), a bouncy cushion and the laundry basket. It had
+  a big glass box as well as the basket, two of a kind: the vase took over
+  from the box, thinner, and leaves room for the cushion. The long shelf over them
+  stops short of the cushion, so a cat dropped on it from up the wall gets
+  there.
 - **The ways in are the big buttons along the bottom**: a bar of three tins,
   each with the face of the next cat you can meet in that game peeking over
   its lid, and the shop's. (Labels on things in the room said the same again,
@@ -371,7 +382,8 @@ the choices:
   floor); every so often one who's been resting leaps to a free spot nearby
   on its floor, up a run of perches if there is one (higher spots are
   favourites, and the perches you've put up most of all), sometimes into the
-  box or the basket, where it purrs. A leap is guided: the cat is out of the
+  vase or the basket, where it purrs (a dozy cat makes for a cat bed, a
+  playful one for a bouncy cushion). A leap is guided: the cat is out of the
   physics while it flies a gravity arc high enough to clear the edge it's
   landing on, stretching a little along the way it's going, and lands with
   the speed it's falling at (a ballistic kick fell short: a soft body pushing
@@ -386,23 +398,46 @@ the choices:
   (`payTreats`), so leaving a game half way loses nothing and nothing is paid
   twice. The cats also leave a present the first time you're home each day
   (10 treats, a little box on the rug to tap).
-- **The shop** sells the floors (the basement 80, the roof garden 150) and
-  perches (a wall shelf, a beanbag, a cushion ledge, a hammock, a wicker pod,
-  a cloud shelf and a cat tree, each dearer the more of that kind you have).
+- **The shop** sells the floors (the basement 80, the attic 110, the roof
+  garden 150) and perches (a wall shelf, a beanbag, a cushion ledge, a bouncy
+  cushion, a cat bed, a hammock, a wicker pod, a cloud shelf and a cat tree,
+  each dearer the more of that kind you have; the bouncy cushion every house
+  comes with doesn't count, so the first one you buy is full price, 40).
   A perch you buy goes where you put it: it's drawn live over the room with a
   green or red box while you drag it (floor perches stand on the floor under
   the finger, wall ones go anywhere on a wall clear of the floor, the
   furniture and the tubes, capped or not, and out on the roof only the cloud
   shelf floats), and a long press on a perch picks it up again. A
   perch is a few colliders (a rounded box, a sling of capsules, a bowl) and a
-  painted back and front: a cat curled in the hammock or the pod is drawn
-  between the two (`Stage.behindFront`).
+  painted back and front: a cat curled in the hammock, the pod or the bed is
+  drawn between the two (`Stage.behindFront`).
+- **Perches that move** (`springs.ts`). The hammock is a simulated sling:
+  nine points on springs between the two pegs, stepped in fourteen substeps a
+  frame, its links the colliders (moved in place each frame, so a cat rides
+  them). The cats in it weigh on it: a cat touching it shares its mass over
+  the points under it (by how far along it is and how close to its outline,
+  with a few frames of grace so a flickering contact doesn't make it jitter),
+  and the cloth pushes back on the cat only part of the way (all of it rang:
+  the cat and the cloth bounced each other into a buzz). It's stiff past its
+  rest length and slack short of it, so it dips as a cat lands, swings, and
+  settles cradling it, deeper for a chonk (about 13 units) than a kitten
+  (10); empty, it springs back to how it hung. The bouncy cushion squashes on
+  a spring: a cat that lands on it from higher than about its own height
+  sinks it, and a few frames later it's thrown back up, centred over the
+  cushion (thrown as it came, it shot off the rounded edge), at 86% of the
+  speed it came down at, so each bounce is lower until it just sits. While a
+  cat's bouncing, If It Fits' pull towards a container's opening is off: the
+  vase next door sucked a bouncing kitten in. Both are painted live, every
+  frame (`Stage.liveFront`), the rest of the perches in the cached tiles.
 - **The tubes.** A funnel in the living room floor drops a cat that falls into
   it down a glass pipe to the basement, where it lands on a beanbag; let a cat
   go under the basement's hood and it's sucked back up, popping out of the
   funnel. A suction hood over the top cat step whooshes a cat up a pipe on
   the wall, through the ceiling, the attic and the deck to the roof garden
-  and back. Both are there from the start, so you can see where they go:
+  and back. The attic's tube is the basement's the other way up: a hood high
+  on the living room's left wall, over a little step, whooshes a cat up to
+  the attic, where it pops out of a funnel in the floor, and a cat dropped
+  in that funnel slides back down to the step. Both are there from the start, so you can see where they go:
   until the floor a tube goes to is open it's capped, a wooden lid on the
   funnel and a steel cap on each hood, padlocked (colliders too: a cat can
   sit on the funnel's lid and can't get into a hood), and a tap on a capped

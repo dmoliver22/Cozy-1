@@ -1,14 +1,14 @@
 // The house: who lives here, who's on the way, and what brings each cat
 // home; the treats you earn in the games and what you spend them on (the
-// basement, the roof garden, perches you put wherever you like); and where
+// basement, the attic, the roof garden, perches you put wherever you like); and where
 // everyone was. Two cats live here from the start; the other four move in as
 // you play, each waiting on something in one of the three games. Pure logic
 // plus localStorage, no DOM (the home screen shows it).
 
 import type { BreedId } from '../physics/breeds';
 import type { RunReport } from '../proto/shell';
-import { LIVING_CEIL, type ExtraFloor, type FloorId } from './layout';
-import { PERCH_ORDER, perchPrice, type PerchKind, type PerchSave } from './perches';
+import { LIVING_CEIL, LIVING_CUSHION_X, ROOF_DY, type ExtraFloor, type FloorId } from './layout';
+import { PERCH_ORDER, floorTop, perchBox, perchPrice, type PerchKind, type PerchSave } from './perches';
 
 export type GameId = 'fits' | 'jar' | 'drop';
 
@@ -38,7 +38,7 @@ export interface HouseStats {
 }
 
 export interface HouseSave {
-  v: 4;
+  v: 5;
   /** Cats living here, in the order they moved in. */
   residents: BreedId[];
   /** Cats who've earned their place: they arrive the next time you're home. */
@@ -125,6 +125,9 @@ export function emptyStats(): HouseStats {
 
 /** Where the roof garden began in a house saved before the living room grew (world y). */
 const OLD_ROOF_LINE = -85;
+/** And before the attic went in under it: where it began, and where it was. */
+const OLD_ATTIC_LINE = -645;
+const OLD_ROOF_DY = -1303;
 /** The cat step that used to be between the top step and the shelf under it. */
 const OLD_MIDDLE_STEP = { x0: 200, x1: 296, y: 224 };
 
@@ -133,9 +136,14 @@ export const START_TREATS = 20;
 /** And for a house from before there were treats, a welcome-back bag. */
 export const WELCOME_BACK = 40;
 
+/** The bouncy cushion every house has in its living room (a perch, so it can be moved). */
+function livingCushion(id: number): PerchSave {
+  return { id, kind: 'bounce', x: LIVING_CUSHION_X, y: floorTop('bounce', 'living') };
+}
+
 export function emptyHouse(): HouseSave {
   return {
-    v: 4,
+    v: 5,
     residents: [...FIRST_RESIDENTS],
     arriving: [],
     welcomed: false,
@@ -143,8 +151,8 @@ export function emptyHouse(): HouseSave {
     treats: START_TREATS,
     earned: 0,
     open: [],
-    perches: [],
-    nextPerch: 1,
+    perches: [livingCushion(1)],
+    nextPerch: 2,
     where: {},
     run: null,
     gift: '',
@@ -172,7 +180,7 @@ export function loadHouse(earlier?: Earlier): HouseSave {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<Omit<HouseSave, 'v'>> & { v?: number };
-      const h: HouseSave = { ...emptyHouse(), ...d, v: 4, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
+      const h: HouseSave = { ...emptyHouse(), ...d, v: 5, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
       if ((d.v ?? 1) < 2) {
         // the first house's Cat Jar had a sphynx between the kitten and the
         // tabby; and there were no treats yet: a bag of them to start with
@@ -188,6 +196,28 @@ export function loadHouse(earlier?: Earlier): HouseSave {
         if (Array.isArray(h.perches)) h.perches.forEach(up);
         if (h.where && typeof h.where === 'object') Object.values(h.where).forEach(up);
       }
+      if ((d.v ?? 1) < 5) {
+        // the attic went in under the roof garden: up went the roof, and its perches and cats
+        const up = (p: unknown): void => {
+          if (p && typeof p === 'object' && Number.isFinite((p as { y: number }).y) && (p as { y: number }).y < OLD_ATTIC_LINE) (p as { y: number }).y += ROOF_DY - OLD_ROOF_DY;
+        };
+        if (Array.isArray(h.perches)) h.perches.forEach(up);
+        if (h.where && typeof h.where === 'object') Object.values(h.where).forEach(up);
+      }
+      if ((d.v ?? 1) < 5 && Array.isArray(h.perches) && !h.perches.some((p) => p && p.kind === 'bounce')) {
+        // a bouncy cushion came for the living room (in the cupboard if something's where it goes)
+        const id = Math.max(Number(h.nextPerch) || 1, ...h.perches.map((p) => (p && Number.isFinite(p.id) ? p.id + 1 : 1)));
+        const c = livingCushion(id);
+        const b = perchBox('bounce', c.x, c.y);
+        const taken = h.perches.some((p) => {
+          if (!p || p.stored || !PERCH_ORDER.includes(p.kind)) return false;
+          const q = perchBox(p.kind, p.x, p.y);
+          return b.x0 < q.x1 && b.x1 > q.x0 && b.y0 < q.y1 && b.y1 > q.y0;
+        });
+        if (taken) c.stored = true;
+        h.perches.push(c);
+        h.nextPerch = id + 1;
+      }
       if ((d.v ?? 1) < 4 && h.where && typeof h.where === 'object') {
         // the middle cat step came down: whoever was on it goes back to their spot
         for (const b of Object.keys(h.where) as BreedId[]) {
@@ -199,7 +229,7 @@ export function loadHouse(earlier?: Earlier): HouseSave {
       h.residents = h.residents.filter((b) => ALL_CATS.includes(b));
       h.arriving = h.arriving.filter((b) => ALL_CATS.includes(b) && !h.residents.includes(b));
       if (!Number.isFinite(h.treats) || h.treats < 0) h.treats = 0;
-      h.open = (Array.isArray(h.open) ? h.open : []).filter((f) => f === 'basement' || f === 'roof');
+      h.open = (Array.isArray(h.open) ? h.open : []).filter((f) => f === 'basement' || f === 'attic' || f === 'roof');
       h.perches = (Array.isArray(h.perches) ? h.perches : []).filter((p) => p && PERCH_ORDER.includes(p.kind) && Number.isFinite(p.x) && Number.isFinite(p.y));
       h.nextPerch = Math.max(h.nextPerch || 1, ...h.perches.map((p) => p.id + 1));
       if (!h.where || typeof h.where !== 'object') h.where = {};
@@ -339,14 +369,14 @@ export function spend(h: HouseSave, n: number): boolean {
 }
 
 /** What it costs to open up a floor. */
-export const FLOOR_PRICES: Record<ExtraFloor, number> = { basement: 80, roof: 150 };
+export const FLOOR_PRICES: Record<ExtraFloor, number> = { basement: 80, attic: 110, roof: 150 };
 
 export function isOpen(h: HouseSave, f: FloorId): boolean {
   return f === 'living' || h.open.includes(f);
 }
 
 export function openFloors(h: HouseSave): FloorId[] {
-  return (['roof', 'living', 'basement'] as FloorId[]).filter((f) => isOpen(h, f));
+  return (['roof', 'attic', 'living', 'basement'] as FloorId[]).filter((f) => isOpen(h, f));
 }
 
 /** Open a floor up (false if it's open already or there aren't enough treats). */
@@ -360,8 +390,11 @@ export function ownedOf(h: HouseSave, kind: PerchKind): number {
   return h.perches.filter((p) => p.kind === kind).length;
 }
 
+/** Perches every house comes with, which don't put the price of the next one up. */
+const GIVEN: Partial<Record<PerchKind, number>> = { bounce: 1 };
+
 export function priceOf(h: HouseSave, kind: PerchKind): number {
-  return perchPrice(kind, ownedOf(h, kind));
+  return perchPrice(kind, Math.max(0, ownedOf(h, kind) - (GIVEN[kind] ?? 0)));
 }
 
 /** Buy a perch: it goes in the cupboard until it's put somewhere (null if there aren't enough treats). */

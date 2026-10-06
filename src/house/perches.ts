@@ -1,17 +1,19 @@
 // Perches: cat furniture you buy with treats and put wherever you like in
-// the house. Shelves, ledges, a hammock and a wicker pod go on the walls, a
-// beanbag and a cat tree stand on a floor, and a cloud shelf goes anywhere,
-// even out in the sky over the roof garden. The cats hop up onto them on
-// their own, from one to the next, so a run of perches up a wall is a way up
-// for them: build your way up the house. Geometry only (the art is in
-// perchArt.ts).
+// the house. Shelves, ledges, a hammock and a wicker pod go on the walls; a
+// beanbag, a bouncy cushion, a cat bed and a cat tree stand on a floor; and
+// a cloud shelf goes anywhere, even out in the sky over the roof garden. The
+// cats hop up onto them on their own, from one to the next, so a run of
+// perches up a wall is a way up for them: build your way up the house. The
+// hammock's sling and the bouncy cushion move (springs.ts). Geometry only
+// (the art is in perchArt.ts).
 
 import type { Surface } from '../game/props';
 import { WORLD_W } from '../game/props';
 import { capsule, roundedBox, type Material, type StaticShape } from '../physics/shapes';
 import { FLOORS, floorAt, type FloorId } from './layout';
+import { Bouncer, Sling } from './springs';
 
-export type PerchKind = 'shelf' | 'beanbag' | 'cushion' | 'hammock' | 'pod' | 'cloud' | 'tree';
+export type PerchKind = 'shelf' | 'beanbag' | 'bounce' | 'bed' | 'cushion' | 'hammock' | 'pod' | 'cloud' | 'tree';
 
 export interface PerchSpec {
   kind: PerchKind;
@@ -29,13 +31,15 @@ export interface PerchSpec {
 export const PERCHES: Record<PerchKind, PerchSpec> = {
   shelf: { kind: 'shelf', name: 'Wall shelf', blurb: 'A little plank on brass brackets', price: 15, step: 8, mount: 'wall', height: 0 },
   beanbag: { kind: 'beanbag', name: 'Beanbag', blurb: 'A squashy spot on the floor', price: 25, step: 10, mount: 'floor', height: 34 },
+  bounce: { kind: 'bounce', name: 'Bouncy cushion', blurb: 'Plump and springy: drop a cat on it, boing!', price: 40, step: 12, mount: 'floor', height: 34 },
+  bed: { kind: 'bed', name: 'Cat bed', blurb: 'A round plush bed to curl up in for a nap', price: 45, step: 15, mount: 'floor', height: 20 },
   cushion: { kind: 'cushion', name: 'Cushion ledge', blurb: 'A long ledge with a plump cushion', price: 35, step: 12, mount: 'wall', height: 0 },
-  hammock: { kind: 'hammock', name: 'Hammock', blurb: 'A cosy sling between two pegs', price: 50, step: 15, mount: 'wall', height: 0 },
+  hammock: { kind: 'hammock', name: 'Hammock', blurb: 'A cosy sling between two pegs: it sags and sways', price: 50, step: 15, mount: 'wall', height: 0 },
   pod: { kind: 'pod', name: 'Wicker pod', blurb: 'A round basket bed on the wall', price: 60, step: 20, mount: 'wall', height: 0 },
   cloud: { kind: 'cloud', name: 'Cloud shelf', blurb: 'Floats anywhere, even up in the sky', price: 75, step: 25, mount: 'sky', height: 0 },
   tree: { kind: 'tree', name: 'Cat tree', blurb: 'A tall scratching post with two decks', price: 100, step: 30, mount: 'floor', height: 196 },
 };
-export const PERCH_ORDER: PerchKind[] = ['shelf', 'beanbag', 'cushion', 'hammock', 'pod', 'cloud', 'tree'];
+export const PERCH_ORDER: PerchKind[] = ['shelf', 'beanbag', 'cushion', 'bounce', 'bed', 'hammock', 'pod', 'cloud', 'tree'];
 
 /** A perch in the house (saved): its kind, and where its top is (world). */
 export interface PerchSave {
@@ -65,13 +69,18 @@ export function perchBox(kind: PerchKind, x: number, y: number): Box {
     case 'cushion':
       return { x0: x - 47, y0: y - 8, x1: x + 47, y1: y + 26 };
     case 'hammock':
-      return { x0: x - 56, y0: y - 40, x1: x + 56, y1: y + 12 };
+      // (down to where it sags with a chonk in it)
+      return { x0: x - 56, y0: y - 40, x1: x + 56, y1: y + 30 };
     case 'pod':
       return { x0: x - 49, y0: y - 34, x1: x + 49, y1: y + 14 };
     case 'cloud':
       return { x0: x - 52, y0: y - 14, x1: x + 52, y1: y + 20 };
     case 'beanbag':
       return { x0: x - 52, y0: y - 6, x1: x + 52, y1: y + PERCHES.beanbag.height };
+    case 'bounce':
+      return { x0: x - 37, y0: y - 8, x1: x + 37, y1: y + PERCHES.bounce.height };
+    case 'bed':
+      return { x0: x - 49, y0: y - 18, x1: x + 49, y1: y + PERCHES.bed.height };
     case 'tree': {
       const s = treeSide(x);
       return { x0: x - (s > 0 ? 46 : 60), y0: y - 6, x1: x + (s > 0 ? 60 : 46), y1: y + PERCHES.tree.height };
@@ -87,7 +96,15 @@ export interface PerchProp {
   /** What a cat can sit on (for the cats' hops). */
   surfaces: Surface[];
   propId: number;
+  /** A hammock's sling, a bouncy cushion's spring. */
+  sling?: Sling;
+  bouncer?: Bouncer;
 }
+
+/** The hammock's sling hangs between these (its pegs' cords), dipping this far under them to its lowest, a little under its top. */
+export const SLING = { half: 48, up: 27, sag: 31 };
+/** The bouncy cushion's size. */
+export const BOUNCE = { w: 66, h: PERCHES.bounce.height };
 
 /** Perch props have ids of their own (their colliders carry them). */
 export const PERCH_PROP_BASE = 100000;
@@ -101,6 +118,8 @@ export function buildPerch(p: PerchSave): PerchProp {
   const shapes: StaticShape[] = [];
   const surfaces: Surface[] = [];
   const floor = floorAt(y);
+  let sling: Sling | undefined;
+  let bouncer: Bouncer | undefined;
   switch (kind) {
     case 'shelf':
       shapes.push(roundedBox(x - 33, y, 66, 10, 4, wood));
@@ -115,9 +134,27 @@ export function buildPerch(p: PerchSave): PerchProp {
       surfaces.push({ x0: x - 42, x1: x + 42, y, propId });
       break;
     case 'hammock':
-      shapes.push(capsule(x - 50, y - 26, x - 26, y + 4, 4, soft), capsule(x - 26, y + 4, x + 26, y + 4, 4, soft), capsule(x + 26, y + 4, x + 50, y - 26, 4, soft));
+      // a sling of cloth that sags and sways (springs.ts): its links are its colliders
+      sling = new Sling(x - SLING.half, y - SLING.up, x + SLING.half, y - SLING.up, SLING.sag, soft);
+      shapes.push(...sling.links);
       surfaces.push({ x0: x - 24, x1: x + 24, y, propId });
       break;
+    case 'bounce': {
+      // a fat cushion standing on the floor, its top on springs
+      const top = roundedBox(x - BOUNCE.w / 2, y, BOUNCE.w, BOUNCE.h + 2, 13, { ...soft, friction: 0.6 });
+      bouncer = new Bouncer(top, x, y, BOUNCE.w, BOUNCE.h);
+      shapes.push(top);
+      surfaces.push({ x0: x - 26, x1: x + 26, y, propId });
+      break;
+    }
+    case 'bed': {
+      // a plush round bed: a cushion inside a bolster
+      const fy = y + PERCHES.bed.height;
+      shapes.push(roundedBox(x - 40, y, 80, fy - y, 7, soft));
+      shapes.push(capsule(x - 41, y - 6, x - 33, fy - 8, 9, soft), capsule(x + 41, y - 6, x + 33, fy - 8, 9, soft));
+      surfaces.push({ x0: x - 22, x1: x + 22, y, propId });
+      break;
+    }
     case 'pod': {
       // a shallow wicker bowl: an arc of rods round its middle
       const cx = x;
@@ -150,7 +187,7 @@ export function buildPerch(p: PerchSave): PerchProp {
       break;
     }
   }
-  return { save: p, floor, box: perchBox(kind, x, y), shapes, surfaces, propId };
+  return { save: p, floor, box: perchBox(kind, x, y), shapes, surfaces, propId, sling, bouncer };
 }
 
 /** Where a floor perch's top is, standing on a floor. */

@@ -765,3 +765,28 @@ export function renderIR(sr: number, seconds: number, seed: number): [Float32Arr
   };
   return [make(seed), make(seed + 1)];
 }
+
+/**
+ * A bouncy cushion's "boing": a sine springing up an octave and a bit and
+ * easing back, with the wobble of a spring dying away (size 0..1: a big cat
+ * is a lower, longer boing).
+ */
+export function renderBoing(sr: number, size: number): Float32Array {
+  const s = clamp(size, 0, 1);
+  const dur = 0.46 + 0.1 * s;
+  const n = Math.ceil(dur * sr);
+  const out = new Float32Array(n);
+  const f0 = 172 - 46 * s;
+  const up = 0.085;
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const u = t / dur;
+    const f = t < up ? f0 * 2.6 ** (t / up) : f0 * 2.6 * (1.9 / 2.6) ** Math.min(1, (t - up) / 0.3);
+    const wob = 1 + 0.22 * Math.exp(-t * 8) * Math.sin(TAU * (16 - 3 * s) * t);
+    ph += (TAU * f * wob) / sr;
+    const env = smooth(0, 0.014, u) * (1 - smooth(0.3, 1, u)) ** 1.4;
+    out[i] = (Math.sin(ph) + 0.18 * Math.sin(2 * ph)) * env;
+  }
+  return finish(out, sr);
+}

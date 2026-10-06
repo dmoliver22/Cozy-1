@@ -18,6 +18,7 @@ import { Composer, FLOURISH, PIANO_NOTES, SPB, type DrumKind } from './music';
 import {
   purrSlices,
   renderBell,
+  renderBoing,
   renderBrush,
   renderClick,
   renderGlorp,
@@ -314,6 +315,18 @@ export class AudioEngine {
       const g = this.live();
       if (!g || !this.gate(g, 'hiss', 0.3)) return;
       this.play(g, this.hissBuffer(g, pitch), 0.13, { rate: jitter(0.05), pan: (Math.random() - 0.5) * 0.3 });
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /** A cat lands on a bouncy cushion: boing (speed in world units/s, size 0..1). */
+  boing(speed: number, size: number): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'boing', 0.07)) return;
+      const v = clamp((speed - 150) / 900, 0, 1);
+      this.play(g, this.boingBuffer(g, quant(size, 0.25, 0.5)), 0.1 + 0.16 * v, { rate: jitter(0.04) * (1.06 - 0.1 * v), pan: (Math.random() - 0.5) * 0.2 });
     } catch (e) {
       this.oops(e);
     }
@@ -669,6 +682,10 @@ export class AudioEngine {
   private hissBuffer(g: Graph, pitch: number): AudioBuffer {
     const p = quant(pitch, 0.1, 1);
     return this.cached(g, `hiss:${p}`, g.ctx.sampleRate, (sr) => renderHiss(sr, p, 41));
+  }
+
+  private boingBuffer(g: Graph, size: number): AudioBuffer {
+    return this.cached(g, `boing:${size}`, loRate(g), (sr) => renderBoing(sr, size));
   }
 
   private nomBuffer(g: Graph, pitch: number): AudioBuffer {

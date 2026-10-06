@@ -1,12 +1,16 @@
 // Painting the perches. Each is drawn with its top (where a cat sits) at
 // (x, y), in two parts like a container: the back goes under the cats and
-// the front over them, so a cat curled in the hammock or the wicker pod has
-// the cloth or the basket's rim in front of it.
+// the front over them, so a cat curled in the hammock, the wicker pod or the
+// cat bed has the cloth, the basket's rim or the bolster in front of it. The
+// hammock and the bouncy cushion move, so they're painted live each frame
+// (paintLiveBack, paintLiveFront) from where their sling and spring are.
 
 import { WORLD_W } from '../game/props';
 import { hash01, lightOf, mix, rgba, roundRect, shadowOf, softShadow, type Ctx } from '../render/paint';
+import { paintCushion } from '../render/cushion';
 import { castShadow, cylinderShade, inkLine, knob, paintTex } from '../render/roomKit';
-import { PERCHES, perchBox, type PerchKind } from './perches';
+import { BOUNCE, PERCHES, SLING, perchBox, type PerchKind, type PerchProp } from './perches';
+import { BOUNCE_GIVE } from './springs';
 
 const TAU = Math.PI * 2;
 const WOOD = '#C99A6C';
@@ -14,7 +18,12 @@ const BRASS = '#CFAA6A';
 
 /** Does this kind have a front part (something a cat sits in, not just on)? */
 export function hasFront(kind: PerchKind): boolean {
-  return kind === 'hammock' || kind === 'pod';
+  return kind === 'hammock' || kind === 'pod' || kind === 'bed';
+}
+
+/** Perches that move (the hammock's sling, the bouncy cushion): painted live, not into the cached layers. */
+export function isLive(kind: PerchKind): boolean {
+  return kind === 'hammock' || kind === 'bounce';
 }
 
 /** The part of a perch behind a cat on it. */
@@ -28,7 +37,13 @@ export function paintPerchBack(ctx: Ctx, kind: PerchKind, x: number, y: number, 
       cushionLedge(ctx, x, y, seed);
       break;
     case 'hammock':
-      hammockBack(ctx, x, y, seed);
+      hammockBack(ctx, x, y, restSling(x, y), seed);
+      break;
+    case 'bounce':
+      bounceCushion(ctx, x, y, 0, seed);
+      break;
+    case 'bed':
+      bedBack(ctx, x, y, seed);
       break;
     case 'pod':
       podBack(ctx, x, y, seed);
@@ -49,8 +64,26 @@ export function paintPerchBack(ctx: Ctx, kind: PerchKind, x: number, y: number, 
 /** The part of a perch in front of a cat in it (hammock and pod only). */
 export function paintPerchFront(ctx: Ctx, kind: PerchKind, x: number, y: number, seed = 1): void {
   ctx.save();
-  if (kind === 'hammock') hammockFront(ctx, x, y, seed);
+  if (kind === 'hammock') hammockFront(ctx, restSling(x, y), seed);
   else if (kind === 'pod') podFront(ctx, x, y, seed);
+  else if (kind === 'bed') bedFront(ctx, x, y, seed);
+  ctx.restore();
+}
+
+/** A moving perch's back, where it is this frame (under the cats). */
+export function paintLiveBack(ctx: Ctx, p: PerchProp): void {
+  const { x, y, id } = p.save;
+  ctx.save();
+  if (p.sling) hammockBack(ctx, x, y, { x: p.sling.x, y: p.sling.y }, id);
+  else if (p.bouncer) bounceCushion(ctx, x, y, p.bouncer.squash, id);
+  ctx.restore();
+}
+
+/** A moving perch's front (the hammock's near side, over a cat lying in it). */
+export function paintLiveFront(ctx: Ctx, p: PerchProp): void {
+  if (!p.sling) return;
+  ctx.save();
+  hammockFront(ctx, { x: p.sling.x, y: p.sling.y }, p.save.id);
   ctx.restore();
 }
 
@@ -168,20 +201,62 @@ function cushionLedge(ctx: Ctx, x: number, y: number, seed: number): void {
 
 const CANVAS = '#E9D9BF';
 
-function hammockCurve(x: number, y: number, dip: number): [number, number, number, number, number, number] {
-  return [x - 48, y - 28, x, y + dip, x + 48, y - 28];
+/** The sling's points: where it hangs (or, at rest, as it hangs empty). */
+interface SlingPts {
+  x: ArrayLike<number>;
+  y: ArrayLike<number>;
 }
 
-function hammockBack(ctx: Ctx, x: number, y: number, seed: number): void {
+/** An empty hammock's sling, as it hangs (for the shop and while it's being put somewhere). */
+function restSling(x: number, y: number): SlingPts {
+  const n = 9;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1);
+    xs.push(x - SLING.half + 2 * SLING.half * u);
+    ys.push(y - SLING.up + 4 * SLING.sag * u * (1 - u));
+  }
+  return { x: xs, y: ys };
+}
+
+/** A smooth curve through the sling's points, each lifted by `lift` x how far it is from the pegs (0 at them, 1 in the middle). */
+function slingCurve(ctx: Ctx, p: SlingPts, lift: number, move: boolean): void {
+  const n = p.x.length;
+  const at = (i: number): [number, number] => {
+    const u = i / (n - 1);
+    return [p.x[i], p.y[i] - lift * 4 * u * (1 - u)];
+  };
+  const [x0, y0] = at(0);
+  if (move) ctx.moveTo(x0, y0);
+  else ctx.lineTo(x0, y0);
+  for (let i = 1; i < n - 1; i++) {
+    const [ax, ay] = at(i);
+    const [bx, by] = at(i + 1);
+    ctx.quadraticCurveTo(ax, ay, i === n - 2 ? bx : (ax + bx) / 2, i === n - 2 ? by : (ay + by) / 2);
+  }
+}
+
+/** The same curve, the other way (for closing a band between two). */
+function slingCurveBack(ctx: Ctx, p: SlingPts, lift: number): void {
+  const n = p.x.length;
+  const rev: SlingPts = { x: Array.from(p.x).reverse(), y: Array.from(p.y).reverse() };
+  slingCurve(ctx, rev, lift, false);
+  void n;
+}
+
+function hammockBack(ctx: Ctx, x: number, y: number, p: SlingPts, seed: number): void {
+  const n = p.x.length;
   // the pegs and their cords
   for (const s of [-1, 1]) {
     const px = x + s * 54;
     const py = y - 34;
+    const end = s < 0 ? 0 : n - 1;
     ctx.strokeStyle = '#7E6A5A';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.moveTo(px, py);
-    ctx.lineTo(x + s * 47, y - 27);
+    ctx.lineTo(p.x[end] - s, p.y[end]);
     ctx.stroke();
     softShadow(ctx, px + 3, py + 4, 5, 3, 0.25);
     knob(ctx, px, py, 4, WOOD);
@@ -189,67 +264,163 @@ function hammockBack(ctx: Ctx, x: number, y: number, seed: number): void {
   // its shadow on the wall
   castShadow(ctx, () => {
     ctx.beginPath();
-    const [ax, ay, cx, cy, bx, by] = hammockCurve(x, y, 10);
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cx, cy + 16, bx, by);
-    ctx.quadraticCurveTo(cx, cy - 10, ax, ay);
+    slingCurve(ctx, p, -10, true);
+    slingCurveBack(ctx, p, 26);
+    ctx.closePath();
   }, 6, 8, 6, 0.2);
   // the far half of the sling (its inside), shaded
-  const [ax, ay, cx, cy, bx, by] = hammockCurve(x, y, 12);
-  const p = (): void => {
+  const band = (): void => {
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cx, y - 18, bx, by);
-    ctx.quadraticCurveTo(cx, cy + 8, ax, ay);
+    slingCurve(ctx, p, 27, true);
+    slingCurveBack(ctx, p, 8);
     ctx.closePath();
   };
   ctx.fillStyle = shadowOf(CANVAS, 0.35);
-  p();
+  band();
   ctx.fill();
-  paintTex(ctx, p, 'weave', 0.3, 0.3, 0.3, x + seed, y);
-  inkLine(ctx, p, CANVAS, 0.8, 0.45);
+  paintTex(ctx, band, 'weave', 0.3, 0.3, 0.3, x + seed, y);
+  inkLine(ctx, band, CANVAS, 0.8, 0.45);
 }
 
-function hammockFront(ctx: Ctx, x: number, y: number, seed: number): void {
+function hammockFront(ctx: Ctx, p: SlingPts, seed: number): void {
+  const n = p.x.length;
+  const x = (p.x[0] + p.x[n - 1]) / 2;
+  let lo = -Infinity;
+  for (let i = 0; i < n; i++) lo = Math.max(lo, p.y[i]);
   // the near side of the sling, from its edge down round the cat's bottom
-  const [ax, ay, cx, , bx, by] = hammockCurve(x, y, 12);
-  const p = (): void => {
+  const band = (): void => {
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cx, y - 2, bx, by);
-    ctx.quadraticCurveTo(cx, y + 26, ax, ay);
+    slingCurve(ctx, p, 19, true);
+    slingCurveBack(ctx, p, -5);
     ctx.closePath();
   };
   ctx.fillStyle = CANVAS;
-  p();
+  band();
   ctx.fill();
   ctx.save();
-  p();
+  band();
   ctx.clip();
   // stripes of the canvas, and shade toward the bottom of the curve
   ctx.strokeStyle = rgba('#7FA6C4', 0.55);
   ctx.lineWidth = 3;
-  for (const k of [-0.45, 0, 0.45]) {
+  for (const k of [13, 7, 1]) {
     ctx.beginPath();
-    ctx.moveTo(ax, ay + 4 + k * 8);
-    ctx.quadraticCurveTo(cx, y + 6 + k * 10, bx, by + 4 + k * 8);
+    slingCurve(ctx, p, k, true);
     ctx.stroke();
   }
-  const g = ctx.createLinearGradient(0, y - 20, 0, y + 14);
+  const g = ctx.createLinearGradient(0, lo - 24, 0, lo + 6);
   g.addColorStop(0, 'rgba(255,250,240,0.3)');
   g.addColorStop(1, rgba(shadowOf(CANVAS, 0.5), 0.45));
   ctx.fillStyle = g;
-  ctx.fillRect(x - 60, y - 34, 120, 52);
-  paintTex(ctx, p, 'weave', 0.3, 0.3, 0.3, x + seed, y);
+  ctx.fillRect(x - 70, lo - 50, 140, 60);
+  paintTex(ctx, band, 'weave', 0.3, 0.3, 0.3, x + seed, lo);
   ctx.restore();
-  inkLine(ctx, p, CANVAS, 1, 0.6);
+  inkLine(ctx, band, CANVAS, 1, 0.6);
   // the edge's hem catches the light
   ctx.strokeStyle = rgba('#FFFBF2', 0.8);
   ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.moveTo(ax + 2, ay + 1);
-  ctx.quadraticCurveTo(cx, y - 1, bx - 2, by + 1);
+  slingCurve(ctx, p, 18, true);
   ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// The bouncy cushion
+
+const BOUNCE_COLORS = ['#D9726A', '#7FA0C8', '#E8964A', '#9DB894', '#B48CC8'];
+
+/** A fat tufted cushion standing on the floor, squashed down (and bulging out) by `squash`. */
+function bounceCushion(ctx: Ctx, x: number, y: number, squash: number, seed: number): void {
+  const { w, h } = BOUNCE;
+  const color = BOUNCE_COLORS[Math.floor(hash01(seed, 5) * BOUNCE_COLORS.length)];
+  const floor = y + h;
+  const s = Math.max(-0.3, Math.min(0.45, squash));
+  const sy = 1 - (s * BOUNCE_GIVE * h) / (h + 4);
+  const sx = 1 + s * 0.24;
+  softShadow(ctx, x + 4, floor, (w / 2) * sx + 4, 4, 0.28);
+  ctx.save();
+  ctx.translate(x, floor);
+  ctx.scale(sx, sy);
+  ctx.translate(-w / 2, -(h + 4));
+  paintCushion(ctx, w, h + 4, color, seed);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// The cat bed
+
+const PLUSH = '#D7A39A';
+const PLUSH_IN = '#F4E7D8';
+
+/** The bed's bolster, all round: the back half (behind a cat), and inside it the cushion. */
+function bedBack(ctx: Ctx, x: number, y: number, seed: number): void {
+  const fy = y + PERCHES.bed.height;
+  softShadow(ctx, x + 5, fy, 50, 5, 0.3);
+  // the bolster's far side, seen over the cushion
+  const far = (): void => {
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, 47, 19, 0, Math.PI, 0);
+    ctx.lineTo(x + 47, y + 8);
+    ctx.ellipse(x, y + 8, 33, 9, 0, 0, Math.PI, true);
+    ctx.closePath();
+  };
+  ctx.fillStyle = PLUSH;
+  far();
+  ctx.fill();
+  cylinderShade(ctx, far, x - 47, x + 47, PLUSH, 0.55, 0.45);
+  paintTex(ctx, far, 'fur', 0.25, 0.3, 0.3, x + seed, y);
+  inkLine(ctx, far, PLUSH, 0.9, 0.55);
+  // the cushion in it, with a dip where a cat curls
+  const pad = (): void => {
+    ctx.beginPath();
+    ctx.ellipse(x, y + 7, 35, 10, 0, 0, Math.PI * 2);
+  };
+  ctx.fillStyle = PLUSH_IN;
+  pad();
+  ctx.fill();
+  const dg = ctx.createRadialGradient(x, y + 8, 2, x, y + 8, 34);
+  dg.addColorStop(0, rgba(shadowOf(PLUSH_IN, 0.4), 0.45));
+  dg.addColorStop(1, rgba(shadowOf(PLUSH_IN, 0.4), 0));
+  ctx.fillStyle = dg;
+  pad();
+  ctx.fill();
+  inkLine(ctx, pad, PLUSH_IN, 0.7, 0.4);
+}
+
+/** The bolster's near side, in front of a cat curled up in it. */
+function bedFront(ctx: Ctx, x: number, y: number, seed: number): void {
+  const fy = y + PERCHES.bed.height;
+  const near = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(x - 48, y + 4);
+    ctx.ellipse(x, y + 4, 48, 14, 0, Math.PI, 0, true);
+    ctx.lineTo(x + 48, fy - 7);
+    ctx.quadraticCurveTo(x + 48, fy, x + 38, fy);
+    ctx.lineTo(x - 38, fy);
+    ctx.quadraticCurveTo(x - 48, fy, x - 48, fy - 7);
+    ctx.closePath();
+  };
+  ctx.fillStyle = PLUSH;
+  near();
+  ctx.fill();
+  cylinderShade(ctx, near, x - 48, x + 48, PLUSH, 0.6, 0.5);
+  paintTex(ctx, near, 'fur', 0.25, 0.3, 0.3, x + seed, y + 10);
+  // its round top, catching the light
+  ctx.strokeStyle = rgba(lightOf(PLUSH, 0.75), 0.8);
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.ellipse(x, y + 4, 45, 12, 0, Math.PI * 0.82, Math.PI * 0.18, true);
+  ctx.stroke();
+  // a little stitched seam round the base
+  ctx.strokeStyle = rgba(shadowOf(PLUSH, 0.4), 0.55);
+  ctx.lineWidth = 0.9;
+  ctx.setLineDash([2.5, 2.5]);
+  ctx.beginPath();
+  ctx.moveTo(x - 42, fy - 4);
+  ctx.lineTo(x + 42, fy - 4);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  inkLine(ctx, near, PLUSH, 1, 0.65);
 }
 
 const WICKER = '#C89A62';

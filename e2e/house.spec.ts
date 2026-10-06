@@ -127,7 +127,7 @@ const hh = (page: Page): Promise<{ cam: number; treats: number; open: string[]; 
     return { cam: a.renderer.cam.y, treats: a.home.house.treats, open: a.home.house.open, perches: a.home.house.perches };
   });
 
-test('the house scrolls: up the living room\'s tall wall to the roof garden, and down to the basement', async ({ page }) => {
+test('the house scrolls: up the living room\'s tall wall, through the attic to the roof garden, and down to the basement', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
   const start = (await hh(page)).cam;
   await expect(page.locator('.floor-up')).toContainText('Up high');
@@ -140,18 +140,23 @@ test('the house scrolls: up the living room\'s tall wall to the roof garden, and
   await page.waitForTimeout(1200);
   expect((await hh(page)).cam).toBeGreaterThan(start + 200);
   await expect(page.locator('.home-sign', { hasText: 'Basement' })).toBeVisible();
-  // and the pill takes you back up, then on up the wall, and up to the roof
+  // and the pill takes you back up, then on up the wall, up to the attic, and up to the roof
   await page.locator('.floor-up').click();
   await page.waitForTimeout(1500);
   expect(Math.abs((await hh(page)).cam - start)).toBeLessThan(2);
   await page.locator('.floor-up').click();
   await page.waitForTimeout(1500);
   expect((await hh(page)).cam).toBeLessThan(start - 500);
-  await expect(page.locator('.floor-up')).toContainText('Roof garden');
+  await expect(page.locator('.floor-up')).toContainText('Attic');
   await expect(page.locator('.floor-down')).toContainText('Living room');
   await page.locator('.floor-up').click();
   await page.waitForTimeout(1500);
+  await expect(page.locator('.home-sign', { hasText: 'Attic' })).not.toHaveClass(/\boff\b/);
+  await expect(page.locator('.floor-up')).toContainText('Roof garden');
+  await page.locator('.floor-up').click();
+  await page.waitForTimeout(1500);
   await expect(page.locator('.home-sign', { hasText: 'Roof garden' })).toBeVisible();
+  await expect(page.locator('.floor-down')).toContainText('Attic');
 });
 
 test('the tubes are there before their floors are open, capped: a tap on one offers to open it', async ({ page }) => {
@@ -208,8 +213,9 @@ test('the shop: buy a wall shelf, put it on the wall, and it stays there', async
   await expect(page.locator('.place-bar')).toBeHidden();
   const after = await hh(page);
   expect(after.treats).toBe(35);
-  expect(after.perches).toHaveLength(1);
-  expect(Math.abs(after.perches[0].x - 64)).toBeLessThan(4);
+  // (beside the bouncy cushion the house comes with)
+  expect(after.perches.map((p) => p.kind)).toEqual(['bounce', 'shelf']);
+  expect(Math.abs(after.perches[1].x - 64)).toBeLessThan(4);
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
   expect((await hh(page)).perches).toEqual(after.perches);
@@ -221,8 +227,8 @@ test('the shop: buy a wall shelf, put it on the wall, and it stays there', async
   await expect(page.locator('.place-bar')).toBeVisible();
   await page.getByRole('button', { name: 'Put it here' }).click();
   const high = (await hh(page)).perches;
-  expect(high).toHaveLength(2);
-  expect(high[1].y).toBeLessThan(-100);
+  expect(high).toHaveLength(3);
+  expect(high[2].y).toBeLessThan(-100);
 });
 
 test('open the roof garden, and whoosh a cat up to it through the suction tube', async ({ page }) => {
@@ -257,6 +263,56 @@ test('open the roof garden, and whoosh a cat up to it through the suction tube',
       { timeout: 8000 },
     )
     .toBeLessThan(-700);
+});
+
+test('open the attic, and whoosh a cat up the tube on the left wall to it', async ({ page }) => {
+  await richHouse(page, ['kitten', 'tabby'], 200);
+  await expect(page.locator('.home-sign', { hasText: 'Attic' })).toHaveCount(1);
+  await page.locator('#homeBar [data-act=shop]').click();
+  await page.locator('[data-floor=attic]').click();
+  await page.waitForTimeout(600);
+  expect((await hh(page)).open).toEqual(['attic']);
+  await expect(page.locator('.home-sign', { hasText: 'Attic' })).toHaveClass(/\boff\b/);
+  // back down, then up the wall, and Pip up on the little step under the attic tube's hood
+  await page.evaluate(() => (window as unknown as { __app: HouseHandle }).__app.home.goTo('living'));
+  await page.waitForTimeout(1500);
+  await page.locator('.floor-up').click();
+  await page.waitForTimeout(1500);
+  type Body = { cx: number; cy: number; p: { radius: number }; computeCentroid(): void; placeAt(x: number, y: number): void; wake(): void };
+  type A = { home: { hopIn: number }; session: { cats: { breed: string; body: Body }[] } };
+  await page.evaluate(() => {
+    const a = (window as unknown as { __app: A }).__app;
+    a.home.hopIn = 9999;
+    const c = a.session.cats.find((k) => k.breed === 'kitten')!;
+    c.body.placeAt(50, -208 - c.body.p.radius - 1);
+    c.body.wake();
+  });
+  await page.waitForTimeout(800);
+  // carry it up under the hood and let go
+  const at = await page.evaluate(() => {
+    const a = (window as unknown as { __app: HouseHandle }).__app;
+    const c = a.session.cats.find((k) => k.breed === 'kitten')!;
+    c.body.computeCentroid();
+    return { from: a.renderer.worldToScreen(c.body.cx, c.body.cy - 6), to: a.renderer.worldToScreen(58, -262) };
+  });
+  await page.mouse.move(at.from.x, at.from.y);
+  await page.mouse.down();
+  await page.mouse.move(at.to.x, at.to.y, { steps: 12 });
+  await page.waitForTimeout(400);
+  await page.mouse.up();
+  const cy = () =>
+    page.evaluate(() => {
+      const a = (window as unknown as { __app: HouseHandle }).__app;
+      const c = a.session.cats.find((k) => k.breed === 'kitten')!;
+      c.body.computeCentroid();
+      return c.body.cy;
+    });
+  // out of the funnel in the attic floor, and down on it
+  await expect.poll(cy, { timeout: 8000 }).toBeLessThan(-655);
+  await page.waitForTimeout(1500);
+  const y = await cy();
+  expect(y).toBeLessThan(-647);
+  expect(y).toBeGreaterThan(-1207);
 });
 
 test('the cats leave a present once a day: treats', async ({ page }) => {

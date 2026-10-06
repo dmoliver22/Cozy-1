@@ -16,7 +16,8 @@ import type { DecorPlacement, RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
 import { BREEDS, type BreedId } from '../physics/breeds';
 import type { StaticShape } from '../physics/shapes';
-import { GRAVITY } from '../physics/world';
+import type { SoftBody } from '../physics/softbody';
+import { FRAME_DT, GRAVITY } from '../physics/world';
 import { loadBest } from '../proto/kit';
 import { drawFurniture } from '../render/furnitureArt';
 import { lightOf, rgba, roundRect, shadowOf, type Ctx } from '../render/paint';
@@ -32,7 +33,7 @@ import { Antics, MOOD_WORDS, TEMPERS, moodOf } from './antics';
 import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
 import { GIFT_SPOT, fittingBoxes, houseRoom } from './homeRoom';
-import { BASEMENT_THEME, paintAttic, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
+import { ATTIC_THEME, BASEMENT_THEME, paintAttic, paintAtticShade, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
 import {
   ALL_CATS,
   FLOOR_PRICES,
@@ -64,6 +65,10 @@ import {
   type HouseSave,
 } from './house';
 import {
+  ATTIC_DY,
+  ATTIC_FLOOR_FRONT,
+  ATTIC_FUNNEL,
+  ATTIC_FURNITURE,
   ATTIC_TOP,
   BASEMENT_DY,
   CHIMNEY,
@@ -74,21 +79,24 @@ import {
   HOUSE_TILES,
   LIVING_CEIL,
   LIVING_CUT,
+  LOFT_HOOD,
   OUTLET,
   SPOUT,
   TUBES,
   VIEWS,
   chimneyShapes,
   floorAt,
+  funnelOf,
   houseShell,
   tubeShapes,
   viewMid,
   type ExtraFloor,
   type FloorId,
+  type Funnel,
   type Tube,
   type View,
 } from './layout';
-import { hasFront, paintPerchBack as paintPerch, paintPerchFront, perchThumb } from './perchArt';
+import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack as paintPerch, paintPerchFront, perchThumb } from './perchArt';
 import { PERCHES, PERCH_ORDER, buildPerch, perchBox, placeProblem, snapPerch, type Box, type PerchKind, type PerchProp, type PlaceProblem } from './perches';
 import { Tubes } from './tubes';
 
@@ -124,12 +132,25 @@ interface Spot {
   half: number;
   maxR: number;
   floor: FloorId;
-  /** One of the perches you've put up (the cats love those). */
+  /** One of the perches you've put up (the cats love those), and which. */
   perch?: boolean;
+  kind?: PerchKind;
 }
 
 /** Collider ids of the house's own fittings (the tubes, the chimney). */
-const FITTING_IDS = { chute: 90001, lift: 90002, chimney: 90003 };
+const FITTING_IDS = { chute: 90001, lift: 90002, chimney: 90003, loft: 90004 };
+
+/** What each floor is, in the shop; and how to get a cat there, once it's open. */
+const FLOOR_BLURBS: Record<ExtraFloor, string> = {
+  basement: 'A snug den downstairs. Opens the funnel in the floor, to drop cats down to it',
+  attic: 'A cosy loft under the roof. Opens the tube up the left wall, to whoosh cats up to it',
+  roof: 'A sunny garden up top. Opens the tube over the cat steps, to whoosh cats up',
+};
+const FLOOR_HOWTO: Record<ExtraFloor, string> = {
+  basement: 'Drop a cat in the funnel to send it down!',
+  attic: 'Put a cat under the hood high on the left wall to whoosh it up to the attic!',
+  roof: 'Put a cat under the hood by the cat steps to whoosh it up!',
+};
 
 /** Where the view stops (world y of the middle of the screen). */
 const VIEW_Y = Object.fromEntries(VIEWS.map((v) => [v.id, v.y])) as Record<View['id'], number>;
@@ -194,6 +215,12 @@ export class Home {
   private gift: { x: number; y: number; t: number } | null = null;
   /** Cats just out of a tube can't go straight back in. */
   private cooldown = new Map<Cat, number>();
+  /** Cats bouncing on a bouncy cushion, until this frame. */
+  private boinging = new Map<Cat, number>();
+  /** Physics steps while home. */
+  private frame = 0;
+  /** How fast each body was coming down last frame (a bouncy cushion's landings). */
+  private fellAt = new WeakMap<SoftBody, number>();
   /** The cat last let go of, and when: one dropped in the funnel takes the view down with it. */
   private letGo: { cat: Cat; at: number } | null = null;
   /** Cats leaping to another spot (landing at x1 on a surface at top), and what to do when they land. */
@@ -236,7 +263,7 @@ export class Home {
     // signs on the floors still to open
     this.labels = document.createElement('div');
     this.labels.className = 'home-labels hidden';
-    for (const f of ['basement', 'roof'] as ExtraFloor[]) {
+    for (const f of ['basement', 'attic', 'roof'] as ExtraFloor[]) {
       const b = document.createElement('button');
       b.className = 'home-label home-sign';
       b.addEventListener('click', () => this.offerFloor(f));
@@ -324,10 +351,14 @@ export class Home {
     key: () => this.perchKey(),
     paintBack: (ctx, r) => this.paintBack(ctx, r),
     paintFront: (ctx, r) => this.paintFront(ctx, r),
-    underlay: (ctx) => this.antics.underlay(ctx),
+    underlay: (ctx) => {
+      this.paintLive(ctx, false);
+      this.antics.underlay(ctx);
+    },
+    liveFront: (ctx) => this.paintLive(ctx, true),
     overlay: (ctx, dt) => this.paintOverlay(ctx, dt),
     inTube: (cat) => this.tubeFace(cat),
-    face: (cat) => this.antics.face(cat),
+    face: (cat) => this.antics.face(cat) ?? this.restFace(cat),
     behindFront: (cat) => this.behindFront(cat),
   };
 
@@ -336,7 +367,23 @@ export class Home {
     const h = this.house;
     const seed = 11;
     paintRoof(ctx, r, seed);
-    paintAttic(ctx, r, seed);
+    // the attic, and (once it's open) its furniture and perches
+    paintAttic(ctx, r, isOpen(h, 'attic'), seed);
+    if (isOpen(h, 'attic') && r.y0 < ATTIC_FLOOR_FRONT && r.y1 > ATTIC_TOP) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(r.x0, ATTIC_TOP, r.x1 - r.x0, ATTIC_FLOOR_FRONT - ATTIC_TOP);
+      ctx.clip();
+      for (const p of s.furniture) {
+        if (p.dy !== ATTIC_DY) continue;
+        ctx.save();
+        ctx.translate(0, p.dy);
+        drawFurniture(ctx, localFurniture(p), ATTIC_THEME);
+        ctx.restore();
+      }
+      this.paintPerches(ctx, 'attic', false);
+      ctx.restore();
+    }
     // the living room: its tall walls, the floor, decor, furniture, the ceiling (the roof tube's pipe goes up through it)
     const living = s.furniture.filter((p) => !p.dy);
     ctx.save();
@@ -350,7 +397,10 @@ export class Home {
       for (const d of decor) if (isFlat(d)) drawDecor(ctx, d, theme, seed + d.x);
       for (const p of living) drawFurniture(ctx, p, theme);
       for (const d of decor) if (!isFlat(d)) drawDecor(ctx, d, theme, seed + d.x);
-      paintCeiling(ctx, r, theme, seed, LIVING_CEIL, [[HOOD.x - 21, HOOD.x + 21]]);
+      paintCeiling(ctx, r, theme, seed, LIVING_CEIL, [
+        [HOOD.x - 21, HOOD.x + 21],
+        [LOFT_HOOD.x - 21, LOFT_HOOD.x + 21],
+      ]);
       this.paintPerches(ctx, 'living', false);
       for (const p of s.containers) {
         containerShadow(ctx, p);
@@ -368,7 +418,7 @@ export class Home {
       ctx.rect(r.x0, BASEMENT_DY - 20, r.x1 - r.x0, FLOORS.basement.view1 - BASEMENT_DY + 20);
       ctx.clip();
       for (const p of s.furniture) {
-        if (!p.dy) continue;
+        if (p.dy !== BASEMENT_DY) continue;
         ctx.save();
         ctx.translate(0, p.dy);
         drawFurniture(ctx, localFurniture(p), BASEMENT_THEME);
@@ -394,10 +444,19 @@ export class Home {
 
   private paintPerches(ctx: Ctx, floor: FloorId, front: boolean): void {
     for (const p of this.perchProps) {
-      if (p.floor !== floor) continue;
+      if (p.floor !== floor || isLive(p.save.kind)) continue;
       if (front) {
         if (hasFront(p.save.kind)) paintPerchFront(ctx, p.save.kind, p.save.x, p.save.y, p.save.id);
       } else paintPerch(ctx, p.save.kind, p.save.x, p.save.y, p.save.id);
+    }
+  }
+
+  /** The perches that move (hammocks, bouncy cushions), where they are this frame: their backs under the cats, their fronts over. */
+  private paintLive(ctx: Ctx, front: boolean): void {
+    for (const p of this.perchProps) {
+      if (!isLive(p.save.kind)) continue;
+      if (front) paintLiveFront(ctx, p);
+      else paintLiveBack(ctx, p);
     }
   }
 
@@ -405,6 +464,7 @@ export class Home {
     for (const f of FLOOR_ORDER) this.paintPerches(ctx, f, true);
     for (const t of TUBES) paintTubeFront(ctx, t, !isOpen(this.house, t.needs));
     if (!isOpen(this.house, 'basement')) paintBasementShade(ctx, r);
+    if (!isOpen(this.house, 'attic')) paintAtticShade(ctx, r);
   }
 
   /** Over everything, each frame: the cats' antics, hurt cats' plasters and fish, a perch being placed, the day's present. */
@@ -573,6 +633,10 @@ export class Home {
       if (near({ x: FUNNEL.x, y: FUNNEL.rimY }, FUNNEL.rimHw + 8, 22, FLOOR_Y + 6 - FUNNEL.rimY)) return 'basement';
       if (near(SPOUT, 30, 40, 22)) return 'basement';
     }
+    if (!isOpen(this.house, 'attic')) {
+      if (near({ x: ATTIC_FUNNEL.x, y: ATTIC_FUNNEL.rimY }, ATTIC_FUNNEL.rimHw + 8, 22, ATTIC_FUNNEL.floorY + 6 - ATTIC_FUNNEL.rimY)) return 'attic';
+      if (near(LOFT_HOOD, 30, LOFT_HOOD.y - LIVING_CEIL, 22)) return 'attic';
+    }
     if (!isOpen(this.house, 'roof')) {
       if (near(HOOD, 30, HOOD.y - LIVING_CEIL, 22) || near(OUTLET, 30, 40, 22)) return 'roof';
     }
@@ -679,23 +743,26 @@ export class Home {
   /** One fixed physics step: the tubes. */
   step(): void {
     if (!this.active) return;
+    this.frame++;
+    this.stepLive();
     this.tubes.step();
     this.stepLeaps();
     this.antics.step();
-    // a cat that falls into the funnel goes down to the basement
-    const chute = this.tubesIn().find((t) => t.id === 'chute');
-    if (chute) {
+    // a cat that falls into a funnel goes down its pipe (to the basement, or from the attic to the living room)
+    for (const tube of this.tubesIn()) {
+      const fn = funnelOf(tube);
+      if (!fn) continue;
       for (const c of this.host.session.cats) {
         // (not one flying over it, or tumbling about in a scrap)
         if (c.grabbed || this.tubes.riding(c) || this.leaping(c) || this.antics.fighting(c) || (this.cooldown.get(c) ?? 0) > 0) continue;
         const b = c.body;
         b.computeCentroid();
-        const z = chute.upper.zone;
-        if (b.cx > z.x0 && b.cx < z.x1 && b.cy > z.y0 && b.cy < z.y1 && b.vcy > -60 && inFunnel(b.cx, b.cy)) {
+        const z = tube.upper.zone;
+        if (b.cx > z.x0 && b.cx < z.x1 && b.cy > z.y0 && b.cy < z.y1 && b.vcy > -60 && inFunnel(fn, b.cx, b.cy)) {
           // (one that tumbled in by itself just goes, and says so)
           const dropped = this.letGo?.cat === c && this.since - this.letGo.at < 4;
-          this.ride(c, chute, false, dropped);
-          if (!dropped) this.toast(c.breed, `Wheee! ${NAMES[c.breed]} tumbled down the funnel to the basement.`);
+          this.ride(c, tube, false, dropped);
+          if (!dropped) this.toast(c.breed, `Wheee! ${NAMES[c.breed]} tumbled down the funnel to the ${FLOORS[tube.lower.floor].name.toLowerCase()}.`);
         }
       }
     }
@@ -719,6 +786,54 @@ export class Home {
           this.camGoal = nearestView(e.y);
         }
       }
+    }
+  }
+
+  /**
+   * The perches that move: a hammock's sling takes the weight (and the
+   * landing) of who's lying in it; a bouncy cushion springs a cat that lands
+   * on it back up, boing.
+   */
+  private stepLive(): void {
+    const s = this.host.session;
+    const bodies = s.world.bodies;
+    const fell = (b: SoftBody): number => this.fellAt.get(b) ?? 0;
+    const catOf = (b: SoftBody): Cat | undefined => s.cats.find((c) => c.body === b);
+    const free = (b: SoftBody): boolean => {
+      const c = catOf(b);
+      return !c || (!c.grabbed && !this.tubes.riding(c) && !this.leaping(c) && !this.antics.fighting(c));
+    };
+    for (const p of this.perchProps) {
+      if (p.sling) {
+        p.sling.gather(bodies);
+        p.sling.step(FRAME_DT, GRAVITY);
+      }
+      if (p.bouncer) {
+        const hit = p.bouncer.step(bodies, free, fell);
+        if (hit) {
+          const c = catOf(hit.body);
+          const size = c ? clamp((c.body.p.radius - 22) / 20, 0, 1) : 0;
+          this.host.audio.boing(hit.speed, size);
+          if (c) {
+            c.sinceTouch = Math.min(c.sinceTouch, 120);
+            c.settled = 0;
+            this.boinging.set(c, this.frame + 50);
+          }
+        }
+      }
+    }
+    // a cat bouncing isn't trying to get into the vase beside the cushion
+    // (squashed on it, it brushes the glass, and would be steered off its bounce)
+    for (const c of s.cats) {
+      const until = this.boinging.get(c);
+      if (until === undefined) continue;
+      if (this.frame > until || c.grabbed) this.boinging.delete(c);
+      else c.intent = null;
+    }
+    // (how fast each was coming down, for the next frame's landings)
+    for (const b of bodies) {
+      b.computeCentroid();
+      this.fellAt.set(b, b.vcy);
     }
   }
 
@@ -871,6 +986,10 @@ export class Home {
     bs.innerHTML = `🔒 Basement · ${treatIcon(13)} ${FLOOR_PRICES.basement}`;
     bs.setAttribute('aria-label', `Open the basement for ${FLOOR_PRICES.basement} treats`);
     show(bs, WORLD_W / 2, BASEMENT_DY + 230, !isOpen(h, 'basement') && !this.placing);
+    const as = this.labelEls.get('attic')!;
+    as.innerHTML = `🔒 Attic · ${treatIcon(13)} ${FLOOR_PRICES.attic}`;
+    as.setAttribute('aria-label', `Open the attic for ${FLOOR_PRICES.attic} treats`);
+    show(as, WORLD_W / 2, FLOORS.attic.floorY - 250, !isOpen(h, 'attic') && !this.placing);
     const rs = this.labelEls.get('roof')!;
     rs.innerHTML = `🔒 Roof garden · ${treatIcon(13)} ${FLOOR_PRICES.roof}`;
     rs.setAttribute('aria-label', `Open the roof garden for ${FLOOR_PRICES.roof} treats`);
@@ -894,24 +1013,29 @@ export class Home {
   private spots(): Spot[] {
     const s = this.host.session;
     const out: Spot[] = [];
-    const chute = this.tubesIn().some((t) => t.id === 'chute');
-    const add = (x0: number, x1: number, y: number, maxR: number, perch = false): void => {
+    const funnels = this.tubesIn().flatMap((t) => {
+      const fn = funnelOf(t);
+      return fn ? [{ fn, floor: t.upper.floor }] : [];
+    });
+    const add = (x0: number, x1: number, y: number, maxR: number, perch = false, kind?: PerchKind): void => {
       const f = floorAt(y - 1);
       if (!isOpen(this.house, f)) return;
-      // (not out over the open funnel: a cat that slid off the end would go down it)
-      const clear = FUNNEL.x + FUNNEL.rimHw + 10;
-      if (chute && f === 'living' && y < FUNNEL.rimY && x0 < clear) {
-        if (x1 - clear < 24) return;
-        x0 = clear;
+      // (not out over an open funnel: a cat that slid off the end would go down it)
+      for (const { fn, floor } of funnels) {
+        const clear = fn.x + fn.rimHw + 10;
+        if (floor === f && y < fn.rimY && x0 < clear) {
+          if (x1 - clear < 24) return;
+          x0 = clear;
+        }
       }
-      out.push({ x: (x0 + x1) / 2, y, half: Math.max(4, (x1 - x0) / 2 - 22), maxR, floor: f, perch });
+      out.push({ x: (x0 + x1) / 2, y, half: Math.max(4, (x1 - x0) / 2 - 22), maxR, floor: f, perch, kind });
     };
     for (const p of s.furniture) for (const sf of p.surfaces) add(sf.x0, sf.x1, sf.y, Math.min(44, (sf.x1 - sf.x0) * 0.42));
     for (const p of this.perchProps) {
       for (const sf of p.surfaces) {
         const k = p.save.kind;
-        const maxR = k === 'hammock' || k === 'pod' || k === 'beanbag' ? 42 : Math.min(40, (sf.x1 - sf.x0) * 0.44);
-        add(sf.x0, sf.x1, sf.y, maxR, true);
+        const maxR = k === 'hammock' || k === 'pod' || k === 'beanbag' || k === 'bed' || k === 'bounce' ? 42 : Math.min(40, (sf.x1 - sf.x0) * 0.44);
+        add(sf.x0, sf.x1, sf.y, maxR, true, k);
       }
     }
     // in the box and the basket
@@ -922,6 +1046,7 @@ export class Home {
       add(110, 270, FLOORS.basement.floorY, 44);
       add(SPOUT.x - 20, SPOUT.x + 20, FLOORS.basement.floorY - PERCHES.beanbag.height, 44);
     }
+    if (isOpen(this.house, 'attic')) add(ATTIC_FURNITURE.crate.x1 + 4, ATTIC_FURNITURE.cabinet.x0 - 4, FLOORS.attic.floorY, 44);
     if (isOpen(this.house, 'roof')) {
       add(110, 270, FLOORS.roof.floorY, 44);
       add(CHIMNEY.x0, CHIMNEY.x1, CHIMNEY.y, 40);
@@ -973,14 +1098,17 @@ export class Home {
   }
 
   /**
-   * Where the cats' games mustn't go: into a tube's mouth, or, with the
-   * funnel open, anywhere over it, where a cat knocked off the window sill
-   * would fall in (a cat goes down the funnel when you drop it there).
+   * Where the cats' games mustn't go: into a tube's mouth, or, with a
+   * funnel open, anywhere over it, where a cat knocked off something (the
+   * window sill) would fall in (a cat goes down a funnel when you drop it there).
    */
   private offLimits(x: number, y: number): boolean {
     const tubes = this.tubesIn();
     if (Tubes.mouthAt(tubes, x, y)) return true;
-    return tubes.some((t) => t.id === 'chute') && y < FUNNEL.rimY && y > FLOORS.living.ceilY && Math.abs(x - FUNNEL.x) < FUNNEL.rimHw + 24;
+    return tubes.some((t) => {
+      const f = funnelOf(t);
+      return !!f && y < f.rimY && y > FLOORS[t.upper.floor].ceilY && Math.abs(x - f.x) < f.rimHw + 24;
+    });
   }
 
   /** A hop to a free spot nearby (they like going up, and the perches most of all). */
@@ -996,7 +1124,9 @@ export class Home {
       cat.sinceTouch = 0;
       return;
     }
-    const weights = free.map((p) => (1 + Math.max(0, bottom - p.y) / 50) * (p.perch ? 2.5 : 1));
+    // (a bed to nap in, the sleepy ones above all; a bouncy cushion, the playful ones)
+    const t = this.antics.temper(cat);
+    const weights = free.map((p) => (1 + Math.max(0, bottom - p.y) / 50) * (p.perch ? 2.5 : 1) * (p.kind === 'bed' ? 2 + 3 * t.lazy : p.kind === 'bounce' ? 0.6 + 2 * t.play : 1));
     let pick = Math.random() * weights.reduce((a, w) => a + w, 0);
     let p = free[0];
     for (let i = 0; i < free.length; i++) {
@@ -1210,6 +1340,18 @@ export class Home {
   }
 
   /** Cats in the glass, and in a pod or a hammock, are drawn behind the glass and the perches' fronts. */
+  /** A cat curled up in a cat bed dozes off. */
+  private restFace(cat: Cat): { expression: Expression } | null {
+    if (cat.grabbed || cat.settled < 120) return null;
+    const b = cat.body;
+    for (const p of this.perchProps) {
+      if (p.save.kind !== 'bed') continue;
+      const bx = p.box;
+      if (b.cx > bx.x0 && b.cx < bx.x1 && b.cy > bx.y0 - b.p.radius && b.cy < bx.y1) return { expression: 'sleepy' };
+    }
+    return null;
+  }
+
   private behindFront(cat: Cat): boolean {
     if (this.tubes.riding(cat)) return true;
     const b = cat.body;
@@ -1589,11 +1731,11 @@ export class Home {
   showShop(): void {
     this.host.audio.click();
     const h = this.house;
-    const floors = (['basement', 'roof'] as ExtraFloor[])
+    const floors = (['basement', 'attic', 'roof'] as ExtraFloor[])
       .map((f) => {
         const open = isOpen(h, f);
         const price = FLOOR_PRICES[f];
-        const blurb = f === 'basement' ? 'A snug den downstairs. Opens the funnel in the floor, to drop cats down to it' : 'A sunny garden up top. Opens the tube over the cat steps, to whoosh cats up';
+        const blurb = FLOOR_BLURBS[f];
         const btn = open ? '<span class="shop-done">open ✓</span>' : `<button class="btn primary shop-buy" data-floor="${f}" ${h.treats < price ? 'disabled' : ''}>${treatIcon(14)} ${price}</button>`;
         return `<div class="shop-row"><span class="shop-pic shop-floor"><svg viewBox="0 0 24 24"><use href="#i-floor-${f}"/></svg></span><span class="shop-what"><b>${FLOORS[f].name}</b><small>${blurb}</small></span>${btn}</div>`;
       })
@@ -1658,13 +1800,13 @@ export class Home {
     this.host.audio.reveal();
     this.goTo(f);
     const r = this.host.renderer;
-    const y = f === 'basement' ? FLOORS.basement.floorY - 200 : FLOORS.roof.floorY - 200;
+    const y = FLOORS[f].floorY - 200;
     setTimeout(() => {
       r.hearts(WORLD_W / 2, y, 5);
-      r.label(WORLD_W / 2, y - 20, f === 'basement' ? 'The basement’s open!' : 'The roof garden’s open!', '#D9A62E');
+      r.label(WORLD_W / 2, y - 20, `The ${FLOORS[f].name.toLowerCase()}’s open!`, '#D9A62E');
     }, 500);
     const cat = this.house.residents[0];
-    if (cat) this.toast(cat, f === 'basement' ? 'Drop a cat in the funnel to send it down!' : 'Put a cat under the hood by the cat steps to whoosh it up!', 4200);
+    if (cat) this.toast(cat, FLOOR_HOWTO[f], 4200);
   }
 
   private names(list: BreedId[]): string {
@@ -1677,9 +1819,9 @@ export class Home {
  * Is a cat's middle down inside the funnel's cone (fallen into it), rather
  * than beside it on the floor under its rim, bumped there?
  */
-function inFunnel(x: number, y: number): boolean {
-  const u = clamp((y - FUNNEL.rimY) / (FUNNEL.neckY - FUNNEL.rimY), 0, 1);
-  return Math.abs(x - FUNNEL.x) < FUNNEL.rimHw + (FUNNEL.neckHw - FUNNEL.rimHw) * u - 2;
+function inFunnel(f: Funnel, x: number, y: number): boolean {
+  const u = clamp((y - f.rimY) / (f.neckY - f.rimY), 0, 1);
+  return Math.abs(x - f.x) < f.rimHw + (f.neckHw - f.rimHw) * u - 2;
 }
 
 /** Decor laid flat on the wall or floor (painted under the furniture). */

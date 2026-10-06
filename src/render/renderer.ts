@@ -51,6 +51,8 @@ export interface Stage {
   /** Drawn live each frame: under the cats, and over them. */
   underlay?(ctx: Ctx, dt: number): void;
   overlay?(ctx: Ctx, dt: number): void;
+  /** Drawn live each frame with the front layer: over the cats under it (behindFront), under the rest. */
+  liveFront?(ctx: Ctx, dt: number): void;
   /** A cat in a glass tube: drawn without a shadow, with this face (null: not in a tube). */
   inTube?(cat: Cat): Expression | null;
   /**
@@ -693,6 +695,7 @@ export class Renderer {
       const sh = Math.min(this.layerFront.height - sy, Math.ceil((fr.y1 - fr.y0) * ppu) + 2);
       if (sw > 0 && sh > 0) ctx.drawImage(this.layerFront, sx, sy, sw, sh, lr.x0 + sx / ppu, lr.y0 + sy / ppu, sw / ppu, sh / ppu);
     }
+    st?.liveFront?.(ctx, dt);
     for (const p of s.props) if (this.liveProps.has(p.uid) && p.kind === 'container') drawContainerFront(ctx, p);
     for (let i = 0; i < s.cats.length; i++) {
       const cat = s.cats[i];
