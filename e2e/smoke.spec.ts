@@ -45,7 +45,7 @@ test('finishing a room shows Fits & sits with a share button', async ({ page }) 
 test('the sandbox lets you add a cat and take a photo', async ({ page }) => {
   await page.goto('/?sandbox');
   await page.locator('#sbCatsBtn').click();
-  await page.getByRole('button', { name: 'Add a Sphynx' }).click();
+  await page.getByRole('button', { name: 'Add a Tabby' }).click();
   await page.locator('#sbPhotoBtn').click();
   await expect(page.getByRole('img', { name: 'A photo of your cats' })).toBeVisible();
 });

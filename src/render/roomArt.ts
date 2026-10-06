@@ -696,7 +696,8 @@ function skewAt(x: number, y: number, h: number): number {
   return ((x - VPX) * h) / (y - VPY);
 }
 
-function paintFloor(ctx: Ctx, theme: Theme, vx0: number, vx1: number, vy1: number, seed: number): void {
+/** The plank floor in front of the skirting, down to vy1 (and a little past). */
+export function paintFloor(ctx: Ctx, theme: Theme, vx0: number, vx1: number, vy1: number, seed: number): void {
   const base = theme.floor;
   const fy = FLOOR_Y;
   const w = vx1 - vx0;

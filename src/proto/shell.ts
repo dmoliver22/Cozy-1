@@ -8,10 +8,13 @@ import { AudioEngine } from '../audio/audio';
 import type { BreedId } from '../physics/breeds';
 import { unlockAudioOnGesture } from './kit';
 
-/** How a run went, for the house (milestones: cats moving in). */
+/**
+ * How a run went, for the house (milestones: cats moving in; and treats: the
+ * run's reports come as it goes, and `run` tells one run from the next).
+ */
 export type RunReport =
-  | { game: 'jar'; daily: boolean; score: number; biggest: number; drops: number; over: boolean }
-  | { game: 'drop'; daily: boolean; score: number; depth: number; fish: number; breed: BreedId; over: boolean };
+  | { game: 'jar'; daily: boolean; score: number; biggest: number; drops: number; over: boolean; run?: string }
+  | { game: 'drop'; daily: boolean; score: number; depth: number; fish: number; breed: BreedId; over: boolean; run?: string };
 
 export interface Settings {
   sfx: boolean;

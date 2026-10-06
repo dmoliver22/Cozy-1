@@ -154,7 +154,7 @@ interface Ink {
   mouth: string;
   paw: string;
   muzzle: string | null;
-  fur: 'fur' | 'furFine' | null;
+  fur: 'fur' | 'furFine';
   furAlpha: number;
   furScale: number;
   dark: boolean;
@@ -186,12 +186,12 @@ function inkFor(look: BreedLook): Ink {
     noseDeep: shadowOf(look.nose, 0.45),
     eye: look.eye,
     cheek: look.cheek,
-    whisker: dark ? '#D9D2EE' : look.pattern === 'fluff' || look.pattern === 'wrinkles' ? shadowOf(base, 0.55) : '#FFFDF8',
-    whiskerAlpha: dark ? 0.55 : look.pattern === 'fluff' || look.pattern === 'wrinkles' ? 0.45 : 0.8,
+    whisker: dark ? '#D9D2EE' : look.pattern === 'fluff' ? shadowOf(base, 0.55) : '#FFFDF8',
+    whiskerAlpha: dark ? 0.55 : look.pattern === 'fluff' ? 0.45 : 0.8,
     mouth: dark ? '#9D90C2' : shadowOf(look.nose, 0.75),
     paw: look.pattern === 'patches' || look.pattern === 'belly' || look.pattern === 'tabby' || look.pattern === 'mane' ? look.light : lightOf(base, 0.25),
     muzzle: look.pattern === 'patches' || look.pattern === 'belly' || look.pattern === 'tabby' || look.pattern === 'mane' ? look.light : null,
-    fur: look.pattern === 'wrinkles' ? null : look.fluff > 0.6 ? 'fur' : 'furFine',
+    fur: look.fluff > 0.6 ? 'fur' : 'furFine',
     furAlpha: dark ? 0.6 : look.fluff > 0.6 ? 0.62 : 0.48,
     furScale: look.fluff > 0.6 ? 0.36 : 0.26,
     dark,
@@ -535,8 +535,7 @@ function drawBody(ctx: Ctx, v: CatView, pose: CatPose, r: number, look: BreedLoo
   ctx.clip(P);
   drawMarkings(ctx, look, ink, v, r);
   // coat texture
-  if (ink.fur) fillTexture(ctx, ink.fur, box, ink.furAlpha, 'overlay', ink.furScale, v.hx, v.hy);
-  else fillTexture(ctx, 'plaster', box, 0.18, 'soft-light', 0.3, v.hx, v.hy);
+  fillTexture(ctx, ink.fur, box, ink.furAlpha, 'overlay', ink.furScale, v.hx, v.hy);
   // form: warm light from the upper left, cool shade toward the lower right
   const size = Math.max(w, h);
   const gx = (box.x0 + box.x1) / 2 - w * 0.16;
@@ -741,26 +740,6 @@ function drawMarkings(ctx: Ctx, look: BreedLook, ink: Ink, v: CatView, r: number
       softBlob(ctx, fx + r * 0.3, ry + r * 0.08, r * 0.3, r * 0.28, ink.light, 0.75);
       furFlicks(ctx, fx, ry + r * 0.22, r * 0.5, r * 0.2, 7, ink.light, 0.85, v.seed);
       softBlob(ctx, fx, fy + r * 0.08, r * 0.34, r * 0.2, ink.light, 0.85);
-      break;
-    }
-    case 'wrinkles': {
-      // bare skin: soft mottling, brow wrinkles, a velvet sheen
-      softBlob(ctx, hx + s * r * 0.45, box.y0 + h * 0.4, r * 0.35, r * 0.28, ink.accent, 0.22);
-      softBlob(ctx, hx - s * r * 0.7, box.y0 + h * 0.62, r * 0.28, r * 0.22, ink.accent, 0.18);
-      ctx.strokeStyle = rgba(ink.accent, 0.55);
-      ctx.lineWidth = Math.max(0.9, r * 0.035);
-      for (let k = 0; k < 3; k++) {
-        const yy = hy + r * (0.08 + k * 0.075);
-        ctx.beginPath();
-        ctx.moveTo(fx - r * (0.24 - k * 0.04), yy);
-        ctx.quadraticCurveTo(fx, yy - r * 0.07, fx + r * (0.24 - k * 0.04), yy);
-        ctx.stroke();
-      }
-      const sg = ctx.createRadialGradient(hx - r * 0.35, box.y0 + h * 0.3, 0, hx - r * 0.35, box.y0 + h * 0.3, r * 0.75);
-      sg.addColorStop(0, 'rgba(255,246,240,0.45)');
-      sg.addColorStop(1, 'rgba(255,246,240,0)');
-      ctx.fillStyle = sg;
-      ctx.fillRect(box.x0, box.y0, w, h);
       break;
     }
     case 'none': {
@@ -1145,8 +1124,7 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
     ctx.quadraticCurveTo(fx + mw * 0.15, ny + 4.2 * fs, fx + mw, ny + 3.1 * fs);
     ctx.stroke();
   }
-  // whiskers: fine, slightly curved, fanning out (short and crinkly on the sphynx)
-  const short = persona === 'wobbly' ? 0.55 : 1;
+  // whiskers: fine, slightly curved, fanning out
   ctx.strokeStyle = rgba(ink.whisker, ink.whiskerAlpha);
   ctx.lineWidth = 0.55 * fs;
   ctx.beginPath();
@@ -1154,10 +1132,10 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
     const x0 = fx + s * 4.6 * fs;
     for (let k = 0; k < 3; k++) {
       const y0 = ny + (1.4 + k * 1.2) * fs;
-      const len = (r * (0.42 - k * 0.05) + 3 * fs) * short;
+      const len = r * (0.42 - k * 0.05) + 3 * fs;
       const fan = (k - 1) * 2.2 * fs;
       ctx.moveTo(x0, y0);
-      ctx.quadraticCurveTo(x0 + s * len * 0.5, y0 + fan * 0.3 - 0.6 * fs * short, x0 + s * len, y0 + fan + 0.8 * fs);
+      ctx.quadraticCurveTo(x0 + s * len * 0.5, y0 + fan * 0.3 - 0.6 * fs, x0 + s * len, y0 + fan + 0.8 * fs);
     }
   }
   ctx.stroke();

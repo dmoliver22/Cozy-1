@@ -5,6 +5,7 @@ import type { BreedId } from '../physics/breeds';
 import { BREEDS } from '../physics/breeds';
 import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
+import type { StaticShape } from '../physics/shapes';
 import {
   buildContainer,
   buildFurniture,
@@ -103,11 +104,14 @@ export interface BuiltRoom {
   bodies: SoftBody[];
 }
 
-/** Build physics for a room. Cats are dropped onto their surfaces and settled. */
-export function buildRoom(def: RoomDef, settleFrames = 75): BuiltRoom {
+/**
+ * Build physics for a room (inside `shell`, the room's walls, floor and
+ * ceiling). Cats are dropped onto their surfaces and settled.
+ */
+export function buildRoom(def: RoomDef, settleFrames = 75, shell: () => StaticShape[] = roomShell): BuiltRoom {
   resetPropUids();
   const world = new World();
-  for (const s of roomShell()) world.addStatic(s);
+  for (const s of shell()) world.addStatic(s);
   const furniture = def.furniture.map(buildFurniture);
   const containers = def.containers.map(buildContainer);
   const props = [...furniture, ...containers];

@@ -56,8 +56,9 @@ export class JarUI {
         <div class="jar-chain">${TIERS.slice(0, LAST_TIER + 1)
           .map((t, i) => {
             const size = 21 + i * 3.4;
-            const second = i < COATS.length ? faceSVG(t.breed, { size, look: COATS[i].look, key: `jar-${i}-1` }) : '';
-            return `<span class="jar-chain-cat" title="${second ? `${t.name} · ${COATS[i].name}` : t.name}">${faceSVG(t.breed, { size, mood: i === LAST_TIER ? 'happy' : 'open' })}${second}<small>${t.trait}</small></span>`;
+            const coats = i < COATS.length ? COATS[i] : [];
+            const others = coats.map((c, j) => faceSVG(t.breed, { size, look: c.look, key: `jar-${i}-${j + 1}` })).join('');
+            return `<span class="jar-chain-cat" title="${[t.name, ...coats.map((c) => c.name)].join(' · ')}">${faceSVG(t.breed, { size, mood: i === LAST_TIER ? 'happy' : 'open' })}${others}<small>${t.trait}</small></span>`;
           })
           .join('<span class="jar-arrow">›</span>')}</div>
         <p class="jar-wild"><span class="jar-wild-face">${faceSVG('void', { size: 22, mood: 'happy' })}</span>A Little Void melts into any cat and makes it one size bigger.</p>

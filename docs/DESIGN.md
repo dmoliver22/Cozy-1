@@ -21,7 +21,6 @@ Tension is the skin's constant line tension; viscosity damps deformation only.
 | Kitten | 22 | water | 360 | 3 | 0 | 0.70 | zippy |
 | Persian | 32 | honey | 680 | 26 | 0 | 0.58 | slow ooze, overflows bowls; drips long when held |
 | Chonk | 42 | pudding | 1500 | 12 | 0.0015 | 0.55 | the hero; droops the longest; sleepy z's when idle |
-| Sphynx | 28 | jelly | 1100 | 0.8 | 0.012 | 0.78 | holds its shape; resists narrow necks (`slurp` 0.25) |
 | Tabby | 29 | custard | 700 | 8 | 0 | 0.66 | the polite reference cat |
 | Maine Coon | 37 | cloud | 700 | 9 | 0 | 0.62 | compresses to 78% of its area |
 | The Void | 28 | ink | 420 | 5 | 0 | 0.64 | secret; pours into anything |
@@ -276,19 +275,23 @@ are what they are:
   drops, no game over). Bigger drops don't help (they just make Voids sooner,
   and two Voids vanish), and making cats that had dozed off refuse to melt did
   end games but looked broken: twins touching and not snuggling. What works is
-  more kinds of cat. Each of the four sizes that drop also comes in a second
-  coat (the neighbours' cats: Ginger Kitten, Russian Blue, Silver Tabby,
-  Turkish Van), the same size with the same ways, that only snuggles up to a
-  twin in the same coat; two of a coat make the next size in that coat, and at
-  the Persian's size either pair makes a Maine Coon. They turn up after the
-  first few drops and more often as the afternoon wears on (`coatChance`:
-  none for 6 drops, then up to 40% by drop 406), so the pile slowly grows and
-  where you drop a cat matters more and more. Twins melt only after snuggling
-  a moment (`SNUGGLE_FRAMES`), so a passing bump doesn't count; a cat left
-  alone dozes off (`dozeFrames`, sooner as the kitchen's light warms toward
-  evening) but always wakes when a twin cuddles up. Bots at a human pace:
-  random drops fill the jar in ~250 drops (160 to 380), aiming for twins in
-  ~260 (210 to 330); with no second coats it never fills.
+  more kinds of cat. The chain is six sizes (kitten, tabby, Persian, Maine
+  Coon, chonk, the Void; there was a sphynx between the kitten and the tabby
+  until it was taken out of the game), and each of the three sizes that drop
+  also comes in two more coats (the neighbours' cats: Ginger and Cream
+  Kittens, Silver and Brown Tabbies, a Turkish Van and a Blue Persian), the
+  same size with the same ways, that only snuggle up to a twin in the same
+  coat; two of a coat make the next size in that coat, and at the Persian's
+  size any pair makes a Maine Coon. They turn up after the first few drops
+  and more often as the afternoon wears on (`coatChance`: none for 6 drops,
+  then up to 60% by drop 406; the second neighbour from drop 40), so the pile
+  slowly grows and where you drop a cat matters more and more. Twins melt
+  only after snuggling a moment (`SNUGGLE_FRAMES`), so a passing bump doesn't
+  count; a cat left alone dozes off (`dozeFrames`, sooner as the kitchen's
+  light warms toward evening) but always wakes when a twin cuddles up. Bots at
+  a human pace: random drops fill the jar in ~260 drops (240 to 290), aiming
+  for twins in ~310 (210 to 400); with one neighbour's coats it took twice
+  that, and with none the jar never fills.
 - **Performance.** A cat that's been truly still for 3/4 s is put to sleep in
   the physics (deep in a pile the engine's own test never fires), pictures of
   still cats are reused until their shape drifts, and off-screen cats aren't
@@ -302,13 +305,29 @@ are what they are:
 One page, three games, and a home room in between (`src/house/`). Notes on
 the choices:
 
-- **The home is an If It Fits room.** It's a `RoomDef` like any other, run in
-  sandbox mode (no paws, no "fits & sits"), so the cats are the same soft
-  bodies you can pick up, boop and pour into the box or the basket. Two
-  pieces of art are its own, painted into the renderer's cached back layer
-  through `paintExtra`: the ceiling with the attic hatch and its ladder, and
-  the little jar of cats (the big jar's glass, twine and tag, with a heap of
-  real soft-body cats settled inside once and drawn small).
+- **The home is an If It Fits room, three floors tall.** It's a `RoomDef`
+  like any other, run in sandbox mode (no paws, no "fits & sits"), so the
+  cats are the same soft bodies you can pick up, boop and pour into the box
+  or the basket. The house stacks three floors in one world: the roof garden
+  on top, the living room in the middle (where you start) and the basement
+  under it (`layout.ts`). Each floor is laid out in the same local frame as a
+  room (ceiling at 0, floor at `FLOOR_Y`) and moved by its `dy`, so the room
+  painters and the furniture (`FurniturePlacement.dy`) work on every floor
+  unchanged; the session gets the house's own shell (`SessionOptions.shell`:
+  side walls top to bottom, a solid slab between floors, a lid on the sky)
+  instead of a room's walls, so a cat can only change floors through a tube.
+  The renderer takes the house as a `Stage`: it paints it in three cached
+  tiles (the one on screen at once, the others a frame each after that), and
+  the camera scrolls between the floors (a finger drag with a fling that
+  settles on the nearest floor, a mouse wheel, a pill at the top and bottom of
+  the view naming the next floor up and down). The house's own art: the roof
+  garden (sky, neighbours' roofs, a deck, a railing with bunting, a chimney a
+  cat can sit on), the attic between the roof and the living room (Cat Drop's
+  hatch opens into it), the ceiling with its hatch and ladder, the little jar
+  of cats (the big jar's glass, twine and tag, with a heap of real soft-body
+  cats settled inside once and drawn small), and the basement den (warm
+  plaster with brick showing, joists and a copper pipe overhead, a high
+  window, string lights, the bookcase that used to be upstairs).
 - **The ways in are things in the room**: the glass box (If It Fits: if it
   fits, I sits), the jar of cats (Cat Jar) and the ladder up to the attic
   (Cat Drop starts in the attic). Each has a label, a tap on the thing works
@@ -321,19 +340,56 @@ the choices:
   steps aside while a game is up; a tiny inline style keeps the page hidden
   until it arrives. They share the page's AudioEngine and settings, so music
   carries on from room to game.
-- **Cats move in as you play.** Five milestones, one early one in each game
-  and two that take a little more, measured with bots rather than guessed: a
+- **Cats move in as you play.** Four milestones, one early one in each game
+  and one that takes a little more, measured with bots rather than guessed: a
   Cat Drop bot steering for the openings falls 400-1,400 m and eats 17-62 fish
-  in a run (so "drop 100 m" and "eat 25 fish" are a first run and a good
-  run); in Cat Jar even random drops make a Maine Coon within 20 drops and the
-  Void within 40, so the Void isn't the last milestone: Inkwell, who lives in
-  the Midnight Study, follows you home when you finish that room. The games
+  in a run (so "eat 25 fish" is a good run); in Cat Jar even random drops make
+  a Maine Coon within 20 drops and the Void within 40, so the Void isn't the
+  last milestone: Inkwell, who lives in the Midnight Study, follows you home
+  when you finish that room. (Noodle the sphynx, who moved in after a 100 m
+  drop, left with the sphynx; an older house's save moves its Cat Jar record
+  down a size to match the shorter chain.) The games
   report how a run is *going* (each 10 m and each fish; each new biggest cat),
   not just how it went, so a cat announces itself the moment it's earned, in a
   toast that shows over any game. A new house counts progress made before it
   existed.
 - **Arrivals.** An earned cat waits until you're home, then drops in through
   the attic hatch onto the top cat step, with a card. Residents start in their
-  favourite spots; every so often one who's been resting hops (a ballistic
-  kick) to a free perch nearby, sometimes into the box or the basket, where it
-  purrs.
+  favourite spots and after that stay where they were (the house remembers
+  where each cat was, on whichever floor); every so often one who's been
+  resting hops (a ballistic kick) to a free spot nearby on its floor, up a
+  run of perches if there is one (higher spots are favourites), sometimes
+  into the box or the basket, where it purrs.
+- **Treats.** Every game pays treats, about the same for the time it takes
+  (ten or fifteen a minute): a new If It Fits room 25 (5 for a replay), plus 5
+  for a cozy one and 5 for par; Cat Jar a treat per 400 points (~100 for a
+  whole jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).
+  The games report as they go, so a run is paid as it goes too: each report
+  carries the run's id and pays what it's earned since the last one
+  (`payTreats`), so leaving a game half way loses nothing and nothing is paid
+  twice. The cats also leave a present the first time you're home each day
+  (10 treats, a little box on the rug to tap).
+- **The shop** sells the floors (the basement 80, the roof garden 150) and
+  perches (a wall shelf, a beanbag, a cushion ledge, a hammock, a wicker pod,
+  a cloud shelf and a cat tree, each dearer the more of that kind you have).
+  A perch you buy goes where you put it: it's drawn live over the room with a
+  green or red box while you drag it (floor perches stand on the floor under
+  the finger, wall ones go anywhere on a wall clear of the floor, the
+  furniture, the tubes and the ways into the games, and out on the roof only
+  the cloud shelf floats), and a long press on a perch picks it up again. A
+  perch is a few colliders (a rounded box, a sling of capsules, a bowl) and a
+  painted back and front: a cat curled in the hammock or the pod is drawn
+  between the two (`Stage.behindFront`).
+- **The tubes.** A funnel in the living room floor drops a cat that falls into
+  it down a glass pipe to the basement, where it lands on a beanbag; let a cat
+  go under the basement's hood and it's sucked back up, popping out of the
+  funnel. A suction hood over the top cat step whooshes a cat up through the
+  ceiling, the attic and the deck to the roof garden and back. The ride
+  (`tubes.ts`) moves the cat's own outline: it stretches into the mouth (the
+  ring blended from the cat to a sausage as wide as the bore, with the same
+  area, its nodes matched to the nearest outline points so nothing crosses),
+  slides through the glass along the tube's path (bending round the curves),
+  and pops out round at the far mouth, where it goes back into the physics
+  moving the way the mouth points. It's out of the world while it rides, is
+  drawn under the glass's front (a cached front layer) and the camera rides
+  along with it.

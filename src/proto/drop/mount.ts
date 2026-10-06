@@ -79,6 +79,8 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
   let finished = false;
   /** What the house was last told about this run. */
   let told = { depth: 0, fish: 0 };
+  /** This run, for the house (its reports come as it goes). */
+  let runId = '';
 
   function randomSeed(): number {
     return (Math.random() * 2 ** 31) >>> 0;
@@ -137,6 +139,7 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
     overFrame = -1;
     finished = false;
     told = { depth: 0, fish: 0 };
+    runId = `drop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     steerKeys = 0;
     ui.setBest(loadBest(bestKey()), daily);
   }
@@ -396,7 +399,7 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
   /** Tell the house how the run is going (each 10 m and each fish), and how it went. */
   function report(s: DropState, over: boolean): void {
     told = { depth: s.depth, fish: s.fish };
-    shell.report?.({ game: 'drop', daily, score: s.score, depth: s.depth, fish: s.fish, breed: game.breed, over });
+    shell.report?.({ game: 'drop', daily, score: s.score, depth: s.depth, fish: s.fish, breed: game.breed, over, run: runId });
   }
 
   function finish(s: DropState): void {

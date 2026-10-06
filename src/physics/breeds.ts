@@ -1,7 +1,7 @@
-// The six breeds (+1 secret). Each pours differently: the flow model is the
+// The five breeds (+1 secret). Each pours differently: the flow model is the
 // puzzle variety, so these numbers are gameplay, not decoration.
 
-export type BreedId = 'kitten' | 'persian' | 'chonk' | 'sphynx' | 'tabby' | 'mainecoon' | 'void';
+export type BreedId = 'kitten' | 'persian' | 'chonk' | 'tabby' | 'mainecoon' | 'void';
 
 export interface BreedPhysics {
   /** Rest radius in world units (the world is 360 units wide). */
@@ -40,8 +40,8 @@ export interface BreedPhysics {
   hang: number;
 }
 
-export type FacePersona = 'sleepy' | 'dramatic' | 'zippy' | 'wobbly' | 'polite' | 'fluffy' | 'void';
-export type FurPattern = 'none' | 'tabby' | 'patches' | 'fluff' | 'wrinkles' | 'mane' | 'belly';
+export type FacePersona = 'sleepy' | 'dramatic' | 'zippy' | 'polite' | 'fluffy' | 'void';
+export type FurPattern = 'none' | 'tabby' | 'patches' | 'fluff' | 'mane' | 'belly';
 
 export interface BreedLook {
   body: string;
@@ -53,7 +53,7 @@ export interface BreedLook {
   eye: string;
   cheek: string;
   pattern: FurPattern;
-  /** Outline fluffiness, 0 = smooth (sphynx) .. 1 = cloud (Persian). */
+  /** Outline fluffiness, 0 = smooth .. 1 = cloud (Persian). */
   fluff: number;
   earSize: number;
   earTufts: boolean;
@@ -208,50 +208,6 @@ export const BREEDS: Record<BreedId, Breed> = {
     purr: { pitch: 0.75, rate: 0.8, rough: 0.7 },
     voice: { pitch: 0.65, length: 1.4 },
   },
-  sphynx: {
-    id: 'sphynx',
-    name: 'Sphynx',
-    flow: 'wobbles like jelly',
-    flowShort: 'jelly',
-    blurb: 'Wobbly, warm and bouncy. Holds its shape until it really, really fits.',
-    physics: {
-      radius: 28,
-      nodes: 28,
-      density: 1.05,
-      tension: 1100,
-      equalize: 0.08,
-      maxStretch: 1.8,
-      pressure: 0.95,
-      squish: 0.0,
-      shape: 0.012,
-      viscosity: 0.8,
-      friction: 0.35,
-      upright: 0.05,
-      hop: 380,
-      slurp: 0.25,
-      plasticity: 0.35,
-      loafAspect: 1.2,
-      hang: 0.78,
-    },
-    look: {
-      body: '#EDBBA8',
-      shade: '#D99E8B',
-      light: '#F8D9CC',
-      accent: '#CF8E7B',
-      innerEar: '#F2A0A0',
-      nose: '#D9787C',
-      eye: '#3E3A4F',
-      cheek: '#F0908C',
-      pattern: 'wrinkles',
-      fluff: 0,
-      earSize: 1.35,
-      earTufts: false,
-      tailFluff: 0,
-      persona: 'wobbly',
-    },
-    purr: { pitch: 1.15, rate: 1.1, rough: 0.25 },
-    voice: { pitch: 1.2, length: 0.8 },
-  },
   tabby: {
     id: 'tabby',
     name: 'Tabby',
@@ -387,8 +343,8 @@ export const BREEDS: Record<BreedId, Breed> = {
   },
 };
 
-export const BREED_ORDER: BreedId[] = ['kitten', 'persian', 'chonk', 'sphynx', 'tabby', 'mainecoon', 'void'];
-export const BASE_BREEDS: BreedId[] = ['kitten', 'persian', 'chonk', 'sphynx', 'tabby', 'mainecoon'];
+export const BREED_ORDER: BreedId[] = ['kitten', 'persian', 'chonk', 'tabby', 'mainecoon', 'void'];
+export const BASE_BREEDS: BreedId[] = ['kitten', 'persian', 'chonk', 'tabby', 'mainecoon'];
 
 export const CAT_NAMES = [
   'Biscuit', 'Mochi', 'Noodle', 'Pudding', 'Toffee', 'Pickle', 'Bean', 'Waffles', 'Olive', 'Tofu',

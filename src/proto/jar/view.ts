@@ -705,7 +705,7 @@ export class JarView {
       const r = b.p.radius;
       const y0 = map(b.cy - r * 0.8);
       const y1 = map(b.cy + r * 0.8);
-      ctx.fillStyle = rgba(c.coat > 0 && c.tier < COATS.length ? COATS[c.tier].look.body : TIER_INK[c.tier], 0.9);
+      ctx.fillStyle = rgba(c.coat > 0 && c.tier < COATS.length ? COATS[c.tier][c.coat - 1].look.body : TIER_INK[c.tier], 0.9);
       roundRect(ctx, x - hw + 0.5, y0, g.w - 1, Math.max(1.5, y1 - y0), hw);
       ctx.fill();
     }
@@ -774,7 +774,7 @@ export class JarView {
 }
 
 /** A colour per cat for the gauge (roughly their coats; the Little Void, violet). */
-const TIER_INK = ['#F2A48C', '#E8A0A8', '#E8964A', '#D8CBB8', '#8A6A50', '#9A9AA6', '#3E3A4F', '#8C6FD0'];
+const TIER_INK = ['#F2A48C', '#E8964A', '#D8CBB8', '#8A6A50', '#9A9AA6', '#3E3A4F', '#8C6FD0'];
 
 /** The Little Void's shimmer, 0.2..0.5. */
 const wildGlow = (t: number): number => 0.35 + 0.15 * Math.sin(t * 4.5);

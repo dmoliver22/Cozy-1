@@ -56,7 +56,7 @@ export const RELOAD_FRAMES = 27;
 export const BOOPS_START = 3;
 export const BOOPS_MAX = 5;
 /** Merging two cats of this tier or bigger (persian+) earns a boop back. */
-export const BOOP_EARN_TIER = 3;
+export const BOOP_EARN_TIER = 2;
 
 export interface Tier {
   breed: BreedId;
@@ -81,8 +81,6 @@ const tier = (breed: BreedId, name: string, trait: string, r: number, phys: Part
  *
  * - the kitten is bouncy: it hops about a couple of times before it settles,
  *   toward another kitten if one is near (game.ts);
- * - the sphynx is firm: round and slippery, it won't squish, so it rolls into
- *   a hole and plugs it;
  * - the tabby is steady: no surprises, the one to build on;
  * - the Persian is oozy: soft and slow, it seeps down into the gaps;
  * - the Maine Coon is squishy: all fluff, it squashes down to fit;
@@ -92,11 +90,10 @@ const tier = (breed: BreedId, name: string, trait: string, r: number, phys: Part
  */
 export const TIERS: Tier[] = [
   tier('kitten', 'Kitten', 'bouncy', 18.5, { shape: 0.004, friction: 0.2 }),
-  tier('sphynx', 'Sphynx', 'firm', 23.5, { shape: 0.035, pressure: 1, squish: 0, friction: 0.12, viscosity: 1.5 }),
-  tier('tabby', 'Tabby', 'steady', 29.5, { shape: 0.004 }),
-  tier('persian', 'Persian', 'oozy', 37, { shape: 0, tension: 330, viscosity: 30, friction: 0.1, plasticity: 1.6 }),
-  tier('mainecoon', 'Maine Coon', 'squishy', 46, { shape: 0.001, pressure: 0.04, squish: 0.3 }),
-  tier('chonk', 'Chonk', 'heavy', 57, { shape: 0.004, density: 3.2 }),
+  tier('tabby', 'Tabby', 'steady', 24.5, { shape: 0.004 }),
+  tier('persian', 'Persian', 'oozy', 32, { shape: 0, tension: 330, viscosity: 30, friction: 0.1, plasticity: 1.6 }),
+  tier('mainecoon', 'Maine Coon', 'squishy', 41.5, { shape: 0.001, pressure: 0.04, squish: 0.3 }),
+  tier('chonk', 'Chonk', 'heavy', 54, { shape: 0.004, density: 3.2 }),
   tier('void', 'The Void', 'enormous', 70, { shape: 0.005 }),
   // Not in the chain: now and then a Little Void drops, and melts into any
   // cat it touches, making it one size bigger (a Void: both vanish).
@@ -104,14 +101,15 @@ export const TIERS: Tier[] = [
 ];
 
 /**
- * The neighbours' cats: each of the four kinds that drop also comes in a
- * second coat, the same size with the same ways (a Ginger Kitten is just as
- * bouncy as a Kitten), but it only snuggles up to a twin in the same coat.
- * Two of a coat make the next kind in that coat, and at the top of the drops
- * a pair of either (two Persians, or two Turkish Vans) makes a Maine Coon.
- * With only one coat apiece the soft cats found their twins so easily that a
- * pile never grew; twice the kinds of cat means fewer easy matches, so the
- * jar slowly fills and where you drop a cat matters.
+ * The neighbours' cats: each of the three kinds that drop also comes in two
+ * more coats, the same size with the same ways (a Ginger Kitten is just as
+ * bouncy as a Kitten), but a cat only snuggles up to a twin in the same
+ * coat. Two of a coat make the next kind in that coat, and at the top of the
+ * drops a pair of any of them (two Persians, two Turkish Vans, two Blue
+ * Persians) makes a Maine Coon. With only one coat apiece the soft cats found
+ * their twins so easily that a pile never grew; with more kinds of cat there
+ * are fewer easy matches, so the jar slowly fills and where you drop a cat
+ * matters.
  */
 export interface Coat {
   name: string;
@@ -120,51 +118,67 @@ export interface Coat {
 
 const coat = (breed: BreedId, name: string, look: Partial<BreedLook>): Coat => ({ name, look: { ...BREEDS[breed].look, ...look } });
 
-/** The second coat of tiers 0..COAT_TIERS-1. */
-export const COATS: Coat[] = [
-  coat('kitten', 'Ginger Kitten', { body: '#E9A867', shade: '#CF8A49', light: '#FFF4E6', accent: '#C9773A', innerEar: '#F4B79A', nose: '#E58F8A', cheek: '#F3A98C' }),
-  coat('sphynx', 'Russian Blue', { body: '#9BA6B8', shade: '#7F8A9D', light: '#D3D9E4', accent: '#7A8598', innerEar: '#D3AAB8', nose: '#9C8FA6', cheek: '#C3A9C0', pattern: 'none', fluff: 0.12, earSize: 1.15, persona: 'polite' }),
-  coat('tabby', 'Silver Tabby', { body: '#BCC1CA', shade: '#9EA3AE', light: '#F4F4F6', accent: '#5E636E', innerEar: '#EBB2B4', nose: '#D98C92', cheek: '#EDB0B4' }),
-  coat('persian', 'Turkish Van', { body: '#F6F1EA', shade: '#E2D7CA', light: '#FFFFFF', accent: '#DF8F4A', innerEar: '#F2B6AC', nose: '#E0959A', cheek: '#F3B4A8', pattern: 'patches' }),
+/** The neighbours' coats of tiers 0..COAT_TIERS-1: COATS[tier][c - 1] is coat c (coat 0 is the breed's own). */
+export const COATS: Coat[][] = [
+  [
+    coat('kitten', 'Ginger Kitten', { body: '#E9A867', shade: '#CF8A49', light: '#FFF4E6', accent: '#C9773A', innerEar: '#F4B79A', nose: '#E58F8A', cheek: '#F3A98C' }),
+    coat('kitten', 'Cream Kitten', { body: '#F2E3C6', shade: '#DDC8A4', light: '#FFFBF2', accent: '#D9B98A', innerEar: '#F2B8B0', nose: '#E8A0A0', cheek: '#F3B4A8', pattern: 'none' }),
+  ],
+  [
+    coat('tabby', 'Silver Tabby', { body: '#BCC1CA', shade: '#9EA3AE', light: '#F4F4F6', accent: '#5E636E', innerEar: '#EBB2B4', nose: '#D98C92', cheek: '#EDB0B4' }),
+    coat('tabby', 'Brown Tabby', { body: '#9C7458', shade: '#7E5A42', light: '#E9D3BC', accent: '#4E3628', innerEar: '#E2A49A', nose: '#C9827E', cheek: '#D99A8E' }),
+  ],
+  [
+    coat('persian', 'Turkish Van', { body: '#F6F1EA', shade: '#E2D7CA', light: '#FFFFFF', accent: '#DF8F4A', innerEar: '#F2B6AC', nose: '#E0959A', cheek: '#F3B4A8', pattern: 'patches' }),
+    coat('persian', 'Blue Persian', { body: '#A9B2C6', shade: '#8C95AB', light: '#E2E6EF', accent: '#7D8699', innerEar: '#D9B0BC', nose: '#A891A6', cheek: '#C6AEC6' }),
+  ],
 ];
 export const COAT_TIERS = COATS.length;
 
 /**
- * The chance a drop comes in its second coat, after this many drops: none for
+ * The chance a drop is a neighbour's cat, after this many drops: none for
  * the first COAT_FROM, then more and more of them as the afternoon wears on,
- * up to COAT_SHARE after COAT_RAMP more. (Bots at a human pace: dropping at
- * random fills the jar in ~250 drops (160 to 380), aiming for twins in ~260
- * (210 to 330); with the second coats from the start, at half the drops,
- * ~100-180; with no second coats the jar never fills.)
+ * up to COAT_SHARE after COAT_RAMP more; the second neighbour's cats start
+ * coming round after COAT2_FROM drops. (Bots at a human pace: dropping at
+ * random fills the jar in ~260 drops (240 to 290), aiming for twins in ~310
+ * (210 to 400); with one neighbour's coats it took twice that, and with
+ * none the jar never filled.)
  */
 export function coatChance(drops: number): number {
   return drops < COAT_FROM ? 0 : Math.min(COAT_SHARE, ((drops - COAT_FROM + 1) / COAT_RAMP) * COAT_SHARE);
 }
 export const COAT_FROM = 6;
 export const COAT_RAMP = 400;
-export const COAT_SHARE = 0.4;
+export const COAT_SHARE = 0.6;
+export const COAT2_FROM = 40;
+
+/** Which coat a drop comes in, given the drops so far and two random numbers. */
+export function pickCoat(drops: number, r1: number, r2: number): number {
+  if (r1 >= coatChance(drops)) return 0;
+  return drops >= COAT2_FROM && r2 < 0.5 ? 2 : 1;
+}
 
 /** A kind's name and coat. */
 export function kindName(tier: number, c: number): string {
-  return c > 0 && tier < COAT_TIERS ? COATS[tier].name : TIERS[tier].name;
+  return c > 0 && tier < COAT_TIERS ? COATS[tier][c - 1].name : TIERS[tier].name;
 }
 export function kindLook(tier: number, c: number): BreedLook {
-  return c > 0 && tier < COAT_TIERS ? COATS[tier].look : BREEDS[TIERS[tier].breed].look;
+  return c > 0 && tier < COAT_TIERS ? COATS[tier][c - 1].look : BREEDS[TIERS[tier].breed].look;
 }
 /** What two of a kind make: the next tier, in the same coat while there is one. */
 export const nextCoat = (tier: number, c: number): number => (tier + 1 < COAT_TIERS ? c : 0);
 
 /** The top of the merge chain (two of these vanish). */
-export const LAST_TIER = 6;
+export const LAST_TIER = 5;
 /** The Little Void: a wildcard drop. */
-export const WILD = 7;
+export const WILD = 6;
 /** Drops before the first Little Void can come, the chance of one per drop after that, and the gap between two. */
 export const WILD_AFTER = 12;
 export const WILD_CHANCE = 1 / 26;
 export const WILD_GAP = 15;
 
-/** Drops come from the first four tiers, weighted toward the small ones. */
-export const DROP_WEIGHTS = [0.37, 0.3, 0.21, 0.12];
+/** Drops come from the first three tiers, weighted toward the small ones. */
+export const DROP_WEIGHTS = [0.44, 0.33, 0.23];
 
 /**
  * Two of a kind melt once they've snuggled up this many frames: cats that
@@ -197,7 +211,7 @@ export const CHAIN_MAX = 3;
 
 /**
  * Points for melting two cats of tier t: triangular numbers x 10 (kittens 10
- * ... chonks 210), 1000 for two voids. Chain reactions multiply (game.ts).
+ * ... chonks 150), 1000 for two voids. Chain reactions multiply (game.ts).
  */
 export function mergePoints(t: number): number {
   if (t >= LAST_TIER) return 1000;

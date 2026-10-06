@@ -31,7 +31,7 @@ export function faceSVG(breed: BreedId, opts: { mood?: 'happy' | 'open' | 'sleep
       ? `<path d="M5.2 9.2q2.6-3.3 6.2-1.2q-.8 2.6-3.6 3.4q-1.9-.4-2.6-2.2Z" fill="${l.accent}" opacity=".5"/><path d="M13.4 9.6q.6-.5 1.2 0l2.6 8.6h-6.4Z" fill="${l.light}" opacity=".95"/>`
       : '';
   const muzzle =
-    l.pattern === 'none' || l.pattern === 'wrinkles'
+    l.pattern === 'none'
       ? ''
       : `<ellipse cx="12.6" cy="19.4" rx="2.6" ry="2" fill="${l.light}" opacity=".9"/><ellipse cx="15.4" cy="19.4" rx="2.6" ry="2" fill="${l.light}" opacity=".9"/>`;
   return `<svg class="face-svg" width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true">

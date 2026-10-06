@@ -33,6 +33,39 @@ interface Effect {
   text?: string;
 }
 
+/**
+ * A painted world other than a single room (the tall house): it paints its
+ * own cached layers, in tiles (each painted when it first comes into view),
+ * and the camera can scroll between `pan` rows; `overlay` draws live over
+ * the cats each frame (glass in front of them, things being placed).
+ */
+export interface Stage {
+  /** World rows the camera's middle can scroll between. */
+  pan: [number, number];
+  /** Horizontal bands (world y) painted and cached separately. */
+  tiles: { y0: number; y1: number }[];
+  /** Changes when something painted in the cached layers changes. */
+  key(): string;
+  paintBack(ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }, cssPerUnit: number): void;
+  paintFront?(ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }): void;
+  /** Drawn live each frame: under the cats, and over them. */
+  underlay?(ctx: Ctx, dt: number): void;
+  overlay?(ctx: Ctx, dt: number): void;
+  /** A cat in a glass tube: drawn without a shadow, with this face (null: not in a tube). */
+  inTube?(cat: Cat): Expression | null;
+  /** Cats drawn under the front layer (in a tube, or curled in something with a front). */
+  behindFront?(cat: Cat): boolean;
+}
+
+interface Tile {
+  y0: number;
+  y1: number;
+  back: HTMLCanvasElement | null;
+  front: HTMLCanvasElement | null;
+  key: string;
+  rect: { x0: number; y0: number; x1: number; y1: number; ppu: number };
+}
+
 export interface HintGhost {
   fromX: number;
   fromY: number;
@@ -71,11 +104,9 @@ export class Renderer {
   time = 0;
   /** Props currently being dragged in the sandbox (drawn live, not cached). */
   liveProps = new Set<number>();
-  /**
-   * A room's own extra painting (the home's ceiling and its jar of cats), over
-   * the furniture and decor, under the containers; `cssPerUnit` is the scale.
-   */
-  paintExtra: ((ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }, cssPerUnit: number) => void) | null = null;
+  /** The house (null: a room). */
+  stage: Stage | null = null;
+  private tiles: Tile[] = [];
   reducedMotion = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -99,6 +130,7 @@ export class Renderer {
 
   invalidate(): void {
     this.layerKey = '';
+    for (const t of this.tiles) t.key = '';
   }
 
   resize(): void {
@@ -131,12 +163,35 @@ export class Renderer {
     if (snap) this.cam = { ...this.camTarget };
   }
 
+  /** Scroll the house to put world row y in the middle (at once, or easing there). */
+  scrollTo(y: number, snap = false): void {
+    const p = this.stage?.pan;
+    const yy = p ? clamp(y, p[0], p[1]) : y;
+    this.camTarget = { x: WORLD_W / 2, y: yy, zoom: 1 };
+    if (snap) this.cam = { ...this.camTarget };
+  }
+
+  /** Where the camera is headed (the world row it'll have in the middle). */
+  get scrollTarget(): number {
+    return this.camTarget.y;
+  }
+
+  /** World units per css pixel (for scrolling by finger). */
+  get unitsPerPx(): number {
+    return 1 / (this.scale * this.cam.zoom);
+  }
+
   focus(x: number, y: number, zoom: number): void {
     this.camTarget = { x, y, zoom };
   }
 
   /** Keep a zoomed camera inside the painted room (no peeking past the edges). */
   private clampCamera(): void {
+    const p = this.stage?.pan;
+    if (p) {
+      this.cam.y = clamp(this.cam.y, p[0], p[1]);
+      return;
+    }
     const z = this.cam.zoom;
     if (z <= 1.0001) return;
     const vr = this.visibleWorldRect();
@@ -193,9 +248,81 @@ export class Renderer {
     return { x0, y0, x1, y1 };
   }
 
+  /** The world rows on screen right now. */
+  private viewRows(): { y0: number; y1: number } {
+    return { y0: this.screenToWorld(0, 0).y, y1: this.screenToWorld(0, this.H).y };
+  }
+
+  /**
+   * The house's cached tiles: the ones on screen are painted now, the others
+   * one a frame after that (so scrolling to them never waits).
+   */
+  private ensureTiles(): void {
+    const st = this.stage!;
+    const s = this.session!;
+    if (this.tiles.length !== st.tiles.length || this.tiles.some((t, i) => t.y0 !== st.tiles[i].y0 || t.y1 !== st.tiles[i].y1)) {
+      this.tiles = st.tiles.map((t) => ({ y0: t.y0, y1: t.y1, back: null, front: null, key: '', rect: { x0: 0, y0: t.y0, x1: 0, y1: t.y1, ppu: 1 } }));
+    }
+    const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${st.key()}`;
+    const view = this.viewRows();
+    let painted = 0;
+    for (const near of [true, false]) {
+      for (const t of this.tiles) {
+        if (t.key === key) continue;
+        const onScreen = t.y1 > view.y0 - 40 && t.y0 < view.y1 + 40;
+        if (near ? !onScreen : painted > 0) continue;
+        this.paintTile(t, key);
+        painted++;
+      }
+    }
+  }
+
+  private paintTile(t: Tile, key: string): void {
+    const st = this.stage!;
+    const s = this.session!;
+    const vr = this.visibleWorldRect();
+    // (a little past its rows at either end, so neighbouring tiles overlap: no seam)
+    const r = { x0: vr.x0, y0: t.y0 - 3, x1: vr.x1, y1: t.y1 + 3 };
+    const ppu = Math.min(this.scale * this.dpr, 4096 / (r.x1 - r.x0), 4096 / (r.y1 - r.y0));
+    const pw = Math.ceil((r.x1 - r.x0) * ppu);
+    const ph = Math.ceil((r.y1 - r.y0) * ppu);
+    t.key = key;
+    t.rect = { ...r, ppu };
+    const mk = (old: HTMLCanvasElement | null): HTMLCanvasElement => {
+      const c = old ?? document.createElement('canvas');
+      c.width = pw;
+      c.height = ph;
+      return c;
+    };
+    t.back = mk(t.back);
+    const b = t.back.getContext('2d', { alpha: false })!;
+    b.setTransform(ppu, 0, 0, ppu, -r.x0 * ppu, -r.y0 * ppu);
+    b.save();
+    b.beginPath();
+    b.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    b.clip();
+    st.paintBack(b, r, this.scale);
+    this.paintGrain(b, r);
+    b.restore();
+    // container fronts (only tiles that have any keep a front layer)
+    const fronts = s.containers.filter((p) => !this.liveProps.has(p.uid) && p.y1 > r.y0 && p.y0 - 16 < r.y1);
+    if (fronts.length || st.paintFront) {
+      t.front = mk(t.front);
+      const f = t.front.getContext('2d')!;
+      f.setTransform(ppu, 0, 0, ppu, -r.x0 * ppu, -r.y0 * ppu);
+      f.clearRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      for (const p of fronts) drawContainerFront(f, p);
+      st.paintFront?.(f, r);
+    } else t.front = null;
+  }
+
   private ensureLayers(): void {
     const s = this.session;
     if (!s) return;
+    if (this.stage) {
+      this.ensureTiles();
+      return;
+    }
     const key = `${this.W}x${this.H}@${this.dpr}:${s.def.id}:${s.props.map((p) => (this.liveProps.has(p.uid) ? `${p.uid}:live` : `${p.uid}:${p.x.toFixed(1)},${p.y.toFixed(1)}`)).join('|')}`;
     if (key === this.layerKey && this.layerBack) return;
     this.layerKey = key;
@@ -235,6 +362,20 @@ export class Renderer {
       fy1 = Math.max(fy1, p.y1 + 12);
     }
     this.frontRect = fx1 > fx0 ? { x0: Math.max(r.x0, fx0), y0: Math.max(r.y0, fy0), x1: Math.min(r.x1, fx1), y1: Math.min(r.y1, fy1) } : null;
+  }
+
+  /** Paper grain alone (the house's tiles: a vignette would band at their seams). */
+  private paintGrain(ctx: Ctx, r: { x0: number; y0: number; x1: number; y1: number }): void {
+    const grain = ctx.createPattern(paperGrain(), 'repeat');
+    if (!grain) return;
+    const css = 1 / this.scale;
+    grain.setTransform?.({ a: css, b: 0, c: 0, d: css, e: 0, f: 0 });
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = grain;
+    ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    ctx.restore();
   }
 
   /** Paper grain and a soft vignette, baked into the back layer. */
@@ -289,7 +430,6 @@ export class Renderer {
     for (const d of decor) if (d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel') drawDecor(ctx, d, this.theme, seed + d.x);
     for (const p of s.furniture) if (!this.liveProps.has(p.uid)) drawFurniture(ctx, p, this.theme);
     for (const d of decor) if (!(d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel')) drawDecor(ctx, d, this.theme, seed + d.x);
-    this.paintExtra?.(ctx, r, this.scale);
     for (const p of s.containers) {
       if (this.liveProps.has(p.uid)) continue;
       containerShadow(ctx, p);
@@ -477,7 +617,16 @@ export class Renderer {
     ctx.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * tx, dpr * ty);
     const lr = this.layerRect;
     // Back layer
-    if (this.layerBack) ctx.drawImage(this.layerBack, lr.x0, lr.y0, lr.x1 - lr.x0, lr.y1 - lr.y0);
+    const st = this.stage;
+    const rows = st ? this.viewRows() : null;
+    if (st && rows) {
+      for (const t of this.tiles) {
+        if (!t.back || !t.key || t.y1 < rows.y0 || t.y0 > rows.y1) continue;
+        const r = t.rect;
+        ctx.drawImage(t.back, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      }
+      st.underlay?.(ctx, dt);
+    } else if (this.layerBack) ctx.drawImage(this.layerBack, lr.x0, lr.y0, lr.x1 - lr.x0, lr.y1 - lr.y0);
     // live (dragged) props: back
     for (const p of s.props) {
       if (!this.liveProps.has(p.uid)) continue;
@@ -493,7 +642,7 @@ export class Renderer {
       v.update(dt);
       return this.poseFor(cat, v);
     });
-    for (let i = 0; i < s.cats.length; i++) if (!poses[i].rim) this.drawCatShadow(ctx, s.cats[i]);
+    for (let i = 0; i < s.cats.length; i++) if (!poses[i].rim && !st?.inTube?.(s.cats[i])) this.drawCatShadow(ctx, s.cats[i]);
     // Cats in a container go under its (glass) front, resting on its floor in
     // a soft shadow; their front paws go over the rim.
     for (let i = 0; i < s.cats.length; i++) {
@@ -503,9 +652,35 @@ export class Renderer {
       contactShadow(ctx, fp.cx, fp.maxY, (fp.maxX - fp.minX) * 0.36, 0.2, 0.5);
       drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'body');
     }
+    // cats in the house's glass tubes and pods: under its front layer
+    const behind = st?.behindFront ? s.cats.map((c, i) => !poses[i].rim && st.behindFront!(c)) : null;
+    if (behind) for (let i = 0; i < s.cats.length; i++) if (behind[i]) drawCat(ctx, s.cats[i].body, this.view(s.cats[i]), poses[i], this.scale, 'all');
     // Front layer
     const fr = this.frontRect;
-    if (this.layerFront && fr) {
+    if (st && rows) {
+      for (const t of this.tiles) {
+        if (!t.front || !t.key || t.y1 < rows.y0 || t.y0 > rows.y1) continue;
+        const r = t.rect;
+        // only the rows with container fronts in them
+        let fy0 = Infinity;
+        let fy1 = -Infinity;
+        for (const p of s.containers) {
+          if (p.y1 < r.y0 || p.y0 - 16 > r.y1) continue;
+          fy0 = Math.min(fy0, p.y0 - 16);
+          fy1 = Math.max(fy1, p.y1 + 12);
+        }
+        if (st.paintFront) {
+          fy0 = r.y0;
+          fy1 = r.y1;
+        }
+        fy0 = Math.max(r.y0, fy0);
+        fy1 = Math.min(r.y1, fy1);
+        if (fy1 <= fy0) continue;
+        const sy = Math.floor((fy0 - r.y0) * r.ppu);
+        const sh = Math.min(t.front.height - sy, Math.ceil((fy1 - fy0) * r.ppu) + 2);
+        if (sh > 0) ctx.drawImage(t.front, 0, sy, t.front.width, sh, r.x0, r.y0 + sy / r.ppu, r.x1 - r.x0, sh / r.ppu);
+      }
+    } else if (this.layerFront && fr) {
       const ppu = lr.ppu;
       const sx = Math.floor((fr.x0 - lr.x0) * ppu);
       const sy = Math.floor((fr.y0 - lr.y0) * ppu);
@@ -522,8 +697,9 @@ export class Renderer {
     for (let pass = 0; pass < 2; pass++)
       for (let i = 0; i < s.cats.length; i++) {
         const cat = s.cats[i];
-        if (!poses[i].rim && cat.grabbed === (pass === 1)) drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'all');
+        if (!poses[i].rim && cat.grabbed === (pass === 1) && !behind?.[i]) drawCat(ctx, cat.body, this.view(cat), poses[i], this.scale, 'all');
       }
+    st?.overlay?.(ctx, dt);
     // purr waves
     for (const cat of s.cats) if (cat.seat) this.drawPurr(ctx, cat);
     if (this.def?.mood !== 'night' && !this.reducedMotion) this.drawMotes(ctx);
@@ -670,6 +846,11 @@ export class Renderer {
     else if (seat) expression = s.complete || seat.cozy.score >= 78 ? 'happy' : 'content';
     else if (cat.settled > 30 && b.breed.look.persona === 'sleepy') expression = 'sleepy';
     else look = Math.sin(v.t * 0.5 + cat.index) > 0.85 ? 0.8 : Math.sin(v.t * 0.5 + cat.index) < -0.9 ? -0.8 : 0;
+    const tubeFace = this.stage?.inTube?.(cat);
+    if (tubeFace) {
+      expression = tubeFace;
+      look = 0;
+    }
     const k = this.containerFor(cat);
     const c = k >= 0 ? s.containers[k] : null;
     const rim = c ? { x0: c.opening!.x0, x1: c.opening!.x1, y: c.opening!.y, lip: 7 * c.scale } : null;
@@ -721,15 +902,13 @@ export class Renderer {
     if (cat.seat) return;
     const fp = catFootprint(cat.body);
     // find the surface below
-    let ground = FLOOR_Y;
+    // the nearest surface below it (the floor, or whatever it's over)
+    let ground = Infinity;
     for (const st of s.world.statics) {
-      if (st.material === 'wall' && st.minY > FLOOR_Y - 1) continue;
       if (fp.cx < st.minX || fp.cx > st.maxX) continue;
       if (st.minY >= fp.maxY - 6 && st.minY < ground) ground = st.minY;
     }
-    if (ground === FLOOR_Y) {
-      // floor and walls
-    }
+    if (ground === Infinity) ground = FLOOR_Y;
     const hgt = Math.max(0, ground - fp.maxY);
     const w = (fp.maxX - fp.minX) * 0.5;
     const a = 0.3 * clamp(1 - hgt / 220, 0.12, 1);

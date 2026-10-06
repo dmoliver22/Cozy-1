@@ -1,7 +1,7 @@
 // The shared prop library: every container and piece of furniture a room can be
 // built from. Geometry only (no drawing) so the daily solver can run headless.
 
-import { capsule, makeConvex, roundedBox, type Material, type StaticShape } from '../physics/shapes';
+import { capsule, makeConvex, roundedBox, translateShape, type Material, type StaticShape } from '../physics/shapes';
 import { pointInPolyPts, polygonAreaPts, segmentT, type Vec2 } from '../util/math';
 
 export type ContainerType =
@@ -237,6 +237,11 @@ export interface FurniturePlacement {
   /** Ramps only: y at x1. */
   y1?: number;
   variant?: number;
+  /**
+   * The house: a piece on another floor is laid out as if in a room (floor
+   * at FLOOR_Y) and moved down (or up) by this much.
+   */
+  dy?: number;
 }
 
 export interface Prop {
@@ -267,6 +272,8 @@ export interface Prop {
   surfaces: Surface[];
   /** Ramp end points / furniture extras for art. */
   ramp?: { ax: number; ay: number; bx: number; by: number };
+  /** Furniture on another floor of the house: how far it's moved from its room layout. */
+  dy?: number;
 }
 
 let nextPropUid = 1;
@@ -429,6 +436,12 @@ export function buildFurniture(f: FurniturePlacement): Prop {
       break;
     }
   }
+  const dy = f.dy ?? 0;
+  if (dy) {
+    for (const sh of shapes) translateShape(sh, 0, dy);
+    for (const sf of surfaces) sf.y += dy;
+    if (ramp) ramp = { ...ramp, ay: ramp.ay + dy, by: ramp.by + dy };
+  }
   return {
     uid,
     kind: 'furniture',
@@ -436,15 +449,15 @@ export function buildFurniture(f: FurniturePlacement): Prop {
     name: f.type,
     material,
     x: (x0 + x1) / 2,
-    y,
+    y: y + dy,
     flip: false,
     scale: 1,
     tint: 0,
     variant: f.variant ?? 0,
     x0: ax0,
-    y0: top,
+    y0: top + dy,
     x1: ax1,
-    y1: bottom,
+    y1: bottom + dy,
     shapes,
     interior: null,
     samples: null,
@@ -453,6 +466,22 @@ export function buildFurniture(f: FurniturePlacement): Prop {
     opening: null,
     surfaces,
     ramp,
+    dy: dy || undefined,
+  };
+}
+
+/** A piece of furniture as laid out on its floor (for painting it under a translate by its dy). */
+export function localFurniture(p: Prop): Prop {
+  const dy = p.dy ?? 0;
+  if (!dy) return p;
+  return {
+    ...p,
+    y: p.y - dy,
+    y0: p.y0 - dy,
+    y1: p.y1 - dy,
+    surfaces: p.surfaces.map((sf) => ({ ...sf, y: sf.y - dy })),
+    ramp: p.ramp ? { ...p.ramp, ay: p.ramp.ay - dy, by: p.ramp.by - dy } : undefined,
+    dy: undefined,
   };
 }
 

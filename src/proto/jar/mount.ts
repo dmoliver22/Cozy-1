@@ -43,6 +43,8 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
 
   /** Games started in this browser: the first few say what each breed does as it first turns up. */
   const GAMES_KEY = 'catjar.games';
+  /** This game, for the house (its reports come as it goes). */
+  let runId = '';
   let gamesPlayed = loadBest(GAMES_KEY);
   /** Kinds (tier and coat, see kindKey) already introduced this game. */
   const introduced = new Set<number>();
@@ -91,6 +93,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     introduced.clear();
     gamesPlayed++;
     saveBest(GAMES_KEY, gamesPlayed);
+    runId = `jar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     phase = 'play';
     ui.hideCards();
     audio.stopAllPurrs();
@@ -339,7 +342,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
         case 'land': {
           const tier = e.cat.tier;
           view.squash(e.cat, e.speed);
-          audio.impact(tier >= 4 ? 'wall' : 'fabric', e.speed + 120, sizeOf(tier));
+          audio.impact(tier >= 3 ? 'wall' : 'fabric', e.speed + 120, sizeOf(tier));
           if (e.speed > 380) {
             const b = e.cat.body;
             let maxY = -Infinity;
@@ -386,11 +389,11 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     const b = BREEDS[T.breed];
     const wild = e.ghosts.some((g) => g.tier === WILD);
     audio.glorp(b.voice.pitch, sizeOf(e.tier + 1), clamp(b.physics.viscosity / 26, 0, 1));
-    audio.seat(wild || e.tier + 1 >= 5 ? 96 : e.tier + 1 >= 3 ? 75 : 50);
+    audio.seat(wild || e.tier + 1 >= 4 ? 96 : e.tier + 1 >= 2 ? 75 : 50);
     fx.ring(e.x, e.y, T.r * 1.3);
     fx.sparkles(e.x, e.y, 5 + e.tier, T.r);
-    fx.hearts(e.x, e.y - T.r * 0.6, e.tier >= 3 ? 3 : e.tier >= 1 ? 2 : 1, PALETTE.rose, T.r * 0.5);
-    const color = e.tier >= 4 ? '#D9A62E' : e.tier >= 2 ? PALETTE.ginger : '#C98BA0';
+    fx.hearts(e.x, e.y - T.r * 0.6, e.tier >= 2 ? 3 : e.tier >= 1 ? 2 : 1, PALETTE.rose, T.r * 0.5);
+    const color = e.tier >= 3 ? '#D9A62E' : e.tier >= 1 ? PALETTE.ginger : '#C98BA0';
     fx.label(e.x, e.y - T.r - 8, `+${e.points}`, color, 13 + Math.min(4, e.tier));
     if (e.chain > 1) fx.label(e.x, e.y - T.r - 8, `chain ×${Math.min(e.chain, CHAIN_MAX)}!`, '#B07AA8', 12);
     if (e.earned) fx.label(e.x, e.y - T.r - 8, '+1 boop', '#7FA877', 12);
@@ -400,14 +403,14 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     const name = kindName(e.tier + 1, coat);
     if (e.tier + 1 > topTier) {
       introduced.add(kindKey(e.tier + 1, coat));
-      fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 4 ? `${name} · ${T.trait}!` : `${name}!`, '#6F8FB8', 13);
+      fx.label(e.x, e.y - T.r - 8, gamesPlayed <= 3 || e.tier + 1 >= 3 ? `${name} · ${T.trait}!` : `${name}!`, '#6F8FB8', 13);
     } else if (coat > 0 && !introduced.has(kindKey(e.tier + 1, coat))) {
       introduced.add(kindKey(e.tier + 1, coat));
       fx.label(e.x, e.y - T.r - 8, `${name}!`, '#6F8FB8', 13);
     }
     if (e.tier + 1 > topTier) report(false);
     topTier = Math.max(topTier, e.tier + 1);
-    if (e.cat && e.tier + 1 >= 3) setPurrCat(e.cat);
+    if (e.cat && e.tier + 1 >= 2) setPurrCat(e.cat);
   }
 
   // The newest big cat purrs (ears wiggle; a soft purr, louder at first).
@@ -518,7 +521,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
     restart(mode: Mode = 'play', seed?: number): void {
       startGame(mode, seed);
     },
-    /** Force the upcoming drops (tiers 0..6, and coats 0 or 1). */
+    /** Force the upcoming drops (tiers 0..6, and coats 0..2). */
     queue(tiers: number[], coats: number[] = []): void {
       game.setQueue(tiers, coats);
     },
@@ -545,7 +548,7 @@ export function mountJar(host: HTMLElement, shell: ProtoShell): Mounted {
   /** Tell the house how this game went (also when you leave it half way). */
   function report(over: boolean): void {
     if (game.drops === 0) return;
-    shell.report?.({ game: 'jar', daily: game.mode === 'daily', score: game.score, biggest: game.biggest, drops: game.drops, over });
+    shell.report?.({ game: 'jar', daily: game.mode === 'daily', score: game.score, biggest: game.biggest, drops: game.drops, over, run: runId });
   }
 
   return {

@@ -37,7 +37,7 @@ import {
   WILD_CHANCE,
   WILD_GAP,
   COAT_TIERS,
-  coatChance,
+  pickCoat,
   dozeFrames,
   kindLook,
   mergePoints,
@@ -51,7 +51,7 @@ export interface JarCat {
   /** Stable id (also the purr voice id). */
   id: number;
   tier: number;
-  /** Its coat: 0 its breed's own, 1 the neighbours' (only a twin in the same coat snuggles up). */
+  /** Its coat: 0 its breed's own, 1 or 2 the neighbours' (only a twin in the same coat snuggles up). */
   coat: number;
   body: SoftBody;
   /** Frame it entered the jar (dropped, or melted from two). */
@@ -238,7 +238,9 @@ export class JarGame {
         }
       }
       // (and now and then a neighbour's cat, in its own coat)
-      const c = t < COAT_TIERS && this.rand() < coatChance(n) ? 1 : 0;
+      const r1 = this.rand();
+      const r2 = this.rand();
+      const c = t < COAT_TIERS ? pickCoat(n, r1, r2) : 0;
       this.queue.push({ tier: t, coat: c });
     }
   }
@@ -657,13 +659,13 @@ export class JarGame {
     return best;
   }
 
-  /** A chonk flops down: the small cats it touches (kittens, sphynxes, tabbies) pop up and away. */
+  /** A chonk flops down: the small cats it touches (kittens and tabbies) pop up and away. */
   private chonkPop(chonk: JarCat): void {
     const b = chonk.body;
     b.computeCentroid();
     const popped: JarCat[] = [];
     for (const c of this.cats) {
-      if (c === chonk || c.removed || c.tier > 2) continue;
+      if (c === chonk || c.removed || c.tier > 1) continue;
       if (!bodiesTouch(b, c.body, NODE_RADIUS * 2 + 6)) continue;
       c.body.computeCentroid();
       const r = TIERS[c.tier].r;

@@ -13,7 +13,7 @@ import { shareOrCopy, shareText } from './game/share';
 import { BASE_BREEDS, BREED_ORDER, BREEDS, type BreedId } from './physics/breeds';
 import { FRAME_DT } from './physics/world';
 import { Home } from './house/home';
-import type { GameId } from './house/house';
+import { ALL_CATS, type GameId } from './house/house';
 import { pageStyles } from './pageStyles';
 import { mountDrop } from './proto/drop/mount';
 import { mountJar } from './proto/jar/mount';
@@ -91,6 +91,8 @@ export class App {
   private away: { game: 'jar' | 'drop'; mounted: Mounted; host: HTMLElement } | null = null;
   /** A tap on one of the home room's ways into a game. */
   private portalTap: { id: number; game: GameId; sx: number; sy: number } | null = null;
+  /** A finger the house has (scrolling it, putting a perch somewhere). */
+  private homeDrag: number | null = null;
 
   constructor() {
     const app = this;
@@ -107,6 +109,10 @@ export class App {
         overlayOpen: () => !$('overlay').classList.contains('hidden'),
         busy: () => !!this.gesture,
         play: (g, room) => this.play(g, room),
+        rebuild: () => {
+          this.home.leave();
+          this.goHome();
+        },
       },
       {
         fitsRooms: Object.keys(this.save.rooms).length + Object.keys(this.save.daily).length,
@@ -118,6 +124,11 @@ export class App {
   }
 
   async start(): Promise<void> {
+    // the page never scrolls (a tall card scrolled into view would drag the room with it)
+    const root = $('app');
+    root.addEventListener('scroll', () => {
+      if (root.scrollTop || root.scrollLeft) root.scrollTo(0, 0);
+    });
     this.bindInput();
     this.bindButtons();
     this.audio.setSfxEnabled(this.save.settings.sfx);
@@ -290,8 +301,7 @@ export class App {
     this.closeOverlay();
     this.closeDrawer();
     this.audio.stopAllPurrs();
-    this.session = new Session(def, { mode: this.kind === 'sandbox' || home ? 'sandbox' : 'puzzle' });
-    this.renderer.paintExtra = home ? this.home.paint : null;
+    this.session = new Session(def, home ? this.home.sessionOptions : { mode: this.kind === 'sandbox' ? 'sandbox' : 'puzzle' });
     this.renderer.setRoom(this.session);
     this.reveal = null;
     this.goldCount = 0;
@@ -373,6 +383,7 @@ export class App {
       this.feedFinger(t - (this.acc - FRAME_DT) * 1000);
       this.session.rememberPositions();
       this.session.step();
+      if (this.kind === 'home') this.home.step();
       this.acc -= FRAME_DT;
       steps++;
     }
@@ -415,7 +426,8 @@ export class App {
     }
     const w = this.renderer.screenToWorld(x, y);
     // cats can be carried anywhere in the room, but not up under the top bar
-    this.session.moveGrab(w.x, Math.max(w.y, CARRY_TOP), 0, 0);
+    // (at home, anywhere on the floor they're on: see Home.carryBox)
+    this.session.moveGrab(w.x, this.kind === 'home' ? w.y : Math.max(w.y, CARRY_TOP), 0, 0);
   }
 
   private handleEvents(events: GameEvent[]): void {
@@ -556,6 +568,8 @@ export class App {
   private recordResult(): void {
     const res = this.session.results();
     this.lastResult = res;
+    // (for the house's treats: the first time for this room, or for today's)
+    const first = this.kind === 'handmade' ? !this.save.rooms[this.session.def.id] : this.kind === 'daily' ? !this.save.daily[this.dateKey] : false;
     const fresh = recordSeats(
       this.save,
       res.cats.map((c) => ({ breed: c.breed, score: c.score })),
@@ -573,7 +587,7 @@ export class App {
       const names = fresh.map((b) => BREEDS[b].name).join(' & ');
       setTimeout(() => this.toast(`New in your collection: ${names}!`), 2400);
     }
-    if (this.kind !== 'sandbox') this.home.report({ game: 'fits', room: this.session.def.id });
+    if (this.kind !== 'sandbox') this.home.report({ game: 'fits', room: this.session.def.id, first, cozy: res.cozy, underPar: !!res.par && res.paws <= res.par });
   }
 
   // ---------------------------------------------------------------------------
@@ -797,9 +811,10 @@ export class App {
     this.openOverlay(
       `<div class="card" role="dialog" aria-label="Menu">
         <h2>Home</h2>
-        <p class="sub">${h.residents.length} of 7 cats live here</p>
+        <p class="sub">${h.residents.length} of ${ALL_CATS.length} cats live here</p>
         <div class="menu-list">
           <button class="menu-item" data-act="cats"><span class="mi-icon">🐾</span><span>Your cats<small>Who lives here, and who's coming</small></span></button>
+          <button class="menu-item" data-act="shop"><span class="mi-icon">🛍️</span><span>Shop<small>Perches, the basement and the roof garden · ${h.treats} treats</small></span></button>
           <button class="menu-item" data-play="fits"><span class="mi-icon">📦</span><span>If It Fits<small>Pour cats into teacups and boxes · ${this.fitsNote()}</small></span></button>
           <button class="menu-item" data-play="jar"><span class="mi-icon">🫙</span><span>Cat Jar<small>Two the same melt into a bigger cat · ${best('catjar.best')}</small></span></button>
           <button class="menu-item" data-play="drop"><span class="mi-icon">🛁</span><span>Cat Drop<small>Drop down the house, ahead of bath time · ${best('catdrop.best')}</small></span></button>
@@ -809,6 +824,7 @@ export class App {
       </div>`,
       (root) => {
         root.querySelector('[data-act=cats]')!.addEventListener('click', () => this.home.showCats());
+        root.querySelector('[data-act=shop]')!.addEventListener('click', () => this.home.showShop());
         root.querySelectorAll<HTMLElement>('[data-play]').forEach((b) =>
           b.addEventListener('click', () => {
             this.closeOverlay();
@@ -837,7 +853,7 @@ export class App {
           <button class="menu-item ${today ? 'done' : ''}" data-act="daily"><span class="mi-icon">${today ? '✓' : '☀️'}</span><span>This morning's room<small>Morning #${roomNumber(this.dateKey)} · ${prettyDate(this.dateKey)}${today ? ` · cozy ${today.cozy}` : ''}</small></span></button>
           ${rooms}
           <button class="menu-item" data-act="sandbox"><span class="mi-icon">📷</span><span>Photo room<small>Pour any cat into anything</small></span></button>
-          <button class="menu-item" data-act="collection"><span class="mi-icon">🐾</span><span>Cat collection<small>${collectedCount(this.save)} of 7 breeds</small></span></button>
+          <button class="menu-item" data-act="collection"><span class="mi-icon">🐾</span><span>Cat collection<small>${collectedCount(this.save)} of ${BREED_ORDER.length} breeds</small></span></button>
           <button class="menu-item" data-act="howto"><span class="mi-icon">?</span><span>How to play</span></button>
         </div>
         ${this.togglesHtml()}
@@ -862,13 +878,13 @@ export class App {
       const known = got || (secret && this.save.voidUnlocked);
       const name = known || !secret ? BREEDS[b].name : '???';
       const flow = known || !secret ? BREEDS[b].flow : 'a secret visitor';
-      const blurb = got ? `${BREEDS[b].blurb}<br><b>Seated ${got.seated}×</b> · best ${got.best}` : secret ? (this.save.voidUnlocked ? 'Visits on rare mornings. Free to roam the photo room.' : 'Seat all six breeds to meet them.') : 'Seat one in any room to collect.';
+      const blurb = got ? `${BREEDS[b].blurb}<br><b>Seated ${got.seated}×</b> · best ${got.best}` : secret ? (this.save.voidUnlocked ? 'Visits on rare mornings. Free to roam the photo room.' : 'Seat all five breeds to meet them.') : 'Seat one in any room to collect.';
       return `<div class="breed ${got ? '' : 'locked'} ${secret ? 'secret' : ''}" data-breed="${b}"><div class="pic"></div><b>${name}</b><div class="flow">${flow}</div><div class="blurb">${blurb}</div></div>`;
     }).join('');
     this.openOverlay(
       `<div class="card" role="dialog" aria-label="Cat collection">
         <h2>Cat collection</h2>
-        <p class="sub">${collectedCount(this.save)} of 7 · every breed pours differently</p>
+        <p class="sub">${collectedCount(this.save)} of ${BREED_ORDER.length} · every breed pours differently</p>
         <div class="collection">${cards}</div>
         <div class="btns"><button class="btn" data-close>Close</button></div>
       </div>`,
@@ -963,7 +979,7 @@ export class App {
         btn.appendChild(document.createTextNode(locked ? '???' : BREEDS[b].name));
         btn.addEventListener('click', () => {
           if (locked) {
-            this.toast('Seat all six breeds to meet this one.');
+            this.toast('Seat all five breeds to meet this one.');
             return;
           }
           this.audio.click();
@@ -1064,12 +1080,22 @@ export class App {
       if (this.gesture || this.reveal) return;
       const p = pos(e);
       const w = this.renderer.screenToWorld(p.x, p.y);
-      const cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
+      const home = this.kind === 'home';
+      let cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
+      // at home: no picking up a cat that's in a tube, or while a perch is being put somewhere
+      if (home && cat && (!this.home.canTouch(cat) || this.home.placing)) cat = null;
       const now = performance.now();
       if (!cat) {
-        const portal = this.kind === 'home' ? this.home.portalAt(w.x, w.y) : null;
-        if (portal) {
-          this.portalTap = { id: e.pointerId, game: portal.game, sx: p.x, sy: p.y };
+        if (home) {
+          // the cats' present, opened
+          if (this.home.openGiftAt(w.x, w.y)) return;
+          // a tap on a way into a game plays it; a drag scrolls the house
+          const portal = this.home.placing ? null : this.home.portalAt(w.x, w.y);
+          if (portal) this.portalTap = { id: e.pointerId, game: portal.game, sx: p.x, sy: p.y };
+          if (this.homeDrag === null && this.home.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
+            this.homeDrag = e.pointerId;
+            c.setPointerCapture(e.pointerId);
+          }
           return;
         }
         if (this.sandbox && this.sandbox.pickThing(w.x, w.y)) {
@@ -1082,6 +1108,12 @@ export class App {
       this.gesture = { id: e.pointerId, catIndex: cat.index, thing: false, sx: p.x, sy: p.y, t0: now, dragging: false, ts: [], xs: [], ys: [] };
     });
     c.addEventListener('pointermove', (e) => {
+      if (this.homeDrag === e.pointerId) {
+        const p = pos(e);
+        const w = this.renderer.screenToWorld(p.x, p.y);
+        this.home.pointerMove(e.pointerId, p.x, p.y, w.x, w.y);
+        return;
+      }
       const g = this.gesture;
       if (!g || g.id !== e.pointerId) return;
       const p = pos(e);
@@ -1095,6 +1127,8 @@ export class App {
       if (!cat) return;
       if (!g.dragging && (Math.hypot(p.x - g.sx, p.y - g.sy) > 7 || now - g.t0 > 180)) {
         const start = this.renderer.screenToWorld(g.sx, g.sy);
+        // (at home a cat is carried about the floor it's on)
+        if (this.kind === 'home') this.session.grabBox = this.home.carryBox(cat);
         this.session.beginGrab(cat, start.x, start.y);
         g.dragging = true;
         c.classList.add('grabbing');
@@ -1124,6 +1158,10 @@ export class App {
       }
     });
     const end = (e: PointerEvent): void => {
+      if (this.homeDrag === e.pointerId) {
+        this.homeDrag = null;
+        this.home.pointerUp(e.pointerId);
+      }
       const tap = this.portalTap;
       if (tap && tap.id === e.pointerId) {
         this.portalTap = null;
@@ -1141,8 +1179,11 @@ export class App {
       }
       const cat = this.session.cats[g.catIndex];
       if (!cat) return;
-      if (g.dragging) this.session.endGrab();
-      else if (e.type === 'pointerup') {
+      if (g.dragging) {
+        this.session.endGrab();
+        // let go under a suction hood: whoosh
+        if (this.kind === 'home') this.home.released(cat);
+      } else if (e.type === 'pointerup') {
         const p = pos(e);
         const w = this.renderer.screenToWorld(p.x, p.y);
         this.session.boop(cat, w.x, w.y);
@@ -1150,6 +1191,16 @@ export class App {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
+    // a mouse wheel or a trackpad scrolls the house
+    c.addEventListener(
+      'wheel',
+      (e) => {
+        if (this.kind !== 'home' || this.away) return;
+        e.preventDefault();
+        this.home.wheel(e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY);
+      },
+      { passive: false },
+    );
     window.addEventListener('resize', () => this.renderer.resize());
   }
 }

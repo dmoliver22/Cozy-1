@@ -52,7 +52,7 @@ export const HANDMADE: RoomDef[] = [
     // Found by the solver (scripts/plans.ts); used for hints.
     plan: [
       { cat: 0, container: 0, gx: 13, gy: -4, tx: 153, ty: 319, hold: 40, kind: 'drag', move: 36, tol: 0.3 },
-      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 368, hold: 40, kind: 'drag', wx: 263, wy: 368, move: 23, tol: 0.3 },
+      { cat: 2, container: 2, gx: -10, gy: -3, tx: 306, ty: 361, hold: 40, kind: 'drag', wx: 262, wy: 361, move: 23, tol: 0.3 },
       { cat: 1, container: 1, gx: -8, gy: -2, tx: 172, ty: 106, hold: 40, kind: 'drag', move: 35, tol: 0.3 },
     ],
     furniture: [
@@ -69,7 +69,7 @@ export const HANDMADE: RoomDef[] = [
     cats: [
       { breed: 'mainecoon', x: 53, y: 352, name: 'Juniper' },
       { breed: 'kitten', x: 268, y: 132, name: 'Pip' },
-      { breed: 'sphynx', x: 340, y: 248, name: 'Noodle' },
+      { breed: 'tabby', x: 340, y: 248, name: 'Mochi' },
     ],
     decor: [
       { type: 'window', x: 176, y: 78, w: 92, h: 124, variant: 1 },

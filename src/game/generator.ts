@@ -13,7 +13,7 @@ import type { CatPlacement, DecorPlacement, RoomDef, ThemeId } from './room';
 import { solveRoom } from './solver';
 
 /** Bump whenever the generator or the physics changes what a morning solves to. */
-export const GENERATOR_VERSION = 12;
+export const GENERATOR_VERSION = 13;
 
 interface Span {
   x0: number;

@@ -16,13 +16,13 @@ describe('progress', () => {
     expect(s.streak.count).toBe(1);
   });
 
-  it('unlocks the secret cat after all six breeds', () => {
+  it('unlocks the secret cat after all five breeds', () => {
     const s = emptySave();
     const fresh = recordSeats(
       s,
       BASE_BREEDS.map((breed) => ({ breed, score: 90 })),
     );
-    expect(fresh).toHaveLength(6);
+    expect(fresh).toHaveLength(5);
     expect(s.voidUnlocked).toBe(true);
   });
 

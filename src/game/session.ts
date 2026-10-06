@@ -2,7 +2,7 @@
 // seating and the "Fits & sits" completion. Pure logic, no rendering.
 
 import { BREEDS, breedArea, type BreedId } from '../physics/breeds';
-import type { Material } from '../physics/shapes';
+import type { Material, StaticShape } from '../physics/shapes';
 import type { BodySnapshot, SoftBody } from '../physics/softbody';
 import type { World } from '../physics/world';
 import { clamp } from '../util/math';
@@ -93,6 +93,8 @@ export interface RoomResult {
 export interface SessionOptions {
   mode?: 'puzzle' | 'sandbox';
   settleFrames?: number;
+  /** The room's walls, floor and ceiling (the house has floors of its own). */
+  shell?: () => StaticShape[];
 }
 
 /** Where a cat was drawn from and to (see Session.beginLerp), and its flowing shape. */
@@ -132,16 +134,20 @@ export class Session {
   private shapeIsFurniture = new Set<number>();
   private grabbing: Cat | null = null;
   private readonly settleFrames: number;
+  private readonly shell: SessionOptions['shell'];
+  /** Where a carried cat can be taken (world): the room, or the house's floor it's on. */
+  grabBox = { x0: 4, x1: WORLD_W - 4, y0: -40, y1: FLOOR_Y - 4 };
 
   constructor(def: RoomDef, opts: SessionOptions = {}) {
     this.def = def;
     this.mode = opts.mode ?? 'puzzle';
     this.settleFrames = opts.settleFrames ?? 75;
+    this.shell = opts.shell;
     this.load();
   }
 
   private load(): void {
-    const built = buildRoom(this.def, this.settleFrames);
+    const built = buildRoom(this.def, this.settleFrames, this.shell);
     this.world = built.world;
     this.props = built.props;
     this.containers = built.containers;
@@ -590,8 +596,9 @@ export class Session {
   moveGrab(wx: number, wy: number, vx: number, vy: number): void {
     const g = this.grabbing?.body.grab;
     if (!g) return;
-    g.tx = clamp(wx, 4, WORLD_W - 4);
-    g.ty = clamp(wy, -40, FLOOR_Y - 4);
+    const b = this.grabBox;
+    g.tx = clamp(wx, b.x0, b.x1);
+    g.ty = clamp(wy, b.y0, b.y1);
     g.tvx = clamp(vx, -900, 900);
     g.tvy = clamp(vy, -900, 900);
   }
@@ -652,7 +659,8 @@ export class Session {
 
   // --- Sandbox editing -------------------------------------------------------
 
-  private registerShapes(): void {
+  /** Colliders came or went (a perch, a tube): sort out again which are containers and which are furniture. */
+  registerShapes(): void {
     this.shapeToContainer.clear();
     this.shapeIsFurniture.clear();
     this.containers.forEach((c, i) => c.shapes.forEach((sh) => this.shapeToContainer.set(sh.id, i)));

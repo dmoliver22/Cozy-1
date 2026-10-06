@@ -6,11 +6,15 @@ boots, boxes and sinks until every cat fits and sits. A new room every morning.
 > Cats are liquid. Prove it: pour this chonk into a teacup.
 
 It lives in a little house with two more games on the same cats: the page
-opens in the **home room**, a sunny living room where your cats lounge, and
+opens in the **living room**, a sunny room where your cats lounge, and
 everything starts from there. The glass box on the rug is **If It Fits**, the
 little jar of cats on the shelf is **Cat Jar**, and the ladder up through the
-attic hatch is **Cat Drop**. Two cats live here at first; the other five
-**move in as you play**, each waiting on something in one of the games.
+attic hatch is **Cat Drop**. Two cats live here at first; the other four
+**move in as you play**, each waiting on something in one of the games. Every
+game earns **treats**, spent on **perches** you put wherever you like and on
+opening up the rest of the house: a **basement** right under the living room
+and a **roof garden** up top, joined to it by glass tubes. Scroll up and down
+to look round.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -25,19 +29,38 @@ npm run dev          # http://localhost:5173
 
 At home, tap the box, the jar or the hatch (or the big buttons along the
 bottom) to play. Your cats can be picked up and booped here too, and now and
-then one hops over to another spot. Tap the faces in the top bar for the cats
-card: who lives here, and what brings each of the others home. A cat who's
-earned their place says so at once, mid-game too, and drops in through the
-attic hatch the next time you're home.
+then one hops over to another spot, up a run of perches if you've built one.
+Tap the faces in the top bar for the cats card: who lives here, and what
+brings each of the others home. A cat who's earned their place says so at
+once, mid-game too, and drops in through the attic hatch the next time you're
+home.
 
 | Cat | Moves in when you... |
 | --- | --- |
 | Pip (kitten), Mochi (tabby) | live here from the start |
 | Duchess (Persian) | finish a room in If It Fits |
 | Juniper (Maine Coon) | make a Maine Coon in Cat Jar |
-| Noodle (sphynx) | drop 100 m down the house in Cat Drop |
 | Biscuit (chonk) | eat 25 fish in one Cat Drop |
 | Inkwell (the Void) | finish the Midnight Study in If It Fits (she lives there) |
+
+The house:
+
+- **Scroll** up and down (drag the wall, a mouse wheel, or the pills at the
+  top and bottom naming the next floor) between the roof garden, the living
+  room and the basement.
+- **Treats** come from every game: a new If It Fits room (more for a cozy one
+  in par), every 400 points in Cat Jar, fish and metres in Cat Drop, and a
+  little present the cats leave on the rug the first time you're home each
+  day. The **Shop** tin shows how many you have.
+- **The shop** opens up the basement (a funnel in the living room floor drops
+  a cat down to it) and the roof garden (a suction hood over the cat steps
+  whooshes a cat up to it), and sells perches: a wall shelf, a beanbag, a
+  cushion ledge, a hammock, a wicker pod, a cloud shelf (it floats, even out
+  in the sky over the roof) and a cat tree. Drag a new perch where you'd like
+  it; press and hold one to move it.
+- **The tubes**: drop a cat into the funnel, or let one go under a hood, and
+  it squeezes through the glass like a sausage and pops out on the other
+  floor; the view goes along with it.
 
 In If It Fits:
 
@@ -66,7 +89,7 @@ straight into a game).
 | Pitch | Where it lives |
 | --- | --- |
 | Soft-body cat rig (pressure-spring blob, 24-32 nodes, fixed-step physics) | `src/physics/` |
-| Breeds with their own flow: kitten = water, Persian = honey, chonk = pudding, sphynx = jelly, tabby = custard, Maine Coon = cloud, plus a secret cat | `src/physics/breeds.ts` |
+| Breeds with their own flow: kitten = water, Persian = honey, chonk = pudding, tabby = custard, Maine Coon = cloud, plus a secret cat | `src/physics/breeds.ts` |
 | Shared prop library (teacup, mug, boot, box, shoebox, fruit bowl, sink, flower pot, laundry basket, saucepan, vase, bucket, slipper, mixing bowl; shelves, counters, stools, tables, fridges, bookcases...) | `src/game/props.ts`, art in `src/render/propArt.ts` |
 | Three hand-made rooms: Sunny Kitchen (the 5-second clip), Bath Time, Midnight Study | `src/game/rooms.ts` |
 | Cozy points by snugness, not failures | `src/game/fit.ts` |
@@ -74,8 +97,8 @@ straight into a game).
 | Fits & sits reveal: camera pan, purrs swell, cat-face row turns gold | `src/app.ts`, `src/render/renderer.ts` |
 | Spoiler-free share grid | `src/game/share.ts` |
 | Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
-| The house: the home room, its ways into the games, cats moving in | `src/house/` |
-| 6 + 1 collection | menu → Cat collection |
+| The house: three floors you scroll through, its ways into the games, cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
+| 5 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |
 
@@ -164,15 +187,15 @@ run reports); each also still has a page of its own:
   to drop cats into a tall glass jar. The next cat hangs a set height over the
   pile and the view follows the pile up; swipe up and down (or tap the gauge
   by the jar) to look around. Two of the same kind that snuggle up for a
-  moment melt into the next (kitten, sphynx, tabby, Persian, Maine Coon,
-  chonk, the Void; cats that only brush past each other don't), and each
-  breed has its ways: kittens hop about before they settle, a sphynx is firm
-  and plugs holes, a Persian oozes into gaps, a Maine Coon squashes down to
-  fit, and a chonk pops small cats up. The neighbours' cats come round too:
-  a Ginger Kitten, a Russian Blue, a Silver Tabby and a Turkish Van, the same
-  sizes and ways as the first four but only twins in the same coat snuggle,
-  and more of them turn up as the afternoon wears on (the kitchen's light
-  warms toward evening), so the jar slowly fills. Now and then a Little Void
+  moment melt into the next (kitten, tabby, Persian, Maine Coon, chonk, the
+  Void; cats that only brush past each other don't), and each breed has its
+  ways: kittens hop about before they settle, a tabby is steady, a Persian
+  oozes into gaps, a Maine Coon squashes down to fit, and a chonk pops small
+  cats up. The neighbours' cats come round too: Ginger and Cream Kittens,
+  Silver and Brown Tabbies, a Turkish Van and a Blue Persian, the same sizes
+  and ways as the first three but only twins in the same coat snuggle, and
+  more of them turn up as the afternoon wears on (the kitchen's light warms
+  toward evening), so the jar slowly fills. Now and then a Little Void
   drops: it melts into any cat and makes it one size bigger. A cat left lying
   still dozes off (zzz) until something wakes it, and twins that touch always
   snuggle. Tap a cat to boop it (a few boops per game; a buried cat heaves up
@@ -184,7 +207,7 @@ run reports); each also still has a page of its own:
   ahead of bath time: a few hundred simulated soap bubbles pouring down the
   house after you, drizzling as they come. Get caught and the foam fills the
   screen, then clears to your cat sitting soaked in a clawfoot bubble bath, with
-  your stats. Six breeds, plus a daily drop.
+  your stats. Five breeds, plus a daily drop.
 
 They share `src/proto/kit.ts` (canvas, fixed-step loop with interpolation,
 tap/drag input, a cat painter) and `src/proto/shell.ts` (how a game sits in

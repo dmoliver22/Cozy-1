@@ -4,7 +4,8 @@ import { SoftBody, TENT, crossingAt } from '../src/physics/softbody';
 import { World } from '../src/physics/world';
 import { CONTAINER_TYPES, buildContainer, roomShell } from '../src/game/props';
 import { Session } from '../src/game/session';
-import { homeRoom } from '../src/house/homeRoom';
+import { houseRoom } from '../src/house/homeRoom';
+import { houseShell } from '../src/house/layout';
 import { ALL_CATS } from '../src/house/house';
 import { polygonArea, dsin, dcos } from '../src/util/math';
 import type { StaticShape } from '../src/physics/shapes';
@@ -99,8 +100,8 @@ describe('soft-body cats', () => {
       body.computeCentroid();
       expect(body.cy).toBeGreaterThan(500);
     }
-    // a chonk droops longer than a springy sphynx
-    expect(tall.chonk).toBeGreaterThan(tall.sphynx);
+    // a chonk droops longer than a springy kitten
+    expect(tall.chonk).toBeGreaterThan(tall.kitten);
   });
 
   it('a cat squeezed into a snug mug comes to complete rest (no jitter)', () => {
@@ -261,7 +262,7 @@ describe('soft-body cats', () => {
   });
 
   it('a cat that has rolled over is picked up without its shape collapsing or turning inside out', () => {
-    for (const breed of ['kitten', 'persian', 'chonk', 'sphynx'] as const) {
+    for (const breed of ['kitten', 'persian', 'chonk', 'tabby'] as const) {
       const world = new World();
       for (const s of roomShell()) world.addStatic(s);
       const body = world.addBody(new SoftBody(breed, 180, 500));
@@ -340,7 +341,7 @@ describe('soft-body cats', () => {
   });
 
   it('carrying cats round the house never leaves one knotted or inside out', () => {
-    const s = new Session(homeRoom(ALL_CATS), { mode: 'sandbox' });
+    const s = new Session(houseRoom({ open: [], residents: ALL_CATS, where: {} }), { mode: 'sandbox', shell: houseShell });
     for (let f = 0; f < 90; f++) s.step();
     // pick each cat up and carry it a lap: up, through the room past the
     // furniture and the other cats, down into the box, quick shakes, and off
@@ -422,9 +423,13 @@ describe('soft-body cats', () => {
       ['kitten', 'tabby'],
       ['persian', 'mainecoon'],
     ] as const) {
-      // (all the cats in a row on the floor: the tabby ends up lying on the
-      // kitten, the Maine Coon on the Persian)
-      const s = openRoom(ALL_CATS.map((breed, k) => ({ breed, x: 40 + k * 50, y: 560 })));
+      // (one lying on the other on the floor, with the rest of the cats round them)
+      const rLow = BREEDS[low].physics.radius;
+      const s = openRoom([
+        { breed: low, x: 190, y: 560 },
+        { breed: high, x: 186, y: 560 - rLow * 1.7 },
+        ...ALL_CATS.filter((b) => b !== low && b !== high).map((breed, k) => ({ breed, x: k < 2 ? 40 + k * 60 : 280 + (k - 2) * 60, y: 560 })),
+      ]);
       const under = s.cats.find((c) => c.breed === low)!;
       const over = s.cats.find((c) => c.breed === high)!;
       under.body.computeCentroid();

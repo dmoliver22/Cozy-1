@@ -5,11 +5,12 @@
 // and paw-print tag, with a pile of real soft-body cats asleep inside.
 
 import { WORLD_W } from '../game/props';
-import type { BreedId } from '../physics/breeds';
+import type { BreedId, BreedLook } from '../physics/breeds';
 import { capsule, roundedBox } from '../physics/shapes';
 import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
 import { TINT as JAR_TINT, twineAndTag } from '../proto/jar/art';
+import { COATS } from '../proto/jar/config';
 import { CatView, drawCat } from '../render/catArt';
 import { glint, hash01, lightOf, mix, rgba, roundRect, shadowOf, softShadow, type Ctx } from '../render/paint';
 import {
@@ -43,8 +44,8 @@ export const CEIL_Y = 0;
 const BAND = 20;
 /** The cut edge of the ceiling (the dollhouse is open at the front). */
 const SLAB = 11;
-/** The attic hatch: its back edge, over the top cat step. */
-export const HATCH = { x0: 300, x1: 352 };
+/** The attic hatch: its back edge, over the left end of the top cat step (the roof's suction tube goes up beside it). */
+export const HATCH = { x0: 262, x1: 314 };
 /** The top cat step: a little ladder goes up from it through the hatch. */
 export const TOP_STEP = { x0: 286, x1: 380, y: 128 };
 /** Vanishing point the ceiling recedes to (the floor uses the same idea). */
@@ -321,16 +322,17 @@ function jarCats(): JarCat[] {
   // walls on up past the rim while they settle
   world.addStatic(capsule(WALL_L, MJ.rimY - 400, WALL_L, MJ.rimY, MJ.wall, o));
   world.addStatic(capsule(WALL_R, MJ.rimY - 400, WALL_R, MJ.rimY, MJ.wall, o));
-  const drops: [BreedId, number, number, boolean][] = [
+  // (the second coats are the neighbours' cats: a Silver Tabby, a Ginger Kitten)
+  const drops: [BreedId, number, number, boolean, BreedLook?][] = [
     ['persian', -34, -60, false],
     ['tabby', 40, -130, false],
-    ['sphynx', -22, -210, false],
+    ['tabby', -22, -210, false, COATS[1][0].look],
     ['kitten', 44, -280, true],
-    ['kitten', -44, -340, false],
+    ['kitten', -44, -340, false, COATS[0][0].look],
   ];
   const out: JarCat[] = [];
-  for (const [breed, x, y, happy] of drops) {
-    const body = world.addBody(new SoftBody(breed, x, y));
+  for (const [breed, x, y, happy, look] of drops) {
+    const body = world.addBody(new SoftBody(breed, x, y, undefined, look));
     const view = new CatView(body.n, out.length * 3 + 1);
     view.blinkAt = 1e9;
     out.push({ body, view, happy });

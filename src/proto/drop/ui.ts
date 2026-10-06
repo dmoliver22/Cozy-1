@@ -6,13 +6,12 @@ import { BREEDS, type BreedId } from '../../physics/breeds';
 import { faceSVG } from '../../ui/faces';
 import type { DropState } from './game';
 
-export const BREED_CHOICES: BreedId[] = ['tabby', 'kitten', 'persian', 'sphynx', 'mainecoon', 'chonk'];
+export const BREED_CHOICES: BreedId[] = ['tabby', 'kitten', 'persian', 'mainecoon', 'chonk'];
 
 const BLURB: Partial<Record<BreedId, string>> = {
   tabby: 'All-rounder',
   kitten: 'Small & zippy',
   persian: 'Slow as honey',
-  sphynx: 'Bouncy jelly',
   mainecoon: 'Big fluffy cloud',
   chonk: 'Heavy pudding',
 };

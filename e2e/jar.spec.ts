@@ -29,7 +29,7 @@ test('Cat Jar opens on its start card and Play starts a game', async ({ page }) 
   expect(phase).toBe('play');
 });
 
-test('dropped cats land in the jar, and two kittens melt into a sphynx', async ({ page }) => {
+test('dropped cats land in the jar, and two kittens melt into a tabby', async ({ page }) => {
   await page.goto('/jar.html');
   await page.waitForFunction(() => (window as unknown as { __jar?: unknown }).__jar);
   const after = await page.evaluate(() => {
@@ -37,7 +37,7 @@ test('dropped cats land in the jar, and two kittens melt into a sphynx', async (
     j.loop.paused = true;
     j.restart('play', 1);
     j.queue([2, 0, 0, 3]);
-    // a tabby off to the side, then two kittens on the same spot
+    // a Persian off to the side, then two kittens on the same spot
     j.drop(110);
     j.step(90);
     j.drop(220);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COAT_FROM, COAT_RAMP, COAT_SHARE, COAT_TIERS, DOZE_FIRST, DROP_GAP, JAR, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER, coatChance, kindName } from '../src/proto/jar/config';
+import { COAT2_FROM, COAT_FROM, COAT_RAMP, COAT_SHARE, COAT_TIERS, DOZE_FIRST, DROP_GAP, JAR, LAST_TIER, SNUGGLE_FRAMES, TIERS, WILD, WILD_AFTER, coatChance, kindName, pickCoat } from '../src/proto/jar/config';
 import { JarGame } from '../src/proto/jar/game';
 import { polygonArea } from '../src/util/math';
 import type { SoftBody } from '../src/physics/softbody';
@@ -25,7 +25,7 @@ function settled(tier: number, loaded: boolean): SoftBody {
   const g = new JarGame('play', 1);
   const c = g.place(tier, 190, F - TIERS[tier].r - 2);
   for (let f = 0; f < 60; f++) g.step();
-  if (loaded) g.place(6, 190, F - TIERS[tier].r * 2 - 76);
+  if (loaded) g.place(LAST_TIER, 190, F - TIERS[tier].r * 2 - 76);
   for (let f = 0; f < 300; f++) g.step();
   return c.body;
 }
@@ -49,10 +49,10 @@ describe('Cat Jar', () => {
     const g = new JarGame('play', 9);
     expect(g.holdBase).toBe(JAR.floorY - DROP_GAP);
     // a chonk and a Maine Coon on the floor (they don't melt)
-    g.place(5, 140, JAR.floorY - 60);
-    g.place(4, 250, JAR.floorY - 50);
+    g.place(4, 140, JAR.floorY - 56);
+    g.place(3, 250, JAR.floorY - 44);
     for (let f = 0; f < 300; f++) g.step();
-    expect(g.pileTop()).toBeLessThan(JAR.floorY - 90);
+    expect(g.pileTop()).toBeLessThan(JAR.floorY - 80);
     expect(Math.abs(g.holdBase - (g.pileTop() - DROP_GAP))).toBeLessThan(11);
     g.reload();
     const w = g.waiting!;
@@ -84,8 +84,9 @@ describe('Cat Jar', () => {
 
   it('twins melt once they have snuggled a moment, not on a passing bump', () => {
     const g = new JarGame('play', 1);
-    const a = g.place(2, 150, F - 32);
-    const b = g.place(2, 214.5, F - 32);
+    const r = TIERS[1].r;
+    const a = g.place(1, 150, F - r - 2);
+    const b = g.place(1, 150 + r * 2 + 5.5, F - r - 2);
     let touched = -1;
     let merged = -1;
     for (let f = 0; f < 200 && merged < 0; f++) {
@@ -99,11 +100,15 @@ describe('Cat Jar', () => {
 
   it('a cat left still a while dozes off, and wakes when its twin cuddles up to it: they melt', () => {
     const g = new JarGame('play', 1);
-    const sleeper = g.place(3, 130, F - 40);
+    const r = TIERS[2].r;
+    const sleeper = g.place(2, 130, F - r - 3);
     for (let f = 0; f < DOZE_FIRST + 30; f++) g.step();
     expect(g.dozing(sleeper)).toBe(true);
-    // a twin settles against it, as gently as can be
-    g.place(3, 130 + 37 * 2 + 5.5, F - 40);
+    // a twin settles against it, as gently as can be (a Persian spreads out
+    // as it settles: it's put down just clear of the sleeper's edge)
+    let edge = -Infinity;
+    for (let i = 0; i < sleeper.body.n; i++) edge = Math.max(edge, sleeper.body.x[i]);
+    g.place(2, edge + r + 2, F - r - 3);
     let merged = -1;
     for (let f = 0; f < 200 && merged < 0; f++) {
       g.step();
@@ -111,7 +116,7 @@ describe('Cat Jar', () => {
       for (const e of g.drain()) if (e.t === 'merge') merged = f;
     }
     expect(merged).toBeGreaterThanOrEqual(SNUGGLE_FRAMES - 1);
-    expect(g.cats.map((c) => c.tier)).toEqual([4]);
+    expect(g.cats.map((c) => c.tier)).toEqual([3]);
   });
 
   it('only twins in the same coat snuggle, and two of a coat make the next kind in that coat', () => {
@@ -124,19 +129,20 @@ describe('Cat Jar', () => {
       [0, 0],
       [0, 1],
     ]);
-    // two ginger kittens melt into a Russian Blue (the sphynx's size, in their coat)
+    // two ginger kittens melt into a Silver Tabby (a tabby, in their coat)
     const g2 = new JarGame('play', 1);
     g2.place(0, 150, F - 20, 1);
     g2.place(0, 150 + 18.5 * 2 + 5.5, F - 20, 1);
     for (let f = 0; f < 200; f++) g2.step();
     expect(g2.cats.map((c) => [c.tier, c.coat])).toEqual([[1, 1]]);
-    expect(kindName(1, 1)).toBe('Russian Blue');
+    expect(kindName(1, 1)).toBe('Silver Tabby');
     // at the top of the drops, either coat makes a Maine Coon
     const g3 = new JarGame('play', 1);
-    g3.place(3, 130, F - 40, 1);
-    g3.place(3, 130 + 37 * 2 + 5.5, F - 40, 1);
+    const r = TIERS[2].r;
+    g3.place(2, 130, F - r - 3, 1);
+    g3.place(2, 130 + r * 2 + 5.5, F - r - 3, 1);
     for (let f = 0; f < 200; f++) g3.step();
-    expect(g3.cats.map((c) => [c.tier, c.coat])).toEqual([[4, 0]]);
+    expect(g3.cats.map((c) => [c.tier, c.coat])).toEqual([[3, 0]]);
   });
 
   it('the neighbours\' cats turn up after the first few drops, more of them as the afternoon wears on', () => {
@@ -146,26 +152,27 @@ describe('Cat Jar', () => {
     for (let d = COAT_FROM; d < COAT_FROM + COAT_RAMP; d += 10) expect(coatChance(d + 10)).toBeGreaterThanOrEqual(coatChance(d));
     expect(coatChance(COAT_FROM + COAT_RAMP)).toBeCloseTo(COAT_SHARE, 9);
     expect(coatChance(5000)).toBeCloseTo(COAT_SHARE, 9);
-    // late in a game, about that share of the drops come in the second coat
+    // late in a game, about that share of the drops are the neighbours' cats, half of each neighbour's
     const g = new JarGame('play', 5);
     g.drops = COAT_FROM + COAT_RAMP + 10;
-    let second = 0;
-    let n = 0;
+    const count = [0, 0, 0];
     for (let k = 0; k < 300; k++) {
       g.setQueue([]);
-      for (const q of g.queue) {
-        if (q.tier >= COAT_TIERS) continue;
-        second += q.coat;
-        n++;
-      }
+      for (const q of g.queue) if (q.tier < COAT_TIERS) count[q.coat]++;
     }
-    expect(second / n).toBeGreaterThan(COAT_SHARE - 0.07);
-    expect(second / n).toBeLessThan(COAT_SHARE + 0.07);
+    const n = count[0] + count[1] + count[2];
+    expect((count[1] + count[2]) / n).toBeGreaterThan(COAT_SHARE - 0.07);
+    expect((count[1] + count[2]) / n).toBeLessThan(COAT_SHARE + 0.07);
+    expect(Math.abs(count[1] - count[2]) / n).toBeLessThan(0.08);
+    // the second neighbour comes round only after a while
+    for (let d = 0; d < COAT2_FROM; d++) for (const r2 of [0, 0.3, 0.7]) expect(pickCoat(d, 0, r2)).toBeLessThan(2);
+    expect(pickCoat(COAT2_FROM, 0, 0.2)).toBe(2);
+    expect(kindName(2, 2)).toBe('Blue Persian');
   });
 
   it('a boop wakes a dozing cat', () => {
     const g = new JarGame('play', 1);
-    const sleeper = g.place(3, 130, F - 40);
+    const sleeper = g.place(2, 130, F - TIERS[2].r - 3);
     for (let f = 0; f < DOZE_FIRST + 30; f++) g.step();
     expect(g.dozing(sleeper)).toBe(true);
     expect(g.boop(sleeper, 120)).toBe(true);
@@ -175,7 +182,7 @@ describe('Cat Jar', () => {
   describe('breeds have their ways', () => {
     it('a kitten hops about before it settles, and toward another kitten', () => {
       const g = new JarGame('play', 1);
-      g.setQueue([0, 3, 3]);
+      g.setQueue([0, 2, 2]);
       g.aimNow(150);
       g.drop();
       const kitten = g.cats[0];
@@ -189,36 +196,33 @@ describe('Cat Jar', () => {
       expect(Math.abs(kitten.body.cx - 150)).toBeGreaterThan(25);
       // dropped off to one side of a kitten resting on the floor, it hops over and they melt
       const h = new JarGame('play', 1);
-      h.place(1, 250, F - 25);
+      h.place(1, 270, F - 26);
       h.place(0, 120, F - 20);
       for (let f = 0; f < 60; f++) h.step();
-      h.setQueue([0, 3, 3]);
+      h.setQueue([0, 2, 2]);
       h.aimNow(205);
       h.drop();
       for (let f = 0; f < 300; f++) h.step();
-      expect(h.cats.map((c) => TIERS[c.tier].name).sort()).toEqual(['Sphynx', 'Sphynx']);
+      expect(h.cats.map((c) => TIERS[c.tier].name).sort()).toEqual(['Tabby', 'Tabby']);
     });
 
-    it('a sphynx keeps its shape under a load, a Maine Coon squashes down, a Persian spreads out', () => {
-      const sphynx = shape(settled(1, true));
-      expect(sphynx.area).toBeGreaterThan(0.97);
-      expect(sphynx.aspect).toBeLessThan(1.3);
-      const coon = shape(settled(4, true));
+    it('a Maine Coon squashes down under a load, a Persian spreads out, a tabby keeps its loaf', () => {
+      const coon = shape(settled(3, true));
       expect(coon.area).toBeLessThan(0.85);
-      const persian = shape(settled(3, false));
-      const tabby = shape(settled(2, false));
+      const persian = shape(settled(2, false));
+      const tabby = shape(settled(1, false));
       expect(persian.aspect).toBeGreaterThan(1.8);
       expect(tabby.aspect).toBeLessThan(1.5);
     });
 
     it('a new chonk pops up the small cats round it', () => {
       const g = new JarGame('play', 1);
-      // a Maine Coon on the floor between a kitten and a sphynx, and another landing on it
-      g.place(4, 190, F - 48);
+      // a Maine Coon on the floor between a kitten and a tabby, and another landing on it
+      g.place(3, 190, F - 44);
       g.place(0, 110, F - 20);
-      g.place(1, 268, F - 25);
+      g.place(1, 268, F - 26);
       for (let f = 0; f < 40; f++) g.step();
-      g.place(4, 190, F - 150);
+      g.place(3, 190, F - 140);
       let popped = 0;
       for (let f = 0; f < 200; f++) {
         g.step();
@@ -230,8 +234,8 @@ describe('Cat Jar', () => {
 
     it('a Little Void melts into any cat, making it one size bigger (a Void: both vanish)', () => {
       for (const [tier, after, points] of [
-        [2, ['Persian'], 60],
-        [6, [], 1000],
+        [1, ['Persian'], 30],
+        [LAST_TIER, [], 1000],
       ] as const) {
         const g = new JarGame('play', 1);
         g.place(tier, 190, F - TIERS[tier].r - 2);
