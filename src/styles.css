@@ -1007,6 +1007,10 @@ button:focus-visible {
 .hc-coming {
   color: #4f9a6b !important;
 }
+.hc-hurt {
+  color: #c0606e !important;
+  font-weight: 700;
+}
 .hc-play {
   padding: 6px 12px;
   border-radius: 14px;

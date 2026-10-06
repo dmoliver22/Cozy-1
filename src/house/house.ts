@@ -38,7 +38,7 @@ export interface HouseStats {
 }
 
 export interface HouseSave {
-  v: 3;
+  v: 4;
   /** Cats living here, in the order they moved in. */
   residents: BreedId[];
   /** Cats who've earned their place: they arrive the next time you're home. */
@@ -60,6 +60,17 @@ export interface HouseSave {
   run: { id: string; paid: number } | null;
   /** The last day the cats left you a present (local date key). */
   gift: string;
+  /** Cats hurt in a scrap: how many fish each needs to be well again, and how many it's had. */
+  hurt: Partial<Record<BreedId, Hurt>>;
+  /** Where the ball of yarn was left (its bottom). */
+  toy: { x: number; y: number } | null;
+  /** There's been a scrap (the first one comes with a word on fish making it better). */
+  scraped: boolean;
+}
+
+export interface Hurt {
+  need: number;
+  fed: number;
 }
 
 /** Everyone's name (the same cats as in the If It Fits rooms). */
@@ -114,6 +125,8 @@ export function emptyStats(): HouseStats {
 
 /** Where the roof garden began in a house saved before the living room grew (world y). */
 const OLD_ROOF_LINE = -85;
+/** The cat step that used to be between the top step and the shelf under it. */
+const OLD_MIDDLE_STEP = { x0: 200, x1: 296, y: 224 };
 
 /** Treats in a new house: enough for a first shelf. */
 export const START_TREATS = 20;
@@ -122,7 +135,7 @@ export const WELCOME_BACK = 40;
 
 export function emptyHouse(): HouseSave {
   return {
-    v: 3,
+    v: 4,
     residents: [...FIRST_RESIDENTS],
     arriving: [],
     welcomed: false,
@@ -135,6 +148,9 @@ export function emptyHouse(): HouseSave {
     where: {},
     run: null,
     gift: '',
+    hurt: {},
+    toy: null,
+    scraped: false,
   };
 }
 
@@ -156,7 +172,7 @@ export function loadHouse(earlier?: Earlier): HouseSave {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<Omit<HouseSave, 'v'>> & { v?: number };
-      const h: HouseSave = { ...emptyHouse(), ...d, v: 3, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
+      const h: HouseSave = { ...emptyHouse(), ...d, v: 4, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
       if ((d.v ?? 1) < 2) {
         // the first house's Cat Jar had a sphynx between the kitten and the
         // tabby; and there were no treats yet: a bag of them to start with
@@ -172,6 +188,13 @@ export function loadHouse(earlier?: Earlier): HouseSave {
         if (Array.isArray(h.perches)) h.perches.forEach(up);
         if (h.where && typeof h.where === 'object') Object.values(h.where).forEach(up);
       }
+      if ((d.v ?? 1) < 4 && h.where && typeof h.where === 'object') {
+        // the middle cat step came down: whoever was on it goes back to their spot
+        for (const b of Object.keys(h.where) as BreedId[]) {
+          const w = h.where[b];
+          if (w && Math.abs(w.y - OLD_MIDDLE_STEP.y) < 3 && w.x > OLD_MIDDLE_STEP.x0 && w.x < OLD_MIDDLE_STEP.x1) delete h.where[b];
+        }
+      }
       if (!Array.isArray(h.stats.fitsDone)) h.stats.fitsDone = [];
       h.residents = h.residents.filter((b) => ALL_CATS.includes(b));
       h.arriving = h.arriving.filter((b) => ALL_CATS.includes(b) && !h.residents.includes(b));
@@ -180,6 +203,13 @@ export function loadHouse(earlier?: Earlier): HouseSave {
       h.perches = (Array.isArray(h.perches) ? h.perches : []).filter((p) => p && PERCH_ORDER.includes(p.kind) && Number.isFinite(p.x) && Number.isFinite(p.y));
       h.nextPerch = Math.max(h.nextPerch || 1, ...h.perches.map((p) => p.id + 1));
       if (!h.where || typeof h.where !== 'object') h.where = {};
+      const hurt: HouseSave['hurt'] = {};
+      for (const b of h.residents) {
+        const v = (h.hurt as Record<string, Hurt | undefined> | null)?.[b];
+        if (v && Number.isFinite(v.need) && Number.isFinite(v.fed) && v.fed < v.need) hurt[b] = { need: Math.min(20, Math.max(1, Math.round(v.need))), fed: Math.max(0, Math.round(v.fed)) };
+      }
+      h.hurt = hurt;
+      if (!h.toy || !Number.isFinite(h.toy.x) || !Number.isFinite(h.toy.y)) h.toy = null;
       return h;
     }
   } catch {
@@ -375,4 +405,28 @@ export function takeGift(h: HouseSave, today: string): number {
   h.treats += GIFT_TREATS;
   h.earned += GIFT_TREATS;
   return GIFT_TREATS;
+}
+
+/** Fish a cat needs after a scrap, at the least and the most. */
+export const HURT_FISH: [number, number] = [5, 9];
+
+/** A scrap left a cat hurt: it needs `need` fish to be well again (a few more if it was hurt already). */
+export function hurtCat(h: HouseSave, b: BreedId, need: number): void {
+  const cur = h.hurt[b];
+  h.hurt[b] = cur ? { need: Math.min(20, cur.need + Math.ceil(need / 2)), fed: cur.fed } : { need, fed: 0 };
+}
+
+/**
+ * Feed a hurt cat one fish (a treat): 'fed' (it's a little better), 'healed'
+ * (all better), 'empty' (no treats to give it) or 'well' (it isn't hurt).
+ */
+export function feedFish(h: HouseSave, b: BreedId): 'fed' | 'healed' | 'empty' | 'well' {
+  const cur = h.hurt[b];
+  if (!cur) return 'well';
+  if (h.treats < 1) return 'empty';
+  h.treats--;
+  cur.fed++;
+  if (cur.fed < cur.need) return 'fed';
+  delete h.hurt[b];
+  return 'healed';
 }

@@ -1088,13 +1088,15 @@ export class App {
       const w = this.renderer.screenToWorld(p.x, p.y);
       const home = this.kind === 'home';
       let cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
-      // at home: no picking up a cat that's in a tube, or while a perch is being put somewhere
-      if (home && cat && (!this.home.canTouch(cat) || this.home.placing)) cat = null;
+      // at home: no picking up a cat that's in a tube, or while a perch is being put somewhere;
+      // and a tap on the yarn beside a cat (not on the cat itself) is for the yarn
+      if (home && cat && (!this.home.canTouch(cat) || this.home.placing || (this.home.yarnAt(w.x, w.y) && !this.session.catAt(w.x, w.y, 0)))) cat = null;
       const now = performance.now();
       if (!cat) {
         if (home) {
-          // the cats' present, opened
+          // the cats' present, opened; a scrap broken up, the yarn batted
           if (this.home.openGiftAt(w.x, w.y)) return;
+          if (this.home.tapThing(w.x, w.y)) return;
           // a tap on a capped tube offers to open the floor it goes to; a drag scrolls the house
           const floor = this.home.lockAt(w.x, w.y);
           if (floor) this.lockTap = { id: e.pointerId, floor, sx: p.x, sy: p.y };
@@ -1192,7 +1194,8 @@ export class App {
       } else if (e.type === 'pointerup') {
         const p = pos(e);
         const w = this.renderer.screenToWorld(p.x, p.y);
-        this.session.boop(cat, w.x, w.y);
+        // (at home a hurt cat is fed a fish instead)
+        if (this.kind !== 'home' || !this.home.tapCat(cat)) this.session.boop(cat, w.x, w.y);
       }
     };
     c.addEventListener('pointerup', end);

@@ -695,6 +695,9 @@ export class DropView {
       expression = !game.soaked ? 'wide' : 'squint';
       return { expression, look: 0, resting: false, purr: 0, grabbed: game.soaked };
     }
+    // down a slide: whee (wide-eyed going in and popping out)
+    const ride = game.riding;
+    if (ride) return { expression: ride === 'go' ? 'happy' : 'wide', look: 0, resting: false, purr: 0, grabbed: false };
     if (game.phase === 'ready') expression = 'sleepy';
     else if (game.sinceNom < 45) expression = 'happy';
     else if (game.sinceBoing < 24 || game.sinceHop < 18) expression = 'squint';

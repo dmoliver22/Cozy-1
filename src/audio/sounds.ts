@@ -495,6 +495,84 @@ export function renderSigh(sr: number, pitch: number, seed: number): Float32Arra
   return finish(out, sr);
 }
 
+/**
+ * A hiss: breath forced through bared teeth. Bright noise (two bands round
+ * 4-6 kHz) with a quick swell, a raspy flutter and a long tail; a breathy
+ * lower "h" at the start.
+ */
+export function renderHiss(sr: number, pitch: number, seed: number): Float32Array {
+  const r = rng(seed);
+  const pt = clamp(pitch, 0.5, 1.8);
+  const dur = 0.62;
+  const n = Math.ceil(dur * sr);
+  const out = new Float32Array(n);
+  const hi = Math.min(sr * 0.42, 4300 * pt ** 0.35);
+  const top = Math.min(sr * 0.45, 6400 * pt ** 0.3);
+  const b1 = new Biquad(sr).set('bp', hi, 1.3);
+  const b2 = new Biquad(sr).set('bp', top, 2.2);
+  const h = new Biquad(sr).set('bp', 1500, 1.4);
+  const g1 = noiseGain(sr, 'bp', hi, 1.3);
+  const g2 = noiseGain(sr, 'bp', top, 2.2);
+  const gh = noiseGain(sr, 'bp', 1500, 1.4);
+  const flutterHz = 26 + r() * 8;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const u = t / dur;
+    const env = smooth(0, 0.07, u) * (1 - smooth(0.45, 1, u)) ** 1.3;
+    const rasp = 0.82 + 0.18 * Math.sin(TAU * flutterHz * t + r() * 0.3);
+    const w = r() * 2 - 1;
+    const breath = (1 - smooth(0.04, 0.22, u)) * 0.5;
+    out[i] = (0.7 * b1.run(w) * g1 + 0.45 * b2.run(w) * g2) * env * rasp + h.run(w) * gh * breath * smooth(0, 0.03, u);
+  }
+  return finish(out, sr);
+}
+
+/** "Nom nom": two little voiced bites, the mouth closing on each (a lowpass sweeping shut). */
+export function renderNom(sr: number, pitch: number, seed: number): Float32Array {
+  const r = rng(seed);
+  const pt = clamp(pitch, 0.5, 1.8);
+  const n = Math.ceil(0.32 * sr);
+  const out = new Float32Array(n);
+  for (const [at, f0, amp] of [
+    [0.0, 300 * pt, 1],
+    [0.15, 270 * pt, 0.85],
+  ] as const) {
+    const lp = new Biquad(sr);
+    const n0 = Math.round(at * sr);
+    const len = Math.ceil(0.12 * sr);
+    let ph = 0;
+    for (let i = 0; i < len && n0 + i < n; i++) {
+      const t = i / sr;
+      if ((i & 15) === 0) lp.set('lp', 2200 * (380 / 2200) ** Math.min(1, t / 0.09), 0.9);
+      ph += (TAU * f0 * (1 - 0.18 * (t / 0.12))) / sr;
+      const src = Math.sin(ph) + 0.55 * Math.sin(2 * ph) + 0.3 * Math.sin(3 * ph) + 0.15 * Math.sin(4 * ph);
+      const env = smooth(0, 0.01, t) * Math.exp(-t / 0.045);
+      out[n0 + i] += lp.run(src) * env * amp;
+    }
+    // the lips parting
+    addNoise(out, sr, r, { type: 'bp', f: 2600, q: 1.5, attack: 0.001, tau: 0.006, amp: 0.25, at });
+  }
+  return finish(out, sr);
+}
+
+/** A scratch: claws raked across fur and floor, a short burst of bright crackly noise. */
+export function renderScratch(sr: number, seed: number): Float32Array {
+  const r = rng(seed);
+  const dur = 0.16;
+  const n = Math.ceil(dur * sr);
+  const out = new Float32Array(n);
+  const b = new Biquad(sr).set('bp', Math.min(sr * 0.4, 2800 + r() * 900), 1.6);
+  const g = noiseGain(sr, 'bp', 3000, 1.6);
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    const env = smooth(0, 0.08, u) * (1 - smooth(0.3, 1, u));
+    // claws catching: a crackle of sharper ticks
+    const tick = r() < 0.012 ? (r() * 2 - 1) * 3 : 0;
+    out[i] = (b.run(r() * 2 - 1) * g + tick * 0.2) * env;
+  }
+  return finish(out, sr);
+}
+
 // ---------------------------------------------------------------------------
 // UI
 

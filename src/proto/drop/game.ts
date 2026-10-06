@@ -4,6 +4,7 @@
 // time: a wall of soap foam creeping down the shaft. Headless (no DOM): the
 // view reads the state and drains `events` for sounds and effects.
 
+import { Tubes, type RideTube, type Rider } from '../../house/tubes';
 import { BREEDS, type BreedId } from '../../physics/breeds';
 import { SoftBody } from '../../physics/softbody';
 import { FRAME_DT, GRAVITY, World } from '../../physics/world';
@@ -73,6 +74,9 @@ export type GameEvent =
   | { t: 'nom'; x: number; y: number; golden: boolean; points: number; mult: number }
   | { t: 'squeeze' }
   | { t: 'plop'; x: number; y: number }
+  /** Into a boost slide (it takes `secs`), and out of the far end of it. */
+  | { t: 'boost'; x: number; y: number; secs: number }
+  | { t: 'boostOut'; x: number; y: number }
   | { t: 'storey'; name: string; index: number }
   | { t: 'nudge' }
   | { t: 'rescue'; x: number; y: number; why: 'stuck' | 'tangled' }
@@ -156,6 +160,9 @@ export class DropGame {
   private progressMark = 0;
   private progressFrame = 0;
   private tangles = 0;
+  /** Rides down the boost slides. */
+  readonly slides: Tubes<Rider, RideTube>;
+  private readonly rider: Rider;
 
   constructor(seed: number, breed: BreedId = 'tabby') {
     this.seed = seed;
@@ -166,6 +173,8 @@ export class DropGame {
     this.level = new Level(seed, this.maxR, minTubeFor(BREEDS[breed].physics.maxStretch, this.maxR));
     this.world.substeps = TUNE.substeps;
     this.cat = this.world.addBody(new SoftBody(breed, this.level.startX, this.level.perchY - r0 - 8));
+    this.rider = { body: this.cat };
+    this.slides = new Tubes<Rider, RideTube>(() => this.world);
     this.cat.computeCentroid();
     this.startY = this.cat.cy;
     this.deepest = this.cat.cy;
@@ -195,7 +204,7 @@ export class DropGame {
       this.start();
       return true;
     }
-    if (this.phase !== 'play') return false;
+    if (this.phase !== 'play' || this.riding) return false;
     const c = this.cat;
     c.computeCentroid();
     const grounded = c.airborneFrames < 5;
@@ -216,6 +225,11 @@ export class DropGame {
 
   get radius(): number {
     return this.cat.p.radius;
+  }
+
+  /** Riding a boost slide: going in, whooshing through, or popping out (null: not). */
+  get riding(): 'in' | 'go' | 'out' | null {
+    return this.slides.riding(this.rider)?.phase ?? null;
   }
 
   /** Size multiplier for points (1.0 .. 1.8), to one decimal. */
@@ -293,25 +307,30 @@ export class DropGame {
     }
     c.computeCentroid();
     this.syncChunks(c.cy + 2400);
+    const riding = this.riding !== null;
     if (this.phase === 'soak') this.soakStep();
-    else {
+    else if (!riding) {
       this.applySteer();
       this.applySqueeze();
     }
     this.prevVy = c.vcy;
+    if (riding) this.stepSlide();
     this.world.step();
     this.frame++;
     if (this.phase === 'soak') this.world.drainImpacts();
     c.computeCentroid();
     if (this.phase === 'play' || this.phase === 'ready') {
       this.time += this.phase === 'play' ? FRAME_DT : 0;
-      this.terminal();
-      this.contacts();
+      if (!riding) {
+        this.terminal();
+        this.contacts();
+      }
       this.eatFish();
       this.trackStorey();
       if (this.phase === 'play') {
         this.trackDepth();
         this.bath();
+        if (!riding && this.phase === 'play') this.intoSlide();
       }
     }
     this.animateFish();
@@ -319,6 +338,40 @@ export class DropGame {
     this.sinceHop++;
     this.sinceBoing++;
     this.sinceNom++;
+  }
+
+  /** A cat whose bottom is down in a boost slide's mouth is whisked in. */
+  private intoSlide(): void {
+    const c = this.cat;
+    const bottom = this.catBottom();
+    for (const ch of this.level.chunks) {
+      if (!ch.boosts.length || ch.y0 > bottom + 20 || ch.y1 < c.cy - 200) continue;
+      for (const z of ch.boosts) {
+        if (z.used || Math.abs(c.cx - z.x) > z.hw + c.p.radius * 0.35 || bottom < z.y - 6 || c.cy > z.y + 40) continue;
+        z.used = true;
+        c.settleForce = 0;
+        c.shapeMul = 1;
+        c.assistAx = 0;
+        this.setTension(BREEDS[this.breed].physics.tension);
+        this.squeeze = null;
+        this.slides.start(this.rider, z.tube, false);
+        const t = this.slides.riding(this.rider)!;
+        this.events.push({ t: 'boost', x: z.x, y: z.y, secs: (z.tube.inTime ?? 0.2) + t.goTime });
+        return;
+      }
+    }
+  }
+
+  /** One step down a slide (out of the physics: the outline is moved along the glass). */
+  private stepSlide(): void {
+    this.slides.step();
+    for (const e of this.slides.drain()) {
+      if (e.t !== 'out') continue;
+      this.airHops = 1;
+      this.stuckFrames = 0;
+      this.stuckMark = this.cat.cy;
+      this.events.push({ t: 'boostOut', x: e.x, y: e.y });
+    }
   }
 
   /** Add the statics of newly generated chunks; drop the ones far above. */
@@ -508,6 +561,12 @@ export class DropGame {
   private trackDepth(): void {
     const c = this.cat;
     if (c.cy > this.deepest) this.deepest = c.cy;
+    if (this.riding) {
+      // (whooshing down a slide: nobody's stuck, and the sausage isn't a tangle)
+      this.progressMark = this.deepest;
+      this.progressFrame = this.frame;
+      return;
+    }
     // the last resort: a cat that hasn't got any deeper for a long while is popped free
     if (this.deepest > this.progressMark + 12) {
       this.progressMark = this.deepest;
@@ -633,6 +692,10 @@ export class DropGame {
 
   private caught(): void {
     const c = this.cat;
+    if (this.riding) {
+      this.slides.finishAll();
+      this.slides.drain();
+    }
     this.phase = 'soak';
     this.soakT = 0;
     this.soakFrom = this.foamY;

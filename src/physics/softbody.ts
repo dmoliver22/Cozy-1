@@ -272,6 +272,8 @@ export class SoftBody {
   grab: Grab | null = null;
   /** 0 = round, 1 = loaf. Driven by the game layer. */
   loafiness = 0;
+  /** 0..1, crouched low and long (a cat about to pounce). Driven by the game layer. */
+  crouch = 0;
   /** 0..1, how much rest shape creeps toward the current shape (sitting). */
   plastic = 0;
   /** Multiplier on shape stiffness (game layer can relax a cat into a cup). */
@@ -1483,9 +1485,11 @@ export class SoftBody {
     const plasticRate = Math.min(1, this.p.plasticity * this.plastic * dt);
     const c = this.rotC;
     const s = this.rotS;
+    const crouchY = 1 - 0.34 * this.crouch;
+    const crouchX = 1 + 0.12 * this.crouch;
     for (let i = 0; i < n; i++) {
-      let tx = this.roundX[i] + (this.loafX[i] - this.roundX[i]) * lf;
-      let ty = this.roundY[i] + (this.loafY[i] - this.roundY[i]) * lf;
+      let tx = (this.roundX[i] + (this.loafX[i] - this.roundX[i]) * lf) * crouchX;
+      let ty = (this.roundY[i] + (this.loafY[i] - this.roundY[i]) * lf) * crouchY;
       if (hg > 0) {
         tx += (this.hangX[i] - tx) * hg;
         ty += (this.hangY[i] - ty) * hg;

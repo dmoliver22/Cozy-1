@@ -1,7 +1,8 @@
 // The home screen: the tall house you scroll up and down (the roof garden,
 // the living room with its tall wall, the basement), your cats and their
 // little lives (now and then one hops to another spot, up a run of perches if
-// there is one), the bar of big buttons into the three games, the treats the
+// there is one, or plays: see antics.ts; a cat hurt in a scrap is made better
+// with fish), the bar of big buttons into the three games, the treats the
 // games earn you and the shop they're spent in (opening up the basement and
 // the roof garden, perches you put wherever you like), the glass tubes
 // between the floors (capped and padlocked until the floor they go to is
@@ -27,6 +28,8 @@ import { faceSVG } from '../ui/faces';
 import { catPortrait } from '../ui/portraits';
 import { clamp } from '../util/math';
 import { localDateKey } from '../util/date';
+import { Antics, MOOD_WORDS, TEMPERS, moodOf } from './antics';
+import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
 import { GIFT_SPOT, fittingBoxes, houseRoom } from './homeRoom';
 import { BASEMENT_THEME, paintAttic, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
@@ -37,7 +40,10 @@ import {
   arrive,
   buyFloor,
   buyPerch,
+  feedFish,
   giftDue,
+  HURT_FISH,
+  hurtCat,
   isOpen,
   loadHouse,
   moveInFor,
@@ -188,8 +194,14 @@ export class Home {
   private gift: { x: number; y: number; t: number } | null = null;
   /** Cats just out of a tube can't go straight back in. */
   private cooldown = new Map<Cat, number>();
-  /** Cats leaping to another spot (landing at x1 on a surface at top). */
-  private leaps: { cat: Cat; t: number; T: number; x0: number; y0: number; x1: number; top: number; vUp: number; shape: Float64Array }[] = [];
+  /** The cat last let go of, and when: one dropped in the funnel takes the view down with it. */
+  private letGo: { cat: Cat; at: number } | null = null;
+  /** Cats leaping to another spot (landing at x1 on a surface at top), and what to do when they land. */
+  private leaps: { cat: Cat; t: number; T: number; x0: number; y0: number; x1: number; top: number; vUp: number; shape: Float64Array; land?: () => void }[] = [];
+  /** What the cats get up to: games, pounces, scraps. */
+  readonly antics: Antics;
+  /** Fish on their way into a hurt cat's mouth. */
+  private feeding: { cat: Cat; t: number; healed: boolean }[] = [];
   private saveIn = 5;
 
   constructor(
@@ -207,6 +219,20 @@ export class Home {
     writeHouse(this.house);
     this.shownTreats = this.house.treats;
     this.tubes = new Tubes(() => host.session.world);
+    this.antics = new Antics({
+      get session() {
+        return host.session;
+      },
+      renderer: host.renderer,
+      audio: host.audio,
+      day: () => localDateKey(),
+      hurt: (b) => !!this.house.hurt[b],
+      hurtCat: (cat) => this.hurt(cat),
+      leap: (cat, x, y, low, land) => this.hop(cat, x, y, low, land),
+      away: (cat) => cat.grabbed || !!this.tubes.riding(cat) || this.leaping(cat),
+      escape: (cat, fromX) => this.escape(cat, fromX),
+      offLimits: (x, y) => this.offLimits(x, y),
+    });
     // signs on the floors still to open
     this.labels = document.createElement('div');
     this.labels.className = 'home-labels hidden';
@@ -298,8 +324,10 @@ export class Home {
     key: () => this.perchKey(),
     paintBack: (ctx, r) => this.paintBack(ctx, r),
     paintFront: (ctx, r) => this.paintFront(ctx, r),
+    underlay: (ctx) => this.antics.underlay(ctx),
     overlay: (ctx, dt) => this.paintOverlay(ctx, dt),
     inTube: (cat) => this.tubeFace(cat),
+    face: (cat) => this.antics.face(cat),
     behindFront: (cat) => this.behindFront(cat),
   };
 
@@ -379,8 +407,10 @@ export class Home {
     if (!isOpen(this.house, 'basement')) paintBasementShade(ctx, r);
   }
 
-  /** Over everything, each frame: a perch being placed, the day's present. */
+  /** Over everything, each frame: the cats' antics, hurt cats' plasters and fish, a perch being placed, the day's present. */
   private paintOverlay(ctx: Ctx, dt: number): void {
+    this.antics.overlay(ctx);
+    this.paintHurt(ctx, dt);
     const pl = this.placing;
     if (pl) {
       const problem = this.problem(pl);
@@ -407,6 +437,37 @@ export class Home {
     }
   }
 
+  /** A hurt cat's plaster, and over it a fish in a bubble ringed by how far it is to better; fish flying in. */
+  private paintHurt(ctx: Ctx, dt: number): void {
+    const r = this.host.renderer;
+    for (const c of this.host.session.cats) {
+      const h = this.house.hurt[c.breed];
+      if (!h || this.tubes.riding(c) || this.antics.fighting(c)) continue;
+      const v = r.view(c);
+      const rad = c.body.p.radius;
+      paintPlaster(ctx, v.fx + rad * 0.36, v.fy - rad * 0.5, v.fs, -0.55, h.need >= 8);
+      if (!c.grabbed) paintHealBadge(ctx, v.hx, v.hy - rad * 0.55 - 16, h.fed, h.need, this.since + c.index);
+    }
+    for (const f of [...this.feeding]) {
+      f.t += dt;
+      const v = r.view(f.cat);
+      const u = Math.min(1, f.t / 0.32);
+      // in an arc, down into its mouth
+      const x = v.fx + (1 - u) * 18;
+      const y = v.fy + 4 - (1 - u) * 46 + Math.sin(u * Math.PI) * -10;
+      if (u < 1) paintFish(ctx, x, y, 1.1 - u * 0.5, -0.8 + u * 1.2);
+      else {
+        this.feeding.splice(this.feeding.indexOf(f), 1);
+        this.host.audio.nom(BREEDS[f.cat.breed].voice.pitch);
+        if (f.healed) {
+          r.hearts(v.hx, v.hy - 16, 4);
+          r.puff(v.fx + f.cat.body.p.radius * 0.36, v.fy - f.cat.body.p.radius * 0.5, 4);
+          this.host.audio.seat(96);
+        }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Coming and going
 
@@ -420,10 +481,13 @@ export class Home {
     // (the fittings and perches came in with the house's shell: see sessionOptions)
     this.host.renderer.stage = this.stage;
     this.host.renderer.invalidate();
+    this.antics.enter(this.house.toy);
+    this.feeding = [];
     this.camY = VIEW_Y.living;
     this.camV = 0;
     this.camGoal = null;
     this.follow = null;
+    this.letGo = null;
     this.host.renderer.scrollTo(this.camY, true);
     this.bar.classList.remove('hidden');
     this.labels.classList.remove('hidden');
@@ -450,6 +514,7 @@ export class Home {
       this.tubes.finishAll();
       for (const l of this.leaps) l.t = l.T;
       this.stepLeaps();
+      this.antics.leave();
       this.remember();
       writeHouse(this.house);
     }
@@ -468,8 +533,10 @@ export class Home {
 
   /** Where everyone is, for next time. */
   private remember(): void {
+    const toy = this.antics.toyAt();
+    if (toy) this.house.toy = toy;
     for (const c of this.host.session.cats) {
-      if (this.tubes.riding(c)) continue;
+      if (this.tubes.riding(c) || this.antics.fighting(c) || this.leaping(c)) continue;
       const b = c.body;
       b.computeCentroid();
       let maxY = -Infinity;
@@ -614,15 +681,22 @@ export class Home {
     if (!this.active) return;
     this.tubes.step();
     this.stepLeaps();
+    this.antics.step();
     // a cat that falls into the funnel goes down to the basement
     const chute = this.tubesIn().find((t) => t.id === 'chute');
     if (chute) {
       for (const c of this.host.session.cats) {
-        if (c.grabbed || this.tubes.riding(c) || (this.cooldown.get(c) ?? 0) > 0) continue;
+        // (not one flying over it, or tumbling about in a scrap)
+        if (c.grabbed || this.tubes.riding(c) || this.leaping(c) || this.antics.fighting(c) || (this.cooldown.get(c) ?? 0) > 0) continue;
         const b = c.body;
         b.computeCentroid();
         const z = chute.upper.zone;
-        if (b.cx > z.x0 && b.cx < z.x1 && b.cy > z.y0 && b.cy < z.y1 && b.vcy > -60) this.ride(c, chute, false);
+        if (b.cx > z.x0 && b.cx < z.x1 && b.cy > z.y0 && b.cy < z.y1 && b.vcy > -60 && inFunnel(b.cx, b.cy)) {
+          // (one that tumbled in by itself just goes, and says so)
+          const dropped = this.letGo?.cat === c && this.since - this.letGo.at < 4;
+          this.ride(c, chute, false, dropped);
+          if (!dropped) this.toast(c.breed, `Wheee! ${NAMES[c.breed]} tumbled down the funnel to the basement.`);
+        }
       }
     }
     for (const [c, t] of this.cooldown) {
@@ -634,6 +708,9 @@ export class Home {
       if (e.t === 'in') {
         this.host.audio.glorp(b.voice.pitch * 1.1, 0.4, 0.1);
       } else {
+        e.cat.sinceTouch = 0;
+        e.cat.settled = 0;
+        e.cat.intent = null;
         this.host.audio.boop(b.voice.pitch);
         this.host.renderer.puff(e.x, e.y + e.cat.body.p.radius, 5);
         this.cooldown.set(e.cat, 70);
@@ -675,7 +752,7 @@ export class Home {
     this.hopIn -= dt;
     if (this.hopIn <= 0) {
       this.hopIn = HOP_GAP[0] + Math.random() * (HOP_GAP[1] - HOP_GAP[0]);
-      this.wander(s);
+      this.turn(s);
     }
   }
 
@@ -817,9 +894,16 @@ export class Home {
   private spots(): Spot[] {
     const s = this.host.session;
     const out: Spot[] = [];
+    const chute = this.tubesIn().some((t) => t.id === 'chute');
     const add = (x0: number, x1: number, y: number, maxR: number, perch = false): void => {
       const f = floorAt(y - 1);
       if (!isOpen(this.house, f)) return;
+      // (not out over the open funnel: a cat that slid off the end would go down it)
+      const clear = FUNNEL.x + FUNNEL.rimHw + 10;
+      if (chute && f === 'living' && y < FUNNEL.rimY && x0 < clear) {
+        if (x1 - clear < 24) return;
+        x0 = clear;
+      }
       out.push({ x: (x0 + x1) / 2, y, half: Math.max(4, (x1 - x0) / 2 - 22), maxR, floor: f, perch });
     };
     for (const p of s.furniture) for (const sf of p.surfaces) add(sf.x0, sf.x1, sf.y, Math.min(44, (sf.x1 - sf.x0) * 0.42));
@@ -851,7 +935,7 @@ export class Home {
    * the underside of a ledge overhead (up from the side), and with nobody
    * there or on the way there.
    */
-  private reachable(cat: Cat, x: number, bottom: number, reach = 230, climb = 150): Spot[] {
+  private reachable(cat: Cat, x: number, bottom: number, reach = 260, climb = 230): Spot[] {
     const s = this.host.session;
     const r = cat.body.p.radius;
     const floor = floorAt(bottom - r);
@@ -873,11 +957,34 @@ export class Home {
     });
   }
 
-  /** Now and then a cat who's been resting a while hops to a free spot nearby (they like going up, and the perches most of all). */
-  private wander(s: Session): void {
-    const idle = s.cats.filter((c) => !c.grabbed && !this.tubes.riding(c) && !this.leaping(c) && c.settled > 90 && c.sinceTouch > 240);
+  /**
+   * Every so often one of the cats who've been resting a while does
+   * something: plays, if it's in the mood (see Antics); otherwise hops off
+   * somewhere, unless it would rather stay put (a lazy cat, or a hurt one).
+   */
+  private turn(s: Session): void {
+    const idle = s.cats.filter((c) => !c.grabbed && !this.tubes.riding(c) && !this.leaping(c) && !this.antics.busy(c) && c.settled > 90 && c.sinceTouch > 240);
     if (!idle.length) return;
     const cat = idle[Math.floor(Math.random() * idle.length)];
+    if (this.antics.turn(cat)) return;
+    const lazy = this.antics.temper(cat).lazy * 0.5 + (this.house.hurt[cat.breed] ? 0.4 : 0);
+    if (Math.random() < lazy) return;
+    this.wander(cat);
+  }
+
+  /**
+   * Where the cats' games mustn't go: into a tube's mouth, or, with the
+   * funnel open, anywhere over it, where a cat knocked off the window sill
+   * would fall in (a cat goes down the funnel when you drop it there).
+   */
+  private offLimits(x: number, y: number): boolean {
+    const tubes = this.tubesIn();
+    if (Tubes.mouthAt(tubes, x, y)) return true;
+    return tubes.some((t) => t.id === 'chute') && y < FUNNEL.rimY && y > FLOORS.living.ceilY && Math.abs(x - FUNNEL.x) < FUNNEL.rimHw + 24;
+  }
+
+  /** A hop to a free spot nearby (they like going up, and the perches most of all). */
+  private wander(cat: Cat): void {
     const b = cat.body;
     b.computeCentroid();
     let bottom = -Infinity;
@@ -902,6 +1009,20 @@ export class Home {
     this.hop(cat, p.x + (Math.random() * 2 - 1) * p.half, p.y);
   }
 
+  /** Somewhere free for a cat to leap off to, away from x if it can (the far side, a little at random). */
+  private escape(cat: Cat, fromX: number): { x: number; y: number } | null {
+    const b = cat.body;
+    b.computeCentroid();
+    let bottom = -Infinity;
+    for (let i = 0; i < b.n; i++) bottom = Math.max(bottom, b.y[i]);
+    const away = Math.sign(b.cx - fromX) || 1;
+    const free = this.reachable(cat, b.cx, bottom).filter((p) => Math.sign(p.x - fromX) === away || Math.abs(p.x - fromX) > 120);
+    if (!free.length) return null;
+    free.sort((p, q) => Math.abs(q.x - fromX) - Math.abs(p.x - fromX));
+    const p = free[Math.floor(Math.random() * Math.min(3, free.length))];
+    return { x: p.x + (Math.random() * 2 - 1) * p.half, y: p.y };
+  }
+
   /**
    * Leap so as to land with the cat's middle just over (x, y - r): a real
    * gravity arc, high enough to clear the edge of what it's landing on, the
@@ -910,7 +1031,7 @@ export class Home {
    * and up onto a shelf it bumped the edge.) It's out of the physics while it
    * flies, and lands in it with the speed it's falling at.
    */
-  private hop(cat: Cat, x: number, y: number): void {
+  private hop(cat: Cat, x: number, y: number, low = false, land?: () => void): void {
     const b = cat.body;
     b.computeCentroid();
     const r = b.p.radius;
@@ -918,7 +1039,9 @@ export class Home {
     const y1 = y - r * 0.92 - 2;
     const up = y1 < b.cy - 20;
     const ceil = FLOORS[floorAt(b.cy)].ceilY + r + 6;
-    const apex = Math.max(ceil, Math.min(b.cy, y1) - 40 - Math.abs(x1 - b.cx) * 0.12 - (up ? 16 : 0));
+    // (a pounce is quicker and flatter)
+    const lift = low ? 16 + Math.abs(x1 - b.cx) * 0.05 + (up ? 10 : 0) : 40 + Math.abs(x1 - b.cx) * 0.12 + (up ? 16 : 0);
+    const apex = Math.max(ceil, Math.min(b.cy, y1) - lift);
     const vUp = Math.sqrt(2 * GRAVITY * Math.max(4, b.cy - apex));
     const tUp = vUp / GRAVITY;
     const T = tUp + Math.sqrt((2 * Math.max(4, y1 - apex)) / GRAVITY);
@@ -928,10 +1051,10 @@ export class Home {
       shape[i * 2 + 1] = b.y[i] - b.cy;
     }
     this.host.session.world.removeBody(b);
-    this.leaps.push({ cat, t: 0, T, x0: b.cx, y0: b.cy, x1, top: y, vUp, shape });
+    this.leaps.push({ cat, t: 0, T, x0: b.cx, y0: b.cy, x1, top: y, vUp, shape, land });
     cat.intent = null;
     cat.sinceTouch = 0;
-    this.host.audio.grab(BREEDS[cat.breed].voice.pitch, false);
+    if (!low || Math.random() < 0.5) this.host.audio.grab(BREEDS[cat.breed].voice.pitch, false);
   }
 
   /** One step of every leap. */
@@ -969,6 +1092,8 @@ export class Home {
         b.computeCentroid();
         this.host.session.world.addBody(b);
         this.leaps.splice(this.leaps.indexOf(l), 1);
+        this.antics.clearToy(l.cat);
+        l.land?.();
       }
     }
   }
@@ -1003,9 +1128,10 @@ export class Home {
   // ---------------------------------------------------------------------------
   // The tubes
 
-  /** Send a cat through a tube (the camera goes along). */
-  private ride(cat: Cat, tube: Tube, up: boolean): void {
+  /** Send a cat through a tube (the camera goes along, unless it went in by itself). */
+  private ride(cat: Cat, tube: Tube, up: boolean, follow = true): void {
     this.tubes.start(cat, tube, up);
+    if (!follow) return;
     this.follow = cat;
     this.camGoal = null;
   }
@@ -1013,6 +1139,7 @@ export class Home {
   /** A cat was let go: under a hood, it's sucked in. */
   released(cat: Cat): void {
     if (!this.active) return;
+    this.letGo = { cat, at: this.since };
     const b = cat.body;
     b.computeCentroid();
     const hit = Tubes.mouthAt(this.tubesIn(), b.cx, b.cy, 'hood');
@@ -1021,7 +1148,52 @@ export class Home {
 
   /** Can this cat be picked up or booped (not while it's in a tube)? */
   canTouch(cat: Cat): boolean {
-    return !this.tubes.riding(cat) && !this.leaping(cat);
+    return !this.tubes.riding(cat) && !this.leaping(cat) && !this.antics.fighting(cat);
+  }
+
+  /** A tap on a cat at home: a hurt one is fed a fish (true); any other is just booped (false). */
+  tapCat(cat: Cat): boolean {
+    if (!this.active || !this.house.hurt[cat.breed]) return false;
+    const b = cat.breed;
+    const r = feedFish(this.house, b);
+    writeHouse(this.house);
+    this.shownTreats = this.house.treats;
+    this.refreshTreats();
+    if (r === 'empty') {
+      const h = this.house.hurt[b]!;
+      this.host.audio.boop(BREEDS[b].voice.pitch * 0.85);
+      this.toast(b, `${NAMES[b]} needs ${h.need - h.fed} more fish to feel better. Play a game to catch some!`, 4200);
+      return true;
+    }
+    this.feeding.push({ cat, t: 0, healed: r === 'healed' });
+    cat.sinceTouch = 0;
+    if (r === 'healed') setTimeout(() => this.active && this.toast(b, `${NAMES[b]}'s all better!`), 380);
+    return true;
+  }
+
+  /** A tap where there's no cat: on a scrap it breaks it up, on the yarn it bats it (true if it was either). */
+  tapThing(x: number, y: number): boolean {
+    if (!this.active || this.placing) return false;
+    return this.antics.breakUp(x, y) || this.antics.tapToy(x, y);
+  }
+
+  /** Is (x, y) on the ball of yarn? */
+  yarnAt(x: number, y: number): boolean {
+    return this.active && !this.placing && this.antics.onToy(x, y);
+  }
+
+  /** A scrap left a cat hurt: it needs fish to feel better. */
+  private hurt(cat: Cat): void {
+    const b = cat.breed;
+    const first = !Object.keys(this.house.hurt).length && !this.house.scraped;
+    hurtCat(this.house, b, HURT_FISH[0] + Math.floor(Math.random() * (HURT_FISH[1] - HURT_FISH[0] + 1)));
+    this.house.scraped = true;
+    writeHouse(this.house);
+    const h = this.house.hurt[b]!;
+    setTimeout(() => {
+      if (!this.active) return;
+      this.toast(b, first ? `Ouch! ${NAMES[b]} got scratched. Tap ${NAMES[b]} to feed fish till better (${h.need - h.fed} fish).` : `${NAMES[b]} got scratched! Tap to feed ${h.need - h.fed} fish.`, 5200);
+    }, 600);
   }
 
   /** Where a carried cat can be taken: around its own floor. */
@@ -1378,7 +1550,15 @@ export class Home {
       const here = h.residents.includes(b);
       const coming = h.arriving.includes(b);
       const m = moveInFor(b);
-      const status = here ? `<small>lives here · ${BREEDS[b].flow}</small>` : coming ? '<small class="hc-coming">on the way home!</small>' : `<small>${m?.how ?? ''}</small>`;
+      const hurt = here ? h.hurt[b] : undefined;
+      const mood = moodOf(b, localDateKey());
+      const status = hurt
+        ? `<small class="hc-hurt">hurt in a scrap · ${hurt.need - hurt.fed} more fish to feel better (tap to feed)</small>`
+        : here
+          ? `<small>${TEMPERS[b].word}${mood ? `, ${MOOD_WORDS[mood]}` : ''} · ${BREEDS[b].flow}</small>`
+          : coming
+            ? '<small class="hc-coming">on the way home!</small>'
+            : `<small>${m?.how ?? ''}</small>`;
       const play = !here && !coming && m ? `<button class="hc-play" data-play="${m.game}" data-room="${m.room ?? ''}" aria-label="Play ${GAME_NAMES[m.game]}">Play</button>` : '';
       return `<div class="hc-row ${here ? '' : 'away'}" data-breed="${b}"><span class="hc-pic"></span><span class="hc-who"><b>${here || coming ? NAMES[b] : '???'}</b>${status}</span>${play}</div>`;
     }).join('');
@@ -1491,6 +1671,15 @@ export class Home {
     const n = list.map((b) => NAMES[b]);
     return n.length <= 1 ? (n[0] ?? '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
   }
+}
+
+/**
+ * Is a cat's middle down inside the funnel's cone (fallen into it), rather
+ * than beside it on the floor under its rim, bumped there?
+ */
+function inFunnel(x: number, y: number): boolean {
+  const u = clamp((y - FUNNEL.rimY) / (FUNNEL.neckY - FUNNEL.rimY), 0, 1);
+  return Math.abs(x - FUNNEL.x) < FUNNEL.rimHw + (FUNNEL.neckHw - FUNNEL.rimHw) * u - 2;
 }
 
 /** Decor laid flat on the wall or floor (painted under the furniture). */

@@ -6,6 +6,7 @@
 
 import type { ThemeId } from '../../game/room';
 import type { DecorPlacement } from '../../game/room';
+import type { RideTube } from '../../house/tubes';
 import { capsule, roundedBox, type Material, type StaticShape } from '../../physics/shapes';
 import { rng } from '../kit';
 
@@ -32,6 +33,8 @@ export type Art =
   /** A glass cone: its left and right walls run from (lx, ly) and (rx, ry) down to the tube's neck. */
   | { k: 'funnel'; cx: number; lx: number; ly: number; rx: number; ry: number; mouth: number; hw: number; tint: string }
   | { k: 'tube'; cx: number; y0: number; y1: number; hw: number; tint: string; funnel: boolean }
+  /** A boost slide's glass: its centre line from the mouth to the end, its half width. */
+  | { k: 'slide'; path: [number, number][]; hw: number; tint: string }
   | { k: 'slab'; y: number; holes: [number, number][] }
   | { k: 'roof'; y: number }
   | { k: 'perch'; x0: number; x1: number; y: number };
@@ -88,6 +91,20 @@ export interface Squeeze {
   exited: boolean;
 }
 
+/**
+ * A boost slide: a long glass tube with a corkscrew in it. A cat that drops
+ * into its mouth rides it (out of the physics: see Tubes) and shoots out of
+ * its end much further down, in much less time than falling that far.
+ */
+export interface Boost {
+  tube: RideTube;
+  /** The mouth: the cat goes in once its bottom is in it. */
+  x: number;
+  y: number;
+  hw: number;
+  used: boolean;
+}
+
 /** An opening below which the way continues (for nudging, or rescuing, a stuck cat). */
 export interface Gap {
   y: number;
@@ -97,7 +114,7 @@ export interface Gap {
   below: number;
 }
 
-export type PatternKind = 'attic' | 'shelves' | 'zigzag' | 'cushions' | 'pillows' | 'funnel' | 'twin' | 'floor';
+export type PatternKind = 'attic' | 'shelves' | 'zigzag' | 'cushions' | 'pillows' | 'funnel' | 'twin' | 'boost' | 'floor';
 
 export interface Chunk {
   id: number;
@@ -110,6 +127,7 @@ export interface Chunk {
   squeezes: Squeeze[];
   fish: Fish[];
   gaps: Gap[];
+  boosts: Boost[];
   /** Painted under the cat, and over it (glass fronts). */
   art: Art[];
 }
@@ -156,7 +174,7 @@ let nextChunkId = 1;
 class Builder {
   readonly c: Chunk;
   constructor(kind: PatternKind, storey: number, y0: number) {
-    this.c = { id: nextChunkId++, kind, storey, y0, y1: y0, shapes: [], cushions: [], squeezes: [], fish: [], gaps: [], art: [] };
+    this.c = { id: nextChunkId++, kind, storey, y0, y1: y0, shapes: [], cushions: [], squeezes: [], fish: [], gaps: [], boosts: [], art: [] };
   }
 
   add(s: StaticShape): StaticShape {
@@ -428,6 +446,82 @@ function twin(g: Ctx, y0: number): Chunk {
   return b.done(exit + 120);
 }
 
+/** A boost slide's glass: amber, like a sweet. */
+const SLIDE_TINTS = ['#F2C46E', '#F0B48C', '#E9C7F0'];
+/** The slide's bore (a cat rides it squeezed this wide), the corkscrew's radius and how far each turn of it drops. */
+const SLIDE_BORE = 30;
+const COIL_R = 60;
+const COIL_DROP = 20;
+
+/**
+ * Now and then: a funnel into a long glass slide with a corkscrew in it. In
+ * you go, round and round and down, and out at the bottom, faster than any
+ * fall (and there may be fish in the glass on the way).
+ */
+function boost(g: Ctx, y0: number): Chunk {
+  const { r } = g;
+  const b = new Builder('boost', g.storey, y0);
+  const tint = SLIDE_TINTS[Math.floor(r() * SLIDE_TINTS.length)];
+  const hw = SLIDE_BORE / 2 + GLASS_R;
+  const cx = between(r, 130, SHAFT_W - 130);
+  const top = y0 + 80;
+  const x0 = -6;
+  const x1 = SHAFT_W + 6;
+  // the funnel: steep enough on both sides that nobody sits on the slope
+  const span = Math.max(cx - hw - x0, x1 - cx - hw);
+  const mouth = top + Math.max(130, span * 0.72);
+  const glass = 0.12;
+  b.cap(x0, top, cx - hw, mouth, GLASS_R, 'glass', glass);
+  b.cap(x1, top, cx + hw, mouth, GLASS_R, 'glass', glass);
+  b.c.art.push({ k: 'funnel', cx, lx: x0, ly: top, rx: x1, ry: top, mouth, hw, tint });
+  b.c.squeezes.push({ x0, x1, y0: top, y1: mouth - 8, force: 1400, kind: 'funnel', entered: false, exited: false });
+  // the slide: a little way down, a corkscrew swinging out toward the middle of the shaft, then a long run down
+  const path: [number, number][] = [[cx, mouth]];
+  let y = mouth + 60;
+  path.push([cx, y]);
+  // (round a centre to the side, starting at its near point heading down, and each turn a little lower)
+  const side = cx > SHAFT_W / 2 ? -1 : 1;
+  const ccx = cx + side * COIL_R;
+  const a0 = side > 0 ? Math.PI : 0;
+  const turns = 2;
+  const steps = 64;
+  for (let k = 1; k <= steps; k++) {
+    const th = (k / steps) * turns * Math.PI * 2;
+    const a = a0 - side * th;
+    path.push([ccx + Math.cos(a) * COIL_R, y + Math.sin(a) * COIL_R + COIL_DROP * th]);
+  }
+  y = path[path.length - 1][1];
+  const exit = y + between(r, 560, 720) + g.diff * 160;
+  path.push([cx, exit]);
+  b.c.art.push({ k: 'slide', path, hw, tint });
+  b.c.boosts.push({
+    tube: {
+      id: 'boost',
+      path,
+      upper: { x: cx, y: mouth - 10, dirX: 0, dirY: -1, speed: 0 },
+      lower: { x: cx, y: exit + 4, dirX: 0, dirY: 1, speed: 860 },
+      bore: SLIDE_BORE,
+      inTime: 0.18,
+      goSpeed: 2300,
+      whoosh: true,
+    },
+    x: cx,
+    y: mouth,
+    hw,
+    used: false,
+  });
+  // (a stuck cat is popped out below the end)
+  b.c.gaps.push({ y: mouth, x0: cx - SLIDE_BORE / 2, x1: cx + SLIDE_BORE / 2, below: exit + 6 });
+  // fish in the glass, round the corkscrew (gobbled on the way through)
+  const coil = path.slice(2, 2 + steps);
+  for (const u of [0.3, 0.55, 0.8]) {
+    if (!chance(r, 0.55)) continue;
+    const [fx, fy] = coil[Math.floor(u * (coil.length - 1))];
+    b.fish(fx, fy, chance(r, 0.15), side > 0 ? 1 : -1);
+  }
+  return b.done(exit + 130);
+}
+
 /** The floor slab at the bottom of a storey, with one or two open hatches. */
 function floor(g: Ctx, y: number): Chunk {
   const { r } = g;
@@ -482,6 +576,7 @@ const PATTERNS: [Exclude<PatternKind, 'attic' | 'floor'>, PatternFn, number][] =
   ['cushions', cushions, 0.9],
   ['pillows', pillows, 0.8],
   ['twin', twin, 0.55],
+  ['boost', boost, 0.32],
 ];
 
 /**
@@ -657,7 +752,8 @@ export class Level {
 
   private pattern(s: Storey, y0: number): Chunk {
     const diff = Math.min(1, s.index / 14);
-    const pool = PATTERNS.filter(([k]) => !this.last.includes(k) && (k !== 'twin' || s.index > 1));
+    // (no slides until the cat's found its feet, and never two in a row)
+    const pool = PATTERNS.filter(([k]) => !this.last.includes(k) && (k !== 'twin' || s.index > 1) && (k !== 'boost' || s.index > 0));
     let total = 0;
     for (const p of pool) total += p[2];
     let pick = this.r() * total;

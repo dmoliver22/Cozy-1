@@ -15,7 +15,12 @@ import { NODE_RADIUS, type SoftBody } from '../physics/softbody';
 import { clamp } from '../util/math';
 import { LIGHT, hash01, lightGradient, lightOf, lineOf, mix, rgba, shadowOf, texPattern, type Box, type Ctx, type TexKind } from './paint';
 
-export type Expression = 'open' | 'happy' | 'sleepy' | 'wide' | 'squint' | 'blink' | 'content';
+/**
+ * How a cat looks. 'stalk' is eyeing something up to pounce on (big dark
+ * eyes, mouth shut), 'cross' is hissing (lids down, ears flat), 'sad' is
+ * hurt (worried brows).
+ */
+export type Expression = 'open' | 'happy' | 'sleepy' | 'wide' | 'squint' | 'blink' | 'content' | 'cross' | 'sad' | 'stalk';
 
 /** Opening of the container a cat is in: rim line y between x0 and x1, plus the lip's thickness. */
 export interface Rim {
@@ -45,6 +50,11 @@ export interface CatPose {
   pinch?: { x: number; y: number } | null;
   /** Silhouette (locked collection cards). */
   silhouette?: boolean;
+  /**
+   * A cat about to pounce wiggles its back end: how far it's swung this
+   * instant (units, signed) and which side its back end is (+1 the right).
+   */
+  wiggle?: { sway: number; rear: 1 | -1 } | null;
 }
 
 /**
@@ -248,6 +258,30 @@ function computeOutline(b: SoftBody, v: CatView, breathe: number): void {
 }
 
 /**
+ * The back end swings (and lifts a little as it does) while the front and the
+ * feet stay put: the outline's nodes are moved by how far back and how high
+ * up the body they are.
+ */
+function wiggleOutline(v: CatView, n: number, r: number, sway: number, rear: number): void {
+  const cx = v.cx;
+  const cy = (v.box.y0 + v.box.y1) / 2;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  for (let i = 0; i < n; i++) {
+    const back = clamp(((v.ox[i] - cx) * rear) / r + 0.15, 0, 1.1);
+    const up = clamp((cy - v.oy[i]) / r + 0.75, 0, 1.4);
+    const w = back * back * up;
+    v.ox[i] += sway * w;
+    v.oy[i] -= Math.abs(sway) * 0.4 * w;
+    if (v.ox[i] < minX) minX = v.ox[i];
+    if (v.ox[i] > maxX) maxX = v.ox[i];
+    if (v.oy[i] < minY) minY = v.oy[i];
+  }
+  v.box = { x0: minX, y0: minY, x1: maxX, y1: v.box.y1 };
+}
+
+/**
  * Where the top of the outline crosses the vertical line x = X, with the
  * outward normal there (interpolated between nodes, so it slides smoothly as
  * the ring moves instead of jumping from node to node).
@@ -293,6 +327,7 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   const calmNow = (pose.resting || pose.seated) && !pose.grabbed ? 1 : 0;
   v.breath += (calmNow - v.breath) * (v.inited ? ease(v.dt, 2) : 1);
   computeOutline(b, v, v.breath * Math.sin(v.t * (1.9 + pose.purr * 0.8) + v.phase) * (0.011 + pose.purr * 0.004));
+  if (pose.wiggle && pose.wiggle.sway !== 0) wiggleOutline(v, n, r, pose.wiggle.sway, pose.wiggle.rear);
   const ol = v.box;
   // Head anchor: weighted top of the blob, eased over time.
   let wx = 0;
@@ -344,6 +379,13 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
     if (pose.grabbed) {
       dx += s * 0.9;
       dy += 0.35;
+    } else if (pose.expression === 'cross') {
+      // flat back, out to the sides
+      dx += s * 1.25;
+      dy += 0.55;
+    } else if (pose.expression === 'sad') {
+      dx += s * 0.5;
+      dy += 0.25;
     }
     const ang = Math.atan2(dy, dx);
     v.earRX[e] += (top.x - top.nx * 2 - v.hx - v.earRX[e]) * ke;
@@ -1029,10 +1071,48 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
         ctx.stroke();
         break;
       }
+      case 'cross': {
+        // a narrowed glare: the eye with its top cut off by a lid slanting down toward the nose
+        const er = eyeR * 1.05;
+        const exx = x + pose.look * 0.8;
+        // (inner: toward the nose, the other way from `side`)
+        const ox = x + side * er * 1.25;
+        const ix = x - side * er * 1.1;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(ox, ey - er * 0.15);
+        ctx.lineTo(ix, ey + er * 0.4);
+        ctx.lineTo(ix, ey + er * 1.4);
+        ctx.lineTo(ox, ey + er * 1.4);
+        ctx.closePath();
+        ctx.clip();
+        ctx.beginPath();
+        ctx.arc(exx, ey, er, 0, Math.PI * 2);
+        ctx.fillStyle = ink.eye;
+        ctx.fill();
+        if (ink.dark) {
+          ctx.fillStyle = '#2A2438';
+          ctx.beginPath();
+          ctx.ellipse(exx, ey + er * 0.1, er * 0.22, er * 0.75, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(exx + er * 0.3, ey + er * 0.15, er * 0.26, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        ctx.lineWidth = 1.9 * fs;
+        ctx.strokeStyle = ink.dark ? '#B9B0D8' : '#3A2F3F';
+        ctx.beginPath();
+        ctx.moveTo(ox + side * er * 0.15, ey - er * 0.35);
+        ctx.lineTo(ix, ey + er * 0.3);
+        ctx.stroke();
+        break;
+      }
       default: {
-        const big = expr === 'wide' ? 1.3 : 1;
+        const big = expr === 'wide' ? 1.3 : expr === 'stalk' ? 1.38 : expr === 'sad' ? 1.08 : 1;
         const er = eyeR * big;
-        const exx = x + (expr === 'wide' ? 0 : pose.look * 0.8);
+        const exx = x + (expr === 'wide' ? 0 : pose.look * (expr === 'stalk' ? 1.4 : 0.8));
         // iris / dot with a gloss of reflected light at the bottom
         ctx.beginPath();
         ctx.arc(exx, ey, er, 0, Math.PI * 2);
@@ -1055,7 +1135,7 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
         }
         ctx.fillStyle = '#FFFFFF';
         ctx.beginPath();
-        ctx.arc(exx + er * 0.36, ey - er * 0.38, er * (expr === 'wide' ? 0.42 : 0.36), 0, Math.PI * 2);
+        ctx.arc(exx + er * 0.36, ey - er * 0.38, er * (expr === 'wide' ? 0.42 : expr === 'stalk' ? 0.3 : 0.36), 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha *= 0.85;
         ctx.beginPath();
@@ -1063,6 +1143,15 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
         ctx.fill();
         ctx.globalAlpha /= 0.85;
       }
+    }
+    if (expr === 'sad') {
+      // worried brows, up toward the middle
+      ctx.strokeStyle = ink.dark ? '#B9B0D8' : '#3A2F3F';
+      ctx.lineWidth = 1.3 * fs;
+      ctx.beginPath();
+      ctx.moveTo(x + side * eyeR * 1.25, ey - eyeR * 1.35);
+      ctx.quadraticCurveTo(x, ey - eyeR * 1.75, x - side * eyeR * 0.7, ey - eyeR * 2.1);
+      ctx.stroke();
     }
     if (persona === 'dramatic' && (expr === 'open' || expr === 'wide')) {
       // lashes
@@ -1105,7 +1194,34 @@ function drawFace(ctx: Ctx, look: BreedLook, ink: Ink, fx: number, fy: number, f
   // mouth
   ctx.strokeStyle = ink.mouth;
   ctx.lineWidth = 1.2 * fs;
-  if (expr === 'wide') {
+  if (expr === 'cross') {
+    // a hiss: wide open, two little fangs
+    const mw = 3.1 * fs;
+    ctx.fillStyle = shadowOf(ink.nose, 0.6);
+    ctx.beginPath();
+    ctx.moveTo(fx - mw, ny + 3 * fs);
+    ctx.quadraticCurveTo(fx, ny + 1.6 * fs, fx + mw, ny + 3 * fs);
+    ctx.quadraticCurveTo(fx + mw * 0.7, ny + 7.2 * fs, fx, ny + 7.4 * fs);
+    ctx.quadraticCurveTo(fx - mw * 0.7, ny + 7.2 * fs, fx - mw, ny + 3 * fs);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(fx + s * mw * 0.68, ny + 2.75 * fs);
+      ctx.lineTo(fx + s * mw * 0.36, ny + 2.45 * fs);
+      ctx.lineTo(fx + s * mw * 0.5, ny + 4.4 * fs);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else if (expr === 'sad') {
+    // a little frown
+    ctx.beginPath();
+    ctx.moveTo(fx, ny + 1.6 * fs);
+    ctx.lineTo(fx, ny + 2.6 * fs);
+    ctx.moveTo(fx - 2.4 * fs, ny + 4.6 * fs);
+    ctx.quadraticCurveTo(fx, ny + 2.4 * fs, fx + 2.4 * fs, ny + 4.6 * fs);
+    ctx.stroke();
+  } else if (expr === 'wide') {
     ctx.fillStyle = shadowOf(ink.nose, 0.55);
     ctx.beginPath();
     ctx.ellipse(fx, ny + 4.7 * fs, 1.9 * fs, 2.4 * fs, 0, 0, Math.PI * 2);

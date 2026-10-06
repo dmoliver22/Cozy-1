@@ -21,11 +21,14 @@ import {
   renderBrush,
   renderClick,
   renderGlorp,
+  renderHiss,
   renderImpact,
   renderIR,
   renderKick,
   renderMew,
+  renderNom,
   renderPiano,
+  renderScratch,
   renderSigh,
   renderTick,
   renderWhoosh,
@@ -300,6 +303,68 @@ export class AudioEngine {
         const sparkle = i === 2;
         this.play(g, this.bellBuffer(g, m, sparkle), sparkle ? 0.13 : 0.16, { at: t + i * 0.11, verb: CHIME_VERB, pan: (i - 0.5) * 0.15 });
       });
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /** A cat hisses: pitch 0.6..1.6. */
+  hiss(pitch: number): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'hiss', 0.3)) return;
+      this.play(g, this.hissBuffer(g, pitch), 0.13, { rate: jitter(0.05), pan: (Math.random() - 0.5) * 0.3 });
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /** Nom nom: a cat eats a fish treat. */
+  nom(pitch: number): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'nom', 0.08)) return;
+      this.play(g, this.nomBuffer(g, pitch), 0.24, { rate: jitter(0.06) });
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /** A cat eyeing something to pounce on chitters: a few quick little "ek"s. */
+  chitter(pitch: number): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'chitter', 0.6)) return;
+      const now = g.ctx.currentTime;
+      const buf = this.voiceBuffer(g, 'boop', Math.min(1.8, pitch * 1.45));
+      for (let k = 0; k < 3; k++) this.play(g, buf, 0.085 - k * 0.012, { at: now + k * 0.085, rate: 1.25 * jitter(0.06) });
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /**
+   * A scuffle in a dust cloud, `seconds` long: tumbling thumps, raked claws,
+   * hisses and yowls from both cats (their voices' pitches).
+   */
+  scuffle(seconds: number, pitchA: number, pitchB: number): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'scuffle', 0.8)) return;
+      const now = g.ctx.currentTime;
+      let t = 0.02;
+      let k = 0;
+      while (t < seconds && k < 18) {
+        const pitch = k % 2 ? pitchB : pitchA;
+        const pan = (Math.random() - 0.5) * 0.5;
+        const roll = Math.random();
+        if (roll < 0.4) this.play(g, this.impactBuffer(g, 'fabric', k % IMPACT_VARIANTS), 0.1 + Math.random() * 0.08, { at: now + t, rate: jitter(0.25), lp: 2600, pan });
+        else if (roll < 0.72) this.play(g, this.scratchBuffer(g, k % 3), 0.07 + Math.random() * 0.04, { at: now + t, rate: jitter(0.3), pan });
+        else if (roll < 0.86) this.play(g, this.hissBuffer(g, pitch), 0.06, { at: now + t, rate: jitter(0.12), pan });
+        else this.play(g, this.voiceBuffer(g, 'mrrow', Math.min(1.8, pitch * 1.25)), 0.09, { at: now + t, rate: jitter(0.18), pan });
+        t += 0.07 + Math.random() * 0.12;
+        k++;
+      }
     } catch (e) {
       this.oops(e);
     }
@@ -599,6 +664,20 @@ export class AudioEngine {
   private voiceBuffer(g: Graph, kind: 'boop' | 'mrrow' | 'sigh', pitch: number): AudioBuffer {
     const p = quant(pitch, 0.04, 1);
     return this.cached(g, `${kind}:${p}`, loRate(g), (sr) => (kind === 'sigh' ? renderSigh(sr, p, 5) : renderMew(sr, p, kind, kind === 'boop' ? 11 : 3)));
+  }
+
+  private hissBuffer(g: Graph, pitch: number): AudioBuffer {
+    const p = quant(pitch, 0.1, 1);
+    return this.cached(g, `hiss:${p}`, g.ctx.sampleRate, (sr) => renderHiss(sr, p, 41));
+  }
+
+  private nomBuffer(g: Graph, pitch: number): AudioBuffer {
+    const p = quant(pitch, 0.1, 1);
+    return this.cached(g, `nom:${p}`, loRate(g), (sr) => renderNom(sr, p, 43));
+  }
+
+  private scratchBuffer(g: Graph, variant: number): AudioBuffer {
+    return this.cached(g, `scratch:${variant}`, g.ctx.sampleRate, (sr) => renderScratch(sr, 61 + variant));
   }
 
   private bellBuffer(g: Graph, midi: number, sparkle: boolean): AudioBuffer {

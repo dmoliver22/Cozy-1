@@ -63,6 +63,17 @@ The house:
 - **The tubes**: drop a cat into the funnel, or let one go under a hood, and
   it squeezes through the glass like a sausage and pops out on the other
   floor; the view goes along with it.
+- **Their ways**: every cat has a temperament (Pip is playful, Mochi
+  easygoing, Duchess dramatic, Juniper a gentle hunter, Biscuit sleepy,
+  Inkwell mischievous) and a mood that changes from day to day (sunny,
+  grumpy, dozy), both on the cats card. Now and then one plays: it crouches
+  low, creeps up, wiggles its back end and pounces, on the ball of yarn on
+  the window sill (tap it to bat it about) or on another cat, who plays
+  along, pays it no mind, or hisses. Two touchy cats sometimes **scrap**: a
+  tumbling dust cloud with paws poking out, scratches and fluff flying. Tap
+  the cloud to break it up. Left to it, one of them usually comes out
+  **hurt**, with a plaster on and a sad face, and needs fish to feel better:
+  tap it to feed it one, a treat each, until it's well (5 to 9).
 
 In If It Fits:
 
@@ -100,6 +111,7 @@ straight into a game).
 | Spoiler-free share grid | `src/game/share.ts` |
 | Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
 | The house: three floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
+| Cats with ways of their own at home: temperaments and moods, stalk, wiggle and pounce, a ball of yarn, scraps in a dust cloud, a hurt cat nursed back with fish | `src/house/antics.ts`, art in `src/house/anticsArt.ts` |
 | 5 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |
@@ -205,7 +217,9 @@ run reports); each also still has a page of its own:
   by the rim. Free play and a daily jar.
 - **Cat Drop** (`drop.html`, `src/proto/drop/`): an endless fall through a
   cozy house. Drag to steer, tap to hop; squeeze through glass tubes, bounce on
-  cushions, eat fish to get chonkier (more points, slower squeezing), and stay
+  cushions, drop into the funnel of a long glass slide now and then (it
+  corkscrews round and shoots you twenty-odd metres down in about a second), eat
+  fish to get chonkier (more points, slower squeezing), and stay
   ahead of bath time: a few hundred simulated soap bubbles pouring down the
   house after you, drizzling as they come. Get caught and the foam fills the
   screen, then clears to your cat sitting soaked in a clawfoot bubble bath, with

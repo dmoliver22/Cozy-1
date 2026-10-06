@@ -16,9 +16,9 @@ export const TOP_STEP = { x0: 286, x1: 380, y: 128 };
 /** The living room's furniture, and (once it's open) the basement's. */
 export function homeFurniture(basement: boolean): FurniturePlacement[] {
   const out: FurniturePlacement[] = [
-    // the cat steps up to the roof tube's suction hood
+    // the cat steps up to the roof tube's suction hood (one over the other,
+    // with room between them to get a cat past)
     { type: 'shelf', ...TOP_STEP },
-    { type: 'shelf', x0: 200, x1: 296, y: 224 },
     // (clear of the box, so Inkwell lifts straight out)
     { type: 'shelf', x0: 222, x1: 380, y: 338 },
     { type: 'sill', x0: 40, x1: 164, y: 212 },
@@ -63,7 +63,7 @@ export const GIFT_SPOT = { x: 128, y: FLOOR_Y };
 /** Where each cat likes to be when it first moves in (x, and the top of what it sits on). */
 export const SPOTS: Record<BreedId, { x: number; y: number }> = {
   kitten: { x: 102, y: 212 },
-  tabby: { x: 248, y: 224 },
+  tabby: { x: 262, y: 338 },
   persian: { x: 345, y: 338 },
   mainecoon: { x: 316, y: 128 },
   chonk: { x: 318, y: 552 },

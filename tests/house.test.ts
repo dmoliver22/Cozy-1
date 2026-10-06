@@ -103,7 +103,7 @@ describe('the house', () => {
       const old = { v: 1, residents: ['kitten', 'tabby', 'sphynx'], arriving: ['persian'], welcomed: true, stats: { ...emptyHouse().stats, jarBiggest: 4 } };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(3);
+      expect(h.v).toBe(4);
       expect(h.stats.jarBiggest).toBe(3);
       expect(h.treats).toBe(START_TREATS + WELCOME_BACK);
       expect(h.residents).toEqual(['kitten', 'tabby']);
@@ -131,17 +131,19 @@ describe('the house', () => {
           { id: 2, kind: 'shelf', x: 120, y: 300 },
         ],
         nextPerch: 3,
-        where: { kitten: { x: 200, y: -183 }, tabby: { x: 150, y: FLOOR_Y } },
+        // (and Duchess was on the middle cat step, which came down later)
+        where: { kitten: { x: 200, y: -183 }, tabby: { x: 150, y: FLOOR_Y }, persian: { x: 248, y: 224 } },
       };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(3);
+      expect(h.v).toBe(4);
       expect(h.perches.map((p) => [p.y, floorAt(p.y)])).toEqual([
         [-943, 'roof'],
         [300, 'living'],
       ]);
       expect(h.where.kitten).toEqual({ x: 200, y: FLOORS.roof.floorY });
       expect(h.where.tabby).toEqual({ x: 150, y: FLOOR_Y });
+      expect(h.where.persian).toBeUndefined();
       // once is enough
       writeHouse(h);
       expect(loadHouse().perches[0].y).toBe(-943);

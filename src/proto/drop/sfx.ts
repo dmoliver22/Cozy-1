@@ -113,6 +113,52 @@ export class DropSfx {
     }
   }
 
+  /**
+   * Whee: a slide whistle for a ride down a boost slide, `secs` long: up as
+   * it whooshes in, round and round with the corkscrew (`turns`), and down
+   * and out at the bottom.
+   */
+  slide(secs: number, turns = 2): void {
+    try {
+      const ctx = this.live();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.005;
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      const f = o.frequency;
+      f.setValueAtTime(520, t);
+      f.exponentialRampToValueAtTime(1250, t + 0.22);
+      // round the turns: a swoop down and back up for each
+      const coil = secs * 0.55;
+      for (let k = 0; k < turns; k++) {
+        const a = t + 0.22 + (coil / turns) * k;
+        f.exponentialRampToValueAtTime(760, a + coil / turns / 2);
+        f.exponentialRampToValueAtTime(1150 - k * 120, a + coil / turns);
+      }
+      f.exponentialRampToValueAtTime(420, t + secs);
+      // a little vibrato, as a whistle has
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 6;
+      const lg = ctx.createGain();
+      lg.gain.value = 14;
+      lfo.connect(lg);
+      lg.connect(f);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.09, t + 0.05);
+      g.gain.setValueAtTime(0.09, t + secs - 0.15);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + secs + 0.05);
+      g.connect(this.out!);
+      o.connect(g);
+      o.start(t);
+      lfo.start(t);
+      o.stop(t + secs + 0.1);
+      lfo.stop(t + secs + 0.1);
+    } catch {
+      // ignore
+    }
+  }
+
   /** A cushion's springy boing. */
   boing(speed: number): void {
     try {

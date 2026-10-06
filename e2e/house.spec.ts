@@ -273,3 +273,110 @@ test('the cats leave a present once a day: treats', async ({ page }) => {
   await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
   expect(await page.evaluate(() => (window as unknown as { __app: HouseHandle }).__app.home.gift)).toBeNull();
 });
+
+/** A house with these cats, no present waiting, and maybe someone hurt. */
+async function livelyHouse(page: Page, residents: string[], treats: number, hurt: Record<string, { need: number; fed: number }> = {}): Promise<void> {
+  await page.goto('/');
+  await page.evaluate(
+    ([r, t, h]) => {
+      // (today's present already opened)
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      localStorage.setItem(
+        'cozy-house:v1',
+        JSON.stringify({ v: 4, residents: r, arriving: [], welcomed: true, stats: {}, treats: t, earned: t, open: [], perches: [], nextPerch: 1, where: {}, run: null, gift: today, hurt: h, toy: null, scraped: true }),
+      );
+    },
+    [residents, treats, hurt] as const,
+  );
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await page.waitForTimeout(800);
+}
+
+interface LifeHandle {
+  renderer: { worldToScreen(x: number, y: number): { x: number; y: number } };
+  session: { cats: { breed: string; body: { cx: number; cy: number; computeCentroid(): void } }[] };
+  home: {
+    hopIn: number;
+    house: { treats: number; hurt: Record<string, unknown> };
+    antics: {
+      toy: { cx: number; cy: number; computeCentroid(): void };
+      fights: { x: number; y: number }[];
+      startFight(a: unknown, b: unknown): void;
+      startStalk(c: unknown, t: { kind: 'toy' }, chain: number): void;
+    };
+  };
+}
+
+const onApp = <T,>(page: Page, fn: (a: LifeHandle) => T): Promise<T> =>
+  page.evaluate(`(${fn.toString()})(window.__app)`) as Promise<T>;
+
+test('a cat hurt in a scrap is made better with fish, a tap at a time', async ({ page }) => {
+  await livelyHouse(page, ['kitten', 'tabby'], 10, { tabby: { need: 3, fed: 0 } });
+  await onApp(page, (a) => (a.home.hopIn = 9999));
+  for (let k = 0; k < 3; k++) {
+    const p = await onApp(page, (a) => {
+      const c = a.session.cats.find((x) => x.breed === 'tabby')!;
+      c.body.computeCentroid();
+      return a.renderer.worldToScreen(c.body.cx, c.body.cy);
+    });
+    await page.mouse.click(p.x, p.y);
+    await page.waitForTimeout(300);
+  }
+  await expect.poll(() => onApp(page, (a) => JSON.stringify(a.home.house.hurt))).toBe('{}');
+  expect(await onApp(page, (a) => a.home.house.treats)).toBe(7);
+  await expect(page.locator('.hh-toast')).toContainText("Mochi's all better!");
+});
+
+test('two cats scrap in a cloud of dust, and a tap on the cloud breaks it up', async ({ page }) => {
+  await livelyHouse(page, ['kitten', 'tabby'], 10);
+  const at = await onApp(page, (a) => {
+    a.home.hopIn = 9999;
+    const [p, m] = a.session.cats;
+    a.home.antics.startFight(p, m);
+    const f = a.home.antics.fights[0];
+    return a.renderer.worldToScreen(f.x, f.y);
+  });
+  await page.waitForTimeout(500);
+  expect(await onApp(page, (a) => a.home.antics.fights.length)).toBe(1);
+  await page.mouse.click(at.x, at.y);
+  await expect.poll(() => onApp(page, (a) => a.home.antics.fights.length)).toBe(0);
+  await page.waitForTimeout(600);
+  expect(await onApp(page, (a) => JSON.stringify(a.home.house.hurt))).toBe('{}');
+});
+
+test('the ball of yarn: a tap bats it, and a playful cat pounces on it', async ({ page }) => {
+  await livelyHouse(page, ['kitten', 'tabby'], 10);
+  const toy = () =>
+    onApp(page, (a) => {
+      const t = a.home.antics.toy;
+      t.computeCentroid();
+      return { x: t.cx, y: t.cy };
+    });
+  const t0 = await toy();
+  const s = await onApp(page, (a) => {
+    a.home.hopIn = 9999;
+    const t = a.home.antics.toy;
+    t.computeCentroid();
+    return a.renderer.worldToScreen(t.cx - 3, t.cy);
+  });
+  await page.mouse.click(s.x, s.y);
+  await expect.poll(async () => {
+    const t = await toy();
+    return Math.hypot(t.x - t0.x, t.y - t0.y);
+  }).toBeGreaterThan(8);
+  await page.waitForTimeout(1500);
+  const t1 = await toy();
+  // Pip goes after it: crouch, wiggle, pounce
+  await onApp(page, (a) => a.home.antics.startStalk(a.session.cats.find((c) => c.breed === 'kitten'), { kind: 'toy' }, 0));
+  await expect
+    .poll(
+      async () => {
+        const t = await toy();
+        return Math.hypot(t.x - t1.x, t.y - t1.y);
+      },
+      { timeout: 6000 },
+    )
+    .toBeGreaterThan(8);
+});

@@ -8,7 +8,7 @@
 import { FLOOR_Y } from '../../game/props';
 import type { DecorPlacement } from '../../game/room';
 import { PALETTE, contactShadow, glint, hash01, lightOf, lineOf, mix, paperGrain, rgba, roundRect, shadowOf, softShadow, specular, type Box, type Ctx } from '../../render/paint';
-import { glassSolid, rimLip, sparkle, type GlassPart } from '../../render/propKit';
+import { glassSolid, ribbonPath, rimLip, sparkle, type GlassPart } from '../../render/propKit';
 import { THEMES, drawDecor, drawShell } from '../../render/roomArt';
 import { bakedFill, castShadow, cylinderShade, inkLine, knob, paintTex, roundShade } from '../../render/roomKit';
 import { CUSHION_GIVE } from './game';
@@ -180,6 +180,9 @@ export function paintChunkBack(ctx: Ctx, c: Chunk, s: Storey): void {
       case 'tube':
         tubeBack(ctx, a);
         break;
+      case 'slide':
+        slideBack(ctx, a);
+        break;
     }
     ctx.restore();
   }
@@ -194,7 +197,7 @@ export function paintChunkBack(ctx: Ctx, c: Chunk, s: Storey): void {
 
 /** Does this chunk paint anything over the cat? */
 export function hasFront(c: Chunk): boolean {
-  return c.art.some((a) => a.k === 'funnel' || a.k === 'tube');
+  return c.art.some((a) => a.k === 'funnel' || a.k === 'tube' || a.k === 'slide');
 }
 
 /** World rect of a chunk's front (glass) art. */
@@ -207,6 +210,11 @@ export function frontRect(c: Chunk): Box {
     } else if (a.k === 'tube') {
       b.y0 = Math.min(b.y0, a.y0 - 20);
       b.y1 = Math.max(b.y1, a.y1 + 16);
+    } else if (a.k === 'slide') {
+      for (const [, y] of a.path) {
+        b.y0 = Math.min(b.y0, y - a.hw - 12);
+        b.y1 = Math.max(b.y1, y + a.hw + 12);
+      }
     }
   }
   return b;
@@ -219,6 +227,12 @@ export function paintChunkFront(ctx: Ctx, c: Chunk): void {
     const tube = c.art.find((t): t is Extract<Art, { k: 'tube' }> => t.k === 'tube' && Math.abs(t.cx - a.cx) < 1);
     ctx.save();
     funnelFront(ctx, a, tube ?? null);
+    ctx.restore();
+  }
+  for (const a of c.art) {
+    if (a.k !== 'slide') continue;
+    ctx.save();
+    slideFront(ctx, a);
     ctx.restore();
   }
 }
@@ -925,6 +939,107 @@ function funnelFront(ctx: Ctx, a: FunnelArt, t: TubeArt | null): void {
   }
   sparkle(ctx, a.lx + (a.rx - a.lx) * 0.18, (a.ly + a.ry) / 2 + 8, 4.2, 0.85);
   sparkle(ctx, a.cx - a.hw - 8, a.mouth - 30, 2.4, 0.6);
+}
+
+type SlideArt = Extract<Art, { k: 'slide' }>;
+
+/** A line `d` to the side of a path (its glass wall, seen edge-on). */
+function offsetPath(pts: readonly [number, number][], d: number): [number, number][] {
+  const n = pts.length;
+  const out: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = pts[Math.max(0, i - 1)];
+    const [bx, by] = pts[Math.min(n - 1, i + 1)];
+    const l = Math.hypot(bx - ax, by - ay) || 1;
+    out.push([pts[i][0] - ((by - ay) / l) * d, pts[i][1] + ((bx - ax) / l) * d]);
+  }
+  return out;
+}
+
+/** A boost slide's far wall, and its shadow on the wall behind. */
+function slideBack(ctx: Ctx, a: SlideArt): void {
+  ctx.save();
+  ctx.translate(8, 7);
+  ribbonPath(ctx, a.path, a.hw * 2 + 2);
+  ctx.fillStyle = 'rgba(74,64,96,0.09)';
+  ctx.fill();
+  ctx.restore();
+  ribbonPath(ctx, a.path, a.hw * 2);
+  ctx.fillStyle = rgba(mix(a.tint, shadowOf(a.tint, 0.5), 0.3), 0.34);
+  ctx.fill();
+  ctx.strokeStyle = rgba(shadowOf(a.tint, 0.4), 0.22);
+  ctx.lineWidth = 6;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (const [i, [x, y]] of offsetPath(a.path, a.hw - 6).entries()) {
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+/**
+ * A boost slide's near wall: the glass seen edge-on down both sides, a
+ * streak of light, brass collars at its two ends, and chevrons down its long
+ * run (this way, fast!).
+ */
+function slideFront(ctx: Ctx, a: SlideArt): void {
+  const pts = a.path;
+  ribbonPath(ctx, pts, a.hw * 2);
+  ctx.fillStyle = rgba(a.tint, 0.16);
+  ctx.fill();
+  const wall: GlassPart[] = [];
+  for (const side of [-1, 1]) {
+    const line = offsetPath(pts, side * (a.hw - 2));
+    for (let i = 1; i < line.length; i++) wall.push({ k: 'cap', ax: line[i - 1][0], ay: line[i - 1][1], bx: line[i][0], by: line[i][1], r: 2.6 });
+  }
+  glassSolid(ctx, wall, [], a.tint, { body: 0.36 });
+  // a long streak down the lit side
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 2.4;
+  ctx.setLineDash([70, 30, 16, 34]);
+  ctx.beginPath();
+  for (const [i, [x, y]] of offsetPath(pts, -a.hw * 0.5).entries()) {
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+  // chevrons down the long straight run at the end
+  const [ex, ey] = pts[pts.length - 1];
+  const [sx, sy] = pts[pts.length - 2];
+  const run = ey - sy;
+  const deep = shadowOf(a.tint, 0.45);
+  for (let k = 1; k <= Math.floor(run / 110); k++) {
+    const y = sy + k * 110 - 40;
+    const x = sx + ((ex - sx) * (y - sy)) / Math.max(1, run);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const [w, c] of [
+      [4.4, rgba(deep, 0.55)],
+      [2.2, 'rgba(255,255,255,0.9)'],
+    ] as const) {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      for (const dy of [-6, 4]) {
+        ctx.moveTo(-7, dy - 5);
+        ctx.lineTo(0, dy + 2);
+        ctx.lineTo(7, dy - 5);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  collar(ctx, pts[0][0], pts[0][1] + 6, a.hw + 4.5);
+  collar(ctx, ex, ey - 4, a.hw + 4.5);
+  sparkle(ctx, pts[0][0] - a.hw * 0.4, pts[0][1] + 28, 3.4, 0.85);
+  glint(ctx, ex - a.hw * 0.5, ey - 20, 1, 0.8);
 }
 
 /** A tapered white streak on glass, from (x0,y0) to (x1,y1). */

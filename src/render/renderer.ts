@@ -53,6 +53,11 @@ export interface Stage {
   overlay?(ctx: Ctx, dt: number): void;
   /** A cat in a glass tube: drawn without a shadow, with this face (null: not in a tube). */
   inTube?(cat: Cat): Expression | null;
+  /**
+   * What a cat is up to says how it looks (null: the usual): its face, where
+   * it's looking (-1..1), and whether it casts its shadow (not in a scuffle).
+   */
+  face?(cat: Cat): { expression: Expression; look?: number; shadow?: boolean; wiggle?: { sway: number; rear: 1 | -1 } } | null;
   /** Cats drawn under the front layer (in a tube, or curled in something with a front). */
   behindFront?(cat: Cat): boolean;
 }
@@ -642,7 +647,7 @@ export class Renderer {
       v.update(dt);
       return this.poseFor(cat, v);
     });
-    for (let i = 0; i < s.cats.length; i++) if (!poses[i].rim && !st?.inTube?.(s.cats[i])) this.drawCatShadow(ctx, s.cats[i]);
+    for (let i = 0; i < s.cats.length; i++) if (!poses[i].rim && !st?.inTube?.(s.cats[i]) && st?.face?.(s.cats[i])?.shadow !== false) this.drawCatShadow(ctx, s.cats[i]);
     // Cats in a container go under its (glass) front, resting on its floor in
     // a soft shadow; their front paws go over the rim.
     for (let i = 0; i < s.cats.length; i++) {
@@ -835,6 +840,7 @@ export class Renderer {
     const b = cat.body;
     let expression: Expression = 'open';
     let look = 0;
+    let wiggle: CatPose['wiggle'] = null;
     const seat = cat.seat;
     if (cat.grabbed) {
       // startled when scooped up; held still by the scruff, it goes calm
@@ -850,6 +856,13 @@ export class Renderer {
     if (tubeFace) {
       expression = tubeFace;
       look = 0;
+    } else {
+      const f = this.stage?.face?.(cat);
+      if (f) {
+        expression = f.expression;
+        if (f.look !== undefined) look = f.look;
+        wiggle = f.wiggle ?? null;
+      }
     }
     const k = this.containerFor(cat);
     const c = k >= 0 ? s.containers[k] : null;
@@ -873,6 +886,7 @@ export class Renderer {
     return {
       expression,
       look,
+      wiggle,
       rim,
       seated: !!seat,
       resting,

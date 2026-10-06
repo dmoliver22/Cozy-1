@@ -276,6 +276,17 @@ export function mountDrop(host: HTMLElement, shell: ProtoShell): Mounted {
           v.fx.drops(e.x, e.y + 6, 7, 'rgba(207,227,242,0.9)');
           v.fx.puff(e.x, e.y + 8, 5);
           break;
+        case 'boost':
+          // into a slide: whee
+          sfx.slide(e.secs);
+          audio.glorp(1.3 - sizeOf() * 0.3, 0.4 + sizeOf() * 0.3, 0.2);
+          v.fx.sparks(e.x, e.y, 9, '#FFE9A8');
+          break;
+        case 'boostOut':
+          audio.glorp(0.9 - sizeOf() * 0.25, 0.6 + sizeOf() * 0.4, 0.2);
+          v.fx.puff(e.x, e.y + 8, 6);
+          v.fx.ring(e.x, e.y + 6, '#FFF8EE', c.p.radius * 1.5);
+          break;
         case 'storey':
           ui.room(e.name);
           break;

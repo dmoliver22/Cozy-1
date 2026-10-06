@@ -410,4 +410,44 @@ the choices:
   and pops out round at the far mouth, where it goes back into the physics
   moving the way the mouth points. It's out of the world while it rides, is
   drawn under the glass's front (a cached front layer) and the camera rides
-  along with it.
+  along with it. The ride doesn't know about houses (it's generic over who
+  rides and what tube, with a tube's own speed and an optional whoosh that
+  speeds up all the way), so Cat Drop's boost slides use it too: now and
+  then (about one chunk in eighteen, never in the attic) a funnel narrows
+  into a glass slide that corkscrews twice and then runs straight down, 17
+  to 24 m in all, ridden at up to 2,300 units a second (a fall tops out at
+  720), and the cat shoots out of the bottom still going fast. The funnel's
+  mouth is the only way down past it, and a tap mid-ride does nothing.
+- **The cat steps** up the living room wall were three shelves; the middle
+  one went, as with it there wasn't room to get a cat past between them (a
+  cat saved sitting on it comes down to a free spot).
+- **Ways of their own** (`antics.ts`). Each cat has a temperament (how
+  playful, how touchy, how lazy, how keen on the yarn) and a mood for the
+  day, hashed from the breed and the date so it holds all day (sunny,
+  grumpy, dozy, or nothing in particular), which nudges those. When a
+  resting cat's turn comes it may play instead of hopping somewhere: stalk
+  the yarn or a cat on its floor. A stalk is four beats: a crouch (the soft
+  body's rest shape flattened and lengthened, area kept, so the physics
+  crouches), a creep along the floor if it's far, a wiggle of the back end,
+  and a low guided leap onto the yarn or the other cat's back. The wiggle
+  is painted, not simulated (`CatPose.wiggle` bends the drawn outline):
+  shape matching ironed a physics wiggle flat. The yarn is a little soft
+  body of its own, with drag so it rolls to a stop; batted, it shoots off.
+  A pounced-on cat plays along (chases, or pounces back), takes no notice,
+  or hisses (ears flat, fangs) and the pouncer runs off; both are cross for
+  a while. Two touchy cats, or cross ones, now and then scrap instead
+  (`scrapChance`, and at most one scrap in three minutes): both leave the
+  physics and tumble inside a dust cloud painted over them, paws and ears
+  poking out (never downwards, where they'd show through the shelf), with
+  scratches, stars, and fluff that floats down and settles. A tap breaks it
+  up. Left to it, one of them (more likely the smaller) usually comes out
+  hurt: a plaster, a sad face and a fish badge counting down the fish it
+  needs (5 to 9, a treat each, fed one per tap; hearts when it's well), and
+  a hurt cat stays put more. The save keeps who's hurt and where the yarn
+  is. None of it goes near a tube's mouth or over the open funnel: nobody
+  plays or hops out over it, a cat popping out of a scrap is flung where it
+  lands safely (if it would sail off the end of a ledge, the landing on the
+  floor below is checked too), and yarn that comes to rest down there
+  bounces back out. A cat knocked off something still falls in now and
+  then (it's what the funnel is for): one that tumbles in by itself goes
+  down without taking the view with it, and a note says where it went.
