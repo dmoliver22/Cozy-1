@@ -46,14 +46,19 @@ function dadoTop(theme: Theme): number {
 }
 
 /** Wall + floor + skirting, painted across the visible world rect. */
-export function drawShell(ctx: Ctx, theme: Theme, vx0: number, vy0: number, vx1: number, vy1: number, seed: number): void {
+/**
+ * A room's walls and floor over the rows vy0..vy1. `ceil` is where its
+ * ceiling is, for a room taller than a screen (the home's living room): the
+ * shade under the ceiling goes there.
+ */
+export function drawShell(ctx: Ctx, theme: Theme, vx0: number, vy0: number, vx1: number, vy1: number, seed: number, ceil = 0): void {
   // beyond the dollhouse's side walls the renderer paints the backdrop, so
   // there is no need to paint the room there (it matters on wide screens)
   vx0 = Math.max(vx0, -10);
   vx1 = Math.min(vx1, WORLD_W + 10);
   const top = dadoTop(theme);
   ctx.save();
-  wallWash(ctx, theme, vx0, vy0, vx1, top, seed);
+  wallWash(ctx, theme, vx0, vy0, vx1, top, seed, ceil);
   // wallpaper (upper wall; motifs stop short of the rail, which covers the seam)
   wallpaper(ctx, theme, vx0, vy0, vx1, top - RAIL + 1, seed);
   // lower wall, rails and skirting
@@ -120,7 +125,7 @@ let washCanvas: HTMLCanvasElement | null = null;
  * texture) is all low-frequency, so it is laid at low resolution and scaled
  * up in one draw. Crisp details go on top at full resolution.
  */
-function wallWash(ctx: Ctx, theme: Theme, vx0: number, vy0: number, vx1: number, top: number, seed: number): void {
+function wallWash(ctx: Ctx, theme: Theme, vx0: number, vy0: number, vx1: number, top: number, seed: number, ceil: number): void {
   const q = Math.min(1.3, Math.max(0.5, pxPerUnit(ctx) * 0.45));
   const w = vx1 - vx0;
   const h = FLOOR_Y - vy0;
@@ -168,12 +173,12 @@ function wallWash(ctx: Ctx, theme: Theme, vx0: number, vy0: number, vx1: number,
   g.fillRect(vx0, top, w, FLOOR_Y - top + 1);
   // shade under the ceiling and along the dollhouse side walls
   const dim = shadowOf(theme.wall, 0.6);
-  if (vy0 < 40) {
-    const cg = g.createLinearGradient(0, Math.min(vy0, -110), 0, 40);
+  if (vy0 < ceil + 40) {
+    const cg = g.createLinearGradient(0, Math.min(vy0, ceil - 110), 0, ceil + 40);
     cg.addColorStop(0, rgba(dim, 0.4));
     cg.addColorStop(1, rgba(dim, 0));
     g.fillStyle = cg;
-    g.fillRect(vx0, vy0, w, 40 - vy0);
+    g.fillRect(vx0, vy0, w, ceil + 40 - vy0);
   }
   for (const [x, dir] of [
     [0, 1],
@@ -2498,17 +2503,18 @@ function drawPendant(ctx: Ctx, d: DecorPlacement, theme: Theme): void {
   glow.addColorStop(1, 'rgba(255,226,170,0)');
   ctx.fillStyle = glow;
   ctx.fillRect(x - 70, y1 - 67, 140, 140);
-  // cord from the ceiling, brass fitting
+  // cord from the ceiling (`h` long; by default from well over the top of a room), brass fitting
+  const top = y1 - (d.h ?? y1 + 400);
   ctx.strokeStyle = '#5E5468';
   ctx.lineWidth = 1.1;
   ctx.beginPath();
-  ctx.moveTo(x, -400);
+  ctx.moveTo(x, top);
   ctx.lineTo(x, y1 - 22);
   ctx.stroke();
   ctx.strokeStyle = 'rgba(255,248,236,0.35)';
   ctx.lineWidth = 0.4;
   ctx.beginPath();
-  ctx.moveTo(x - 0.3, -400);
+  ctx.moveTo(x - 0.3, top);
   ctx.lineTo(x - 0.3, y1 - 22);
   ctx.stroke();
   const brass = '#CDA86C';

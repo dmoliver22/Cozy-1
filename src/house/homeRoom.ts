@@ -1,25 +1,25 @@
 // The house as a room: its furniture on every floor, the box and the basket,
-// the living room's decor and where the cats are; and the ways into the three
-// games. The glass box on the rug is If It Fits, the little jar of cats on the
-// shelf is Cat Jar, and the attic hatch over the cat steps is Cat Drop (a cat
-// starts up in the attic and drops down through the house).
+// the living room's decor (up its tall wall too) and where the cats are, and
+// the room the tubes and the chimney take up.
 
 import { FLOOR_Y, WORLD_W, type ContainerPlacement, type FurniturePlacement } from '../game/props';
 import type { CatPlacement, DecorPlacement, RoomDef } from '../game/room';
 import { BREEDS, type BreedId } from '../physics/breeds';
-import type { GameId, HouseSave } from './house';
-import { CEIL_Y, HATCH, TOP_STEP } from './homeArt';
+import type { HouseSave } from './house';
 import { NAMES, isOpen } from './house';
-import { BASEMENT_DY, CHIMNEY, FLOORS, SPOUT, TUBES, floorAt } from './layout';
+import { BASEMENT_DY, CHIMNEY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, OUTLET, SPOUT, TUBES, floorAt, type Tube } from './layout';
 import type { Box } from './perches';
+
+/** The top cat step, under the roof tube's hood. */
+export const TOP_STEP = { x0: 286, x1: 380, y: 128 };
 
 /** The living room's furniture, and (once it's open) the basement's. */
 export function homeFurniture(basement: boolean): FurniturePlacement[] {
   const out: FurniturePlacement[] = [
-    // the cat steps up to the attic hatch (and the roof's suction hood)
+    // the cat steps up to the roof tube's suction hood
     { type: 'shelf', ...TOP_STEP },
     { type: 'shelf', x0: 200, x1: 296, y: 224 },
-    // the shelf with the jar of cats (clear of the box, so Inkwell lifts straight out)
+    // (clear of the box, so Inkwell lifts straight out)
     { type: 'shelf', x0: 222, x1: 380, y: 338 },
     { type: 'sill', x0: 40, x1: 164, y: 212 },
   ];
@@ -38,19 +38,25 @@ export function homeContainers(): ContainerPlacement[] {
   ];
 }
 
-/** The living room's decor (the other floors paint their own). */
+/**
+ * The living room's decor (the other floors paint their own): down by the
+ * floor as it always was, and up the tall wall a high window, pictures and
+ * bunting under the ceiling, with the lamp hanging down from it on a long cord.
+ */
 export function homeDecor(): DecorPlacement[] {
   return [
     { type: 'window', x: 102, y: 56, w: 112, h: 136, variant: 0 },
     { type: 'picture', x: 96, y: 300, w: 46, h: 38, variant: 1 },
     { type: 'clock', x: 228, y: 112, w: 15 },
-    { type: 'pendant', x: 160, y: 44 },
+    { type: 'pendant', x: 160, y: 44, h: 44 - LIVING_CEIL },
     { type: 'rug', x: 238, y: FLOOR_Y, w: 220 },
+    { type: 'window', x: 236, y: -410, w: 92, h: 118, variant: 1 },
+    { type: 'picture', x: 92, y: -300, w: 54, h: 66, variant: 0 },
+    { type: 'picture', x: 98, y: -170, w: 40, h: 34, variant: 2 },
+    { type: 'garland', x: 168, y: LIVING_CEIL + 12, w: 300 },
   ];
 }
 
-/** The little jar of cats: where it stands and how big it's drawn. */
-export const JAR_SPOT = { x: 258, y: 338, s: 0.42 };
 /** Where the cats leave their present (on the floor between the funnel and the box). */
 export const GIFT_SPOT = { x: 128, y: FLOOR_Y };
 
@@ -64,14 +70,34 @@ export const SPOTS: Record<BreedId, { x: number; y: number }> = {
   void: { x: 196, y: 553 },
 };
 
-/** Room nothing else may take: the tubes, their mouths and the space under them, and the chimney. */
-export function fittingBoxes(h: Pick<HouseSave, 'open'>): Box[] {
+/** The glass of a tube (there from the start, capped or not). */
+function glassBoxes(t: Tube): Box[] {
+  if (t.id === 'chute') {
+    return [
+      { x0: FUNNEL.x - FUNNEL.rimHw - 6, y0: FUNNEL.rimY - 6, x1: FUNNEL.x + FUNNEL.rimHw + 6, y1: FLOOR_Y },
+      { x0: SPOUT.x - 26, y0: BASEMENT_DY - 4, x1: SPOUT.x + 26, y1: SPOUT.y + 6 },
+    ];
+  }
+  return [
+    // up out of the roof deck and over to its hood, and down the living room wall to the hood over the cat steps
+    { x0: OUTLET.x - 30, y0: OUTLET.top - 46, x1: HOOD.x + 26, y1: OUTLET.y + 6 },
+    { x0: HOOD.x - 26, y0: FLOORS.roof.floorY - 200, x1: HOOD.x + 26, y1: FLOORS.roof.floorY },
+    { x0: HOOD.x - 26, y0: LIVING_CEIL, x1: HOOD.x + 26, y1: HOOD.y + 6 },
+  ];
+}
+
+/**
+ * Room nothing else may take: every tube's glass, the chimney, and the space
+ * at an open tube's mouths, where cats go in and come out (with `mouths`
+ * 'all', a capped tube's too: a perch mustn't be in the way of a tube that
+ * opens later).
+ */
+export function fittingBoxes(h: Pick<HouseSave, 'open'>, mouths: 'open' | 'all' = 'open'): Box[] {
   const out: Box[] = [];
   for (const t of TUBES) {
-    if (!isOpen(h as HouseSave, t.needs)) continue;
+    out.push(...glassBoxes(t));
+    if (mouths === 'open' && !isOpen(h as HouseSave, t.needs)) continue;
     for (const m of [t.upper, t.lower]) out.push({ x0: m.zone.x0 - 6, y0: m.zone.y0 - 30, x1: m.zone.x1 + 6, y1: m.zone.y1 });
-    if (t.id === 'chute') out.push({ x0: SPOUT.x - 26, y0: BASEMENT_DY - 4, x1: SPOUT.x + 26, y1: SPOUT.y });
-    else out.push({ x0: t.upper.x - 30, y0: FLOORS.roof.floorY - 200, x1: t.lower.x + 26, y1: FLOORS.roof.floorY }, { x0: t.lower.x - 26, y0: 0, x1: t.lower.x + 26, y1: t.lower.y });
   }
   out.push({ x0: CHIMNEY.x0 - 4, y0: CHIMNEY.y, x1: CHIMNEY.x1 + 4, y1: FLOORS.roof.floorY });
   return out;
@@ -96,29 +122,4 @@ export function houseRoom(h: Pick<HouseSave, 'open' | 'residents' | 'where'>): R
     return { breed: b, x: SPOTS[b].x, y: SPOTS[b].y, name: NAMES[b] };
   });
   return { id: 'home', name: 'Home', theme: 'living', furniture: homeFurniture(isOpen(h as HouseSave, 'basement')), containers: homeContainers(), decor: homeDecor(), cats };
-}
-
-export interface Portal {
-  game: GameId;
-  name: string;
-  /** Tap area (world). */
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-  /** Where its label sits (world): the label's bottom middle. */
-  lx: number;
-  ly: number;
-}
-
-export const PORTALS: Portal[] = [
-  { game: 'fits', name: 'If It Fits', x0: 146, y0: 470, x1: 264, y1: 564, lx: 196, ly: 466 },
-  { game: 'jar', name: 'Cat Jar', x0: 220, y0: 254, x1: 298, y1: 340, lx: 258, ly: 252 },
-  // the hatch and its ladder (a cat on the step below gets the tap first)
-  { game: 'drop', name: 'Cat Drop', x0: HATCH.x0 - 4, y0: CEIL_Y - 26, x1: HATCH.x1 + 10, y1: TOP_STEP.y - 4, lx: HATCH.x0 - 46, ly: CEIL_Y + 30 },
-];
-
-/** The game whose way in is at a world point (null if none). */
-export function portalAt(x: number, y: number): Portal | null {
-  return PORTALS.find((p) => x >= p.x0 && x <= p.x1 && y >= p.y0 && y <= p.y1) ?? null;
 }

@@ -311,29 +311,36 @@ the choices:
   or the basket. The house stacks three floors in one world: the roof garden
   on top, the living room in the middle (where you start) and the basement
   under it (`layout.ts`). Each floor is laid out in the same local frame as a
-  room (ceiling at 0, floor at `FLOOR_Y`) and moved by its `dy`, so the room
-  painters and the furniture (`FurniturePlacement.dy`) work on every floor
-  unchanged; the session gets the house's own shell (`SessionOptions.shell`:
-  side walls top to bottom, a solid slab between floors, a lid on the sky)
-  instead of a room's walls, so a cat can only change floors through a tube.
-  The renderer takes the house as a `Stage`: it paints it in three cached
-  tiles (the one on screen at once, the others a frame each after that), and
-  the camera scrolls between the floors (a finger drag with a fling that
-  settles on the nearest floor, a mouse wheel, a pill at the top and bottom of
-  the view naming the next floor up and down). The house's own art: the roof
-  garden (sky, neighbours' roofs, a deck, a railing with bunting, a chimney a
-  cat can sit on), the attic between the roof and the living room (Cat Drop's
-  hatch opens into it), the ceiling with its hatch and ladder, the little jar
-  of cats (the big jar's glass, twine and tag, with a heap of real soft-body
-  cats settled inside once and drawn small), and the basement den (warm
-  plaster with brick showing, joists and a copper pipe overhead, a high
-  window, string lights, the bookcase that used to be upstairs).
-- **The ways in are things in the room**: the glass box (If It Fits: if it
-  fits, I sits), the jar of cats (Cat Jar) and the ladder up to the attic
-  (Cat Drop starts in the attic). Each has a label, a tap on the thing works
-  (a cat under the finger gets the tap first), and the bar of three tins along
-  the bottom says the same thing plainly, with the face of the next cat you
-  can meet in that game peeking over its lid.
+  room (the top of a room's wall at 0, floor at `FLOOR_Y`) and moved by its
+  `dy`, so the room painters and the furniture (`FurniturePlacement.dy`) work
+  on every floor unchanged. The living room is twice as tall: its wall goes
+  on up to a ceiling at `-FLOOR_Y`, a whole screen of wall over the room you
+  start in, for perches (the room painters take the ceiling's height, so the
+  shade under it goes there). The session gets the house's own shell
+  (`SessionOptions.shell`: side walls top to bottom, a solid slab between
+  floors, a lid on the sky) instead of a room's walls, so a cat can only
+  change floors through a tube. The renderer takes the house as a `Stage`: it
+  paints it in four cached tiles (the one on screen at once, the others a
+  frame each after that), and the camera scrolls between four stops: the
+  roof, up high in the living room, down by its floor, the basement (a finger
+  drag with a fling that settles on the nearest stop, a mouse wheel, a pill
+  at the top and bottom of the view naming the next stop up and down; and a
+  cat carried to the top or the bottom of the screen takes the view along
+  with it, up and down the tall wall). The house's own art: the roof garden
+  (sky, neighbours' roofs, a deck, a railing with bunting, a chimney a cat
+  can sit on), the attic between the roof and the living room, the living
+  room's tall wall (a high window, pictures, bunting under the ceiling, the
+  lamp on a long cord) and its ceiling with the roof tube's pipe going up
+  through it, and the basement den (warm plaster with brick showing, joists
+  and a copper pipe overhead, a high window, string lights, the bookcase that
+  used to be upstairs). A house saved before the living room grew has its
+  roof garden's perches and cats moved up with the roof, and a perch that's
+  where a tube now always is goes back in the cupboard.
+- **The ways in are the big buttons along the bottom**: a bar of three tins,
+  each with the face of the next cat you can meet in that game peeking over
+  its lid, and the shop's. (Labels on things in the room said the same again,
+  and a little jar of cats on a shelf and a hatch up to the attic were more
+  things on the wall where perches go: they went.)
 - **Mounting.** Cat Jar and Cat Drop mount over the page and unmount again
   (`src/proto/shell.ts`). Their stylesheets and the page's share names (`.card`,
   `.btn`, `body`), so the page's stylesheet is attached from JS (`?inline`) and
@@ -353,13 +360,19 @@ the choices:
   not just how it went, so a cat announces itself the moment it's earned, in a
   toast that shows over any game. A new house counts progress made before it
   existed.
-- **Arrivals.** An earned cat waits until you're home, then drops in through
-  the attic hatch onto the top cat step, with a card. Residents start in their
-  favourite spots and after that stay where they were (the house remembers
-  where each cat was, on whichever floor); every so often one who's been
-  resting hops (a ballistic kick) to a free spot nearby on its floor, up a
-  run of perches if there is one (higher spots are favourites), sometimes
-  into the box or the basket, where it purrs.
+- **Arrivals.** An earned cat waits until you're home, then hops in at the
+  window and leaps from there to the nearest free spot, with a card once
+  it's landed. Residents start in their favourite spots and after that stay
+  where they were (the house remembers where each cat was, on whichever
+  floor); every so often one who's been resting leaps to a free spot nearby
+  on its floor, up a run of perches if there is one (higher spots are
+  favourites, and the perches you've put up most of all), sometimes into the
+  box or the basket, where it purrs. A leap is guided: the cat is out of the
+  physics while it flies a gravity arc high enough to clear the edge it's
+  landing on, stretching a little along the way it's going, and lands with
+  the speed it's falling at (a ballistic kick fell short: a soft body pushing
+  off loses much of its spring). Nobody leaps straight up into the underside
+  of a ledge, or to where someone is or is on the way to.
 - **Treats.** Every game pays treats, about the same for the time it takes
   (ten or fifteen a minute): a new If It Fits room 25 (5 for a replay), plus 5
   for a cozy one and 5 for par; Cat Jar a treat per 400 points (~100 for a
@@ -375,16 +388,21 @@ the choices:
   A perch you buy goes where you put it: it's drawn live over the room with a
   green or red box while you drag it (floor perches stand on the floor under
   the finger, wall ones go anywhere on a wall clear of the floor, the
-  furniture, the tubes and the ways into the games, and out on the roof only
-  the cloud shelf floats), and a long press on a perch picks it up again. A
+  furniture and the tubes, capped or not, and out on the roof only the cloud
+  shelf floats), and a long press on a perch picks it up again. A
   perch is a few colliders (a rounded box, a sling of capsules, a bowl) and a
   painted back and front: a cat curled in the hammock or the pod is drawn
   between the two (`Stage.behindFront`).
 - **The tubes.** A funnel in the living room floor drops a cat that falls into
   it down a glass pipe to the basement, where it lands on a beanbag; let a cat
   go under the basement's hood and it's sucked back up, popping out of the
-  funnel. A suction hood over the top cat step whooshes a cat up through the
-  ceiling, the attic and the deck to the roof garden and back. The ride
+  funnel. A suction hood over the top cat step whooshes a cat up a pipe on
+  the wall, through the ceiling, the attic and the deck to the roof garden
+  and back. Both are there from the start, so you can see where they go:
+  until the floor a tube goes to is open it's capped, a wooden lid on the
+  funnel and a steel cap on each hood, padlocked (colliders too: a cat can
+  sit on the funnel's lid and can't get into a hood), and a tap on a capped
+  tube opens the shop. The ride
   (`tubes.ts`) moves the cat's own outline: it stretches into the mouth (the
   ring blended from the cat to a sausage as wide as the bore, with the same
   area, its nodes matched to the nearest outline points so nothing crosses),

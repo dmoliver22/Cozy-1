@@ -2,7 +2,8 @@
 // roof garden up in the sky, the attic between it and the living room, the
 // basement den under the living room (dusty and dark until it's opened), the
 // cut edges between the floors, and the two glass tubes that join them, with
-// a funnel in the living room floor and suction hoods at the other ends.
+// a funnel in the living room floor and suction hoods at the other ends
+// (capped and padlocked until the floor they go to is opened).
 
 import { FLOOR_Y, WORLD_W } from '../game/props';
 import type { DecorPlacement } from '../game/room';
@@ -10,7 +11,6 @@ import { glint, hash01, lightOf, mix, rgba, roundRect, shadowOf, softShadow, typ
 import { glassSolid, rimLip, ribbonPath, sparkle, type GlassPart } from '../render/propKit';
 import { THEMES, drawDecor, drawShell, drawSunbeams, paintFloor, type Theme } from '../render/roomArt';
 import { castShadow, cylinderShade, inkLine, knob, paintTex } from '../render/roomKit';
-import { HATCH } from './homeArt';
 import {
   ATTIC_TOP,
   BASEMENT_CUT,
@@ -21,6 +21,7 @@ import {
   FLOORS,
   FUNNEL,
   HOOD,
+  LIVING_CEIL,
   LIVING_CUT,
   OUTLET,
   ROOF_DY,
@@ -331,7 +332,7 @@ export function paintRoof(ctx: Ctx, r: Rect, seed: number): void {
 // ---------------------------------------------------------------------------
 // The attic
 
-/** The attic, seen through the cut: dim boards, a beam and posts, boxes, the hatch's warm glow. */
+/** The attic, seen through the cut: dim boards, a beam and posts, boxes, lamplight up round the roof tube. */
 export function paintAttic(ctx: Ctx, r: Rect, seed: number): void {
   ctx.save();
   if (!clipRows(ctx, r, ATTIC_TOP, LIVING_CUT)) {
@@ -387,7 +388,7 @@ export function paintAttic(ctx: Ctx, r: Rect, seed: number): void {
     ctx.lineTo(px + 4, ATTIC_TOP + 34);
     ctx.stroke();
   }
-  // boxes and a trunk, keeping out of the hatch's way
+  // boxes and a trunk, clear of the roof tube
   const floor = LIVING_CUT;
   const boxes: [number, number, number, string][] = [
     [72, 40, 30, '#B9946E'],
@@ -406,13 +407,13 @@ export function paintAttic(ctx: Ctx, r: Rect, seed: number): void {
     ctx.fillStyle = rgba(shadowOf(c, 0.5), 0.35);
     ctx.fillRect(bx + bw / 2 - 1, floor - bh, 2, bh);
   }
-  // the hatch's lamplight, spilling up from the living room
-  const hx = (HATCH.x0 + HATCH.x1) / 2;
-  const hg = ctx.createRadialGradient(hx, floor, 0, hx, floor, 110);
-  hg.addColorStop(0, rgba(ATTIC_LIT, 0.55));
+  // the living room's lamplight, coming up round the roof tube where it goes through the floor
+  const hx = HOOD.x;
+  const hg = ctx.createRadialGradient(hx, floor, 0, hx, floor, 80);
+  hg.addColorStop(0, rgba(ATTIC_LIT, 0.4));
   hg.addColorStop(1, rgba(ATTIC_LIT, 0));
   ctx.fillStyle = hg;
-  ctx.fillRect(hx - 110, floor - 110, 220, 110);
+  ctx.fillRect(hx - 80, floor - 80, 160, 80);
   // a cobweb in the corner
   ctx.strokeStyle = 'rgba(230,226,240,0.35)';
   ctx.lineWidth = 0.7;
@@ -635,67 +636,34 @@ export function paintBasement(ctx: Ctx, r: Rect, open: boolean, seed: number): v
     for (const d of BASEMENT_DECOR) if (d.type === 'rug' || d.type === 'window' || d.type === 'picture' || d.type === 'radiator') drawDecor(ctx, d, BASEMENT_THEME, seed + d.x);
     for (const d of BASEMENT_DECOR) if (!(d.type === 'rug' || d.type === 'window' || d.type === 'picture' || d.type === 'radiator')) drawDecor(ctx, d, BASEMENT_THEME, seed + d.x);
     drawSunbeams(ctx, BASEMENT_DECOR);
-  } else {
-    storageBoxes(ctx, seed);
-    // dark and dusty
-    ctx.fillStyle = 'rgba(40,34,62,0.62)';
-    ctx.fillRect(x0, -20, x1 - x0, FLOOR_Y + 60);
-    const lg = ctx.createRadialGradient(FUNNEL.x, 0, 0, FUNNEL.x, 0, 200);
-    lg.addColorStop(0, 'rgba(255,214,150,0.12)');
-    lg.addColorStop(1, 'rgba(255,214,150,0)');
-    ctx.fillStyle = lg;
-    ctx.fillRect(x0, -20, x1 - x0, 260);
-  }
+  } else storageBoxes(ctx, seed);
   ctx.restore();
 }
 
 const ROOM_BOTTOM_LIVING = FLOOR_Y + 44;
 
-/** The living room's floor where the basement isn't open yet: a trapdoor, bolted. */
-export function paintTrapdoor(ctx: Ctx): void {
-  const x = FUNNEL.x;
-  const y0 = FLOOR_Y + 6;
-  const y1 = FLOOR_Y + 32;
-  const w0 = 66;
-  const w1 = 76;
-  const wood = '#9C7A5C';
-  const p = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(x - w0 / 2, y0);
-    ctx.lineTo(x + w0 / 2, y0);
-    ctx.lineTo(x + w1 / 2, y1);
-    ctx.lineTo(x - w1 / 2, y1);
-    ctx.closePath();
-  };
+/**
+ * A shut basement is dark and dusty: painted over everything down there
+ * (the chute's glass too), in the front layer, as nobody can be down there.
+ */
+export function paintBasementShade(ctx: Ctx, r: Rect): void {
   ctx.save();
-  ctx.fillStyle = wood;
-  p();
-  ctx.fill();
-  paintTex(ctx, p, 'wood', 0.35, 0.3, 0.6, x, y0);
-  ctx.strokeStyle = rgba(shadowOf(wood, 0.6), 0.6);
-  ctx.lineWidth = 1;
-  for (let k = 1; k < 4; k++) {
-    const u = k / 4;
-    ctx.beginPath();
-    ctx.moveTo(x - w0 / 2 + w0 * u, y0);
-    ctx.lineTo(x - w1 / 2 + w1 * u, y1);
-    ctx.stroke();
+  if (!clipRows(ctx, r, BASEMENT_CUT + 11, r.y1)) {
+    ctx.restore();
+    return;
   }
-  inkLine(ctx, p, wood, 1, 0.7);
-  // an iron ring and a little padlock
-  ctx.strokeStyle = '#5E5468';
-  ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  ctx.ellipse(x + 18, (y0 + y1) / 2, 5, 3, 0, 0, TAU);
-  ctx.stroke();
-  ctx.fillStyle = '#D9B45E';
-  roundRect(ctx, x - 6, (y0 + y1) / 2 - 3, 9, 8, 1.5);
-  ctx.fill();
-  ctx.strokeStyle = '#8C6E3C';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.arc(x - 1.5, (y0 + y1) / 2 - 3, 3, Math.PI, 0);
-  ctx.stroke();
+  // (inside the house's side walls, down past the floor's front edge)
+  const x0 = Math.max(r.x0, 0);
+  const x1 = Math.min(r.x1, WORLD_W);
+  ctx.translate(0, BASEMENT_DY);
+  ctx.fillStyle = 'rgba(40,34,62,0.62)';
+  ctx.fillRect(x0, -20, x1 - x0, r.y1 - BASEMENT_DY + 20);
+  // a little light down the chute from the living room
+  const lg = ctx.createRadialGradient(FUNNEL.x, 0, 0, FUNNEL.x, 0, 200);
+  lg.addColorStop(0, 'rgba(255,214,150,0.12)');
+  lg.addColorStop(1, 'rgba(255,214,150,0)');
+  ctx.fillStyle = lg;
+  ctx.fillRect(x0, -20, x1 - x0, 260);
   ctx.restore();
 }
 
@@ -912,11 +880,99 @@ function funnelFront(ctx: Ctx): void {
   glint(ctx, f.x - f.neckHw + 3, f.neckY + 6, 1, 0.8);
 }
 
-/** A tube's far half, the hoods' insides and the funnel's back: under the cats. */
-export function paintTubeBack(ctx: Ctx, t: Tube): void {
+/** The lid on the funnel while the basement's shut: a round of wood sitting in the rim (cats can sit on it). */
+function funnelLid(ctx: Ctx): void {
+  const f = FUNNEL;
+  const x = f.x;
+  const top = f.rimY - 7;
+  const rx = f.rimHw + 4;
+  const ry = 3.2;
+  const th = 7;
+  const wood = '#B88C62';
+  softShadow(ctx, x + 3, f.rimY + 3, rx * 0.9, 3, 0.3);
+  const side = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(x - rx, top);
+    ctx.lineTo(x - rx, top + th);
+    ctx.ellipse(x, top + th, rx, ry, 0, Math.PI, 0, true);
+    ctx.lineTo(x + rx, top);
+    ctx.closePath();
+  };
+  ctx.fillStyle = shadowOf(wood, 0.18);
+  side();
+  ctx.fill();
+  cylinderShade(ctx, side, x - rx, x + rx, wood, 0.6, 0.5);
+  paintTex(ctx, side, 'wood', 0.3, 0.3, 0.5, x, top);
+  inkLine(ctx, side, wood, 0.9, 0.6);
+  const face = (): void => {
+    ctx.beginPath();
+    ctx.ellipse(x, top, rx, ry, 0, 0, TAU);
+  };
+  ctx.fillStyle = lightOf(wood, 0.25);
+  face();
+  ctx.fill();
+  paintTex(ctx, face, 'wood', 0.35, 0.3, 0.5, x, top);
+  inkLine(ctx, face, wood, 0.8, 0.55);
+  // a little knob to lift it by
+  knob(ctx, x - 14, top - 1.5, 2.6, shadowOf(wood, 0.1));
+}
+
+/** A steel cap bolted over a hood's mouth while the floor it goes to is shut. */
+function hoodCap(ctx: Ctx, x: number, y: number): void {
+  const steel = '#B4AFBF';
+  const p = (): void => roundRect(ctx, x - BELL - 3, y - 1.5, (BELL + 3) * 2, 6.5, 3);
+  castShadow(ctx, p, 1, 3, 3, 0.28);
+  ctx.fillStyle = steel;
+  p();
+  ctx.fill();
+  cylinderShade(ctx, p, x - BELL - 3, x + BELL + 3, steel, 0.8, 0.5);
+  ctx.fillStyle = rgba(lightOf(steel, 0.9), 0.8);
+  ctx.fillRect(x - BELL, y - 0.6, BELL * 2, 1);
+  inkLine(ctx, p, steel, 0.8, 0.6);
+  for (const s of [-1, 1]) knob(ctx, x + s * (BELL - 1), y + 1.8, 1.3, lightOf(steel, 0.15));
+}
+
+/** A brass padlock, hanging with the top of its shackle at (x, y). */
+function padlock(ctx: Ctx, x: number, y: number): void {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#8A8496';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - 3.6, y + 7);
+  ctx.lineTo(x - 3.6, y + 4);
+  ctx.arc(x, y + 4, 3.6, Math.PI, 0);
+  ctx.lineTo(x + 3.6, y + 7);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.arc(x, y + 4, 3.6, Math.PI * 1.1, Math.PI * 1.5);
+  ctx.stroke();
+  const body = (): void => roundRect(ctx, x - 5.5, y + 6.5, 11, 9.5, 2.4);
+  castShadow(ctx, body, 1, 2, 2.5, 0.3);
+  ctx.fillStyle = BRASS;
+  body();
+  ctx.fill();
+  cylinderShade(ctx, body, x - 5.5, x + 5.5, BRASS, 0.75, 0.55);
+  inkLine(ctx, body, BRASS, 0.8, 0.65);
+  ctx.fillStyle = '#5A4630';
+  ctx.beginPath();
+  ctx.arc(x, y + 10.3, 1.4, 0, TAU);
+  ctx.fill();
+  ctx.fillRect(x - 0.55, y + 10.3, 1.1, 3);
+  ctx.restore();
+}
+
+/** Where the roof tube's pipe goes through floors and is clipped to the wall. */
+const LIFT_COLLARS = [FLOORS.roof.floorY - 4, LIVING_CEIL + 4, LIVING_CEIL + 200, LIVING_CEIL + 400];
+
+/** A tube's far half, the hoods' insides and the funnel's back (with its lid, while it's capped): under the cats. */
+export function paintTubeBack(ctx: Ctx, t: Tube, capped = false): void {
   for (const run of runs(t)) pipeBack(ctx, run);
   if (t.id === 'chute') {
     funnelBack(ctx);
+    if (capped) funnelLid(ctx);
     bellBack(ctx, SPOUT.x, SPOUT.y);
   } else {
     bellBack(ctx, HOOD.x, HOOD.y);
@@ -924,15 +980,26 @@ export function paintTubeBack(ctx: Ctx, t: Tube): void {
   }
 }
 
-/** A tube's near half: over a cat going through it. */
-export function paintTubeFront(ctx: Ctx, t: Tube): void {
+/** A tube's near half: over a cat going through it (and while it's capped, the caps and padlocks). */
+export function paintTubeFront(ctx: Ctx, t: Tube, capped = false): void {
   if (t.id === 'chute') {
     pipeFront(ctx, runs(t)[0], [FLOOR_Y + 30, BASEMENT_DY + 8]);
     funnelFront(ctx);
     bellFront(ctx, SPOUT.x, SPOUT.y);
+    if (capped) {
+      padlock(ctx, FUNNEL.x + 17, FUNNEL.rimY - 1);
+      hoodCap(ctx, SPOUT.x, SPOUT.y);
+      padlock(ctx, SPOUT.x + 17, SPOUT.y - 21);
+    }
   } else {
-    pipeFront(ctx, runs(t)[0], [FLOORS.roof.floorY - 4, 8]);
+    pipeFront(ctx, runs(t)[0], LIFT_COLLARS);
     bellFront(ctx, HOOD.x, HOOD.y);
     bellFront(ctx, OUTLET.x, OUTLET.y);
+    if (capped) {
+      for (const m of [HOOD, OUTLET]) {
+        hoodCap(ctx, m.x, m.y);
+        padlock(ctx, m.x + 17, m.y - 21);
+      }
+    }
   }
 }

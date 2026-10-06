@@ -6,15 +6,16 @@ boots, boxes and sinks until every cat fits and sits. A new room every morning.
 > Cats are liquid. Prove it: pour this chonk into a teacup.
 
 It lives in a little house with two more games on the same cats: the page
-opens in the **living room**, a sunny room where your cats lounge, and
-everything starts from there. The glass box on the rug is **If It Fits**, the
-little jar of cats on the shelf is **Cat Jar**, and the ladder up through the
-attic hatch is **Cat Drop**. Two cats live here at first; the other four
-**move in as you play**, each waiting on something in one of the games. Every
-game earns **treats**, spent on **perches** you put wherever you like and on
-opening up the rest of the house: a **basement** right under the living room
-and a **roof garden** up top, joined to it by glass tubes. Scroll up and down
-to look round.
+opens in the **living room**, a sunny room twice as tall as the others where
+your cats lounge, and everything starts from there: **If It Fits**, **Cat
+Jar** and **Cat Drop** are the big buttons along the bottom. Two cats live
+here at first; the other four **move in as you play**, each waiting on
+something in one of the games. Every game earns **treats**, spent on
+**perches** you put wherever you like (all the way up the living room's tall
+wall) and on opening up the rest of the house: a **basement** right under the
+living room and a **roof garden** up top, joined to it by glass tubes that are
+there from the start, capped and padlocked until you open the floor they go
+to. Scroll up and down to look round.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -27,13 +28,13 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-At home, tap the box, the jar or the hatch (or the big buttons along the
-bottom) to play. Your cats can be picked up and booped here too, and now and
-then one hops over to another spot, up a run of perches if you've built one.
+At home, tap one of the big buttons along the bottom to play. Your cats can
+be picked up and booped here too (carry one to the top or the bottom of the
+screen and the view scrolls along with it), and now and then one hops over to
+another spot, up a run of perches if you've built one: they love the perches.
 Tap the faces in the top bar for the cats card: who lives here, and what
 brings each of the others home. A cat who's earned their place says so at
-once, mid-game too, and drops in through the attic hatch the next time you're
-home.
+once, mid-game too, and hops in at the window the next time you're home.
 
 | Cat | Moves in when you... |
 | --- | --- |
@@ -46,18 +47,19 @@ home.
 The house:
 
 - **Scroll** up and down (drag the wall, a mouse wheel, or the pills at the
-  top and bottom naming the next floor) between the roof garden, the living
-  room and the basement.
+  top and bottom naming the next stop) between the roof garden, up high in
+  the living room, down by its floor, and the basement.
 - **Treats** come from every game: a new If It Fits room (more for a cozy one
   in par), every 400 points in Cat Jar, fish and metres in Cat Drop, and a
   little present the cats leave on the rug the first time you're home each
   day. The **Shop** tin shows how many you have.
-- **The shop** opens up the basement (a funnel in the living room floor drops
-  a cat down to it) and the roof garden (a suction hood over the cat steps
-  whooshes a cat up to it), and sells perches: a wall shelf, a beanbag, a
-  cushion ledge, a hammock, a wicker pod, a cloud shelf (it floats, even out
-  in the sky over the roof) and a cat tree. Drag a new perch where you'd like
-  it; press and hold one to move it.
+- **The shop** opens up the basement (the lid comes off the funnel in the
+  living room floor, to drop a cat down to it) and the roof garden (the cap
+  comes off the suction hood over the cat steps, to whoosh a cat up to it);
+  a tap on a capped tube takes you to the shop. It sells perches: a wall
+  shelf, a beanbag, a cushion ledge, a hammock, a wicker pod, a cloud shelf
+  (it floats, even out in the sky over the roof) and a cat tree. Drag a new
+  perch where you'd like it; press and hold one to move it.
 - **The tubes**: drop a cat into the funnel, or let one go under a hood, and
   it squeezes through the glass like a sausage and pops out on the other
   floor; the view goes along with it.
@@ -97,7 +99,7 @@ straight into a game).
 | Fits & sits reveal: camera pan, purrs swell, cat-face row turns gold | `src/app.ts`, `src/render/renderer.ts` |
 | Spoiler-free share grid | `src/game/share.ts` |
 | Sandbox photo room: pour any cat into anything, take a polaroid | `src/sandbox.ts` |
-| The house: three floors you scroll through, its ways into the games, cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
+| The house: three floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
 | 5 + 1 collection | menu → Cat collection |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |

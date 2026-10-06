@@ -14,6 +14,7 @@ import { BASE_BREEDS, BREED_ORDER, BREEDS, type BreedId } from './physics/breeds
 import { FRAME_DT } from './physics/world';
 import { Home } from './house/home';
 import { ALL_CATS, type GameId } from './house/house';
+import type { ExtraFloor } from './house/layout';
 import { pageStyles } from './pageStyles';
 import { mountDrop } from './proto/drop/mount';
 import { mountJar } from './proto/jar/mount';
@@ -89,8 +90,8 @@ export class App {
   readonly home: Home;
   /** Cat Jar or Cat Drop, while one is being played (the page is hidden). */
   private away: { game: 'jar' | 'drop'; mounted: Mounted; host: HTMLElement } | null = null;
-  /** A tap on one of the home room's ways into a game. */
-  private portalTap: { id: number; game: GameId; sx: number; sy: number } | null = null;
+  /** A tap on one of the house's capped tubes (it offers to open the floor it goes to). */
+  private lockTap: { id: number; floor: ExtraFloor; sx: number; sy: number } | null = null;
   /** A finger the house has (scrolling it, putting a perch somewhere). */
   private homeDrag: number | null = null;
 
@@ -112,6 +113,11 @@ export class App {
         rebuild: () => {
           this.home.leave();
           this.goHome();
+        },
+        carryFinger: () => {
+          const g = this.gesture;
+          if (!g || g.thing || !g.dragging || !g.xs.length) return null;
+          return { x: g.xs[g.xs.length - 1], y: g.ys[g.ys.length - 1] };
         },
       },
       {
@@ -214,7 +220,7 @@ export class App {
     this.audio.stopAllPurrs();
     this.home.leave();
     this.gesture = null;
-    this.portalTap = null;
+    this.lockTap = null;
     $('app').style.display = 'none';
     pageStyles(false);
     const host = document.createElement('div');
@@ -1089,9 +1095,9 @@ export class App {
         if (home) {
           // the cats' present, opened
           if (this.home.openGiftAt(w.x, w.y)) return;
-          // a tap on a way into a game plays it; a drag scrolls the house
-          const portal = this.home.placing ? null : this.home.portalAt(w.x, w.y);
-          if (portal) this.portalTap = { id: e.pointerId, game: portal.game, sx: p.x, sy: p.y };
+          // a tap on a capped tube offers to open the floor it goes to; a drag scrolls the house
+          const floor = this.home.lockAt(w.x, w.y);
+          if (floor) this.lockTap = { id: e.pointerId, floor, sx: p.x, sy: p.y };
           if (this.homeDrag === null && this.home.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
             this.homeDrag = e.pointerId;
             c.setPointerCapture(e.pointerId);
@@ -1162,11 +1168,11 @@ export class App {
         this.homeDrag = null;
         this.home.pointerUp(e.pointerId);
       }
-      const tap = this.portalTap;
+      const tap = this.lockTap;
       if (tap && tap.id === e.pointerId) {
-        this.portalTap = null;
+        this.lockTap = null;
         const p = pos(e);
-        if (e.type === 'pointerup' && this.kind === 'home' && Math.hypot(p.x - tap.sx, p.y - tap.sy) < 14) this.play(tap.game);
+        if (e.type === 'pointerup' && this.kind === 'home' && Math.hypot(p.x - tap.sx, p.y - tap.sy) < 14) this.home.offerFloor(tap.floor);
         return;
       }
       const g = this.gesture;

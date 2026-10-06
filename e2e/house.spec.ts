@@ -28,8 +28,10 @@ test('home: your cats, and a way into each game', async ({ page }) => {
   await expect(page.locator('#roomSub')).toHaveText('2 cats live here');
   const names = await page.evaluate(() => (window as unknown as { __app: AppHandle }).__app.session.cats.map((c) => c.name));
   expect(names).toEqual(['Pip', 'Mochi']);
-  for (const name of ['If It Fits', 'Cat Jar', 'Cat Drop']) await expect(page.locator('.home-label', { hasText: name })).toBeVisible();
+  // the games are on the bar along the bottom (and only there)
+  for (const name of ['If It Fits', 'Cat Jar', 'Cat Drop']) await expect(page.locator('#homeBar .tin', { hasText: name })).toBeVisible();
   await expect(page.locator('#homeBar .tin')).toHaveCount(4);
+  await expect(page.locator('.home-label:not(.home-sign)')).toHaveCount(0);
   // the cats card: who lives here and what brings the others home
   await page.locator('.home-cats').click();
   await expect(page.getByRole('heading', { name: 'Your cats' })).toBeVisible();
@@ -40,7 +42,7 @@ test('home: your cats, and a way into each game', async ({ page }) => {
 
 test('Cat Jar and Cat Drop open from home and come back', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
-  await page.locator('.home-label', { hasText: 'Cat Jar' }).click();
+  await page.locator('#homeBar [data-game=jar]').click();
   await expect(page.getByRole('heading', { name: 'Cat Jar' })).toBeVisible();
   await expect(page.locator('#app')).toBeHidden();
   await page.getByRole('button', { name: 'Play', exact: true }).click();
@@ -56,7 +58,7 @@ test('Cat Jar and Cat Drop open from home and come back', async ({ page }) => {
   expect((await app(page)).kind).toBe('home');
 });
 
-test('finishing a room brings Duchess home through the attic hatch', async ({ page }) => {
+test('finishing a room brings Duchess home, in at the window', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
   await page.locator('#homeBar [data-game=fits]').click();
   await expect(page.locator('#roomName')).toHaveText('Sunny Kitchen');
@@ -96,7 +98,12 @@ test('making a Maine Coon in Cat Jar says Juniper wants to move in, right away',
 interface HouseHandle {
   renderer: { cam: { y: number }; worldToScreen(x: number, y: number): { x: number; y: number } };
   session: { cats: { name: string; breed: string; body: { cx: number; cy: number; computeCentroid(): void } }[] };
-  home: { house: { treats: number; open: string[]; perches: { kind: string; x: number; y: number; stored?: boolean }[] }; placing: { x: number; y: number } | null; gift: { x: number; y: number } | null; goTo(f: string): void };
+  home: {
+    house: { treats: number; open: string[]; perches: { kind: string; x: number; y: number; stored?: boolean }[] };
+    placing: { x: number; y: number } | null;
+    gift: { x: number; y: number } | null;
+    goTo(f: string): void;
+  };
 }
 
 /** A house with treats to spend. */
@@ -120,10 +127,10 @@ const hh = (page: Page): Promise<{ cam: number; treats: number; open: string[]; 
     return { cam: a.renderer.cam.y, treats: a.home.house.treats, open: a.home.house.open, perches: a.home.house.perches };
   });
 
-test('the house scrolls: up to the roof garden and down to the basement', async ({ page }) => {
+test('the house scrolls: up the living room\'s tall wall to the roof garden, and down to the basement', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
   const start = (await hh(page)).cam;
-  await expect(page.locator('.floor-up')).toContainText('Roof garden');
+  await expect(page.locator('.floor-up')).toContainText('Up high');
   await expect(page.locator('.floor-down')).toContainText('Basement');
   // drag the wall up: the view goes down the house
   await page.mouse.move(200, 560);
@@ -133,10 +140,52 @@ test('the house scrolls: up to the roof garden and down to the basement', async 
   await page.waitForTimeout(1200);
   expect((await hh(page)).cam).toBeGreaterThan(start + 200);
   await expect(page.locator('.home-sign', { hasText: 'Basement' })).toBeVisible();
-  // and the pill takes you back up
+  // and the pill takes you back up, then on up the wall, and up to the roof
   await page.locator('.floor-up').click();
   await page.waitForTimeout(1500);
   expect(Math.abs((await hh(page)).cam - start)).toBeLessThan(2);
+  await page.locator('.floor-up').click();
+  await page.waitForTimeout(1500);
+  expect((await hh(page)).cam).toBeLessThan(start - 500);
+  await expect(page.locator('.floor-up')).toContainText('Roof garden');
+  await expect(page.locator('.floor-down')).toContainText('Living room');
+  await page.locator('.floor-up').click();
+  await page.waitForTimeout(1500);
+  await expect(page.locator('.home-sign', { hasText: 'Roof garden' })).toBeVisible();
+});
+
+test('the tubes are there before their floors are open, capped: a tap on one offers to open it', async ({ page }) => {
+  await house(page, ['kitten', 'tabby']);
+  // the funnel's lid, in the living room floor
+  const lid = await page.evaluate(() => (window as unknown as { __app: HouseHandle }).__app.renderer.worldToScreen(58, 478));
+  await page.mouse.click(lid.x, lid.y);
+  await expect(page.getByRole('heading', { name: 'Shop' })).toBeVisible();
+  await expect(page.locator('[data-floor=basement]')).toBeVisible();
+});
+
+test('carry a cat to the top of the screen and the view goes up the wall with it', async ({ page }) => {
+  await house(page, ['kitten', 'tabby']);
+  await page.waitForTimeout(800);
+  const start = (await hh(page)).cam;
+  const from = await page.evaluate(() => {
+    const a = (window as unknown as { __app: HouseHandle }).__app;
+    const c = a.session.cats.find((k) => k.breed === 'kitten')!;
+    c.body.computeCentroid();
+    return a.renderer.worldToScreen(c.body.cx, c.body.cy - 6);
+  });
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x, 100, { steps: 12 });
+  await page.waitForTimeout(1800);
+  const up = await page.evaluate(() => {
+    const a = (window as unknown as { __app: HouseHandle }).__app;
+    const c = a.session.cats.find((k) => k.breed === 'kitten')!;
+    c.body.computeCentroid();
+    return { cam: a.renderer.cam.y, cy: c.body.cy };
+  });
+  await page.mouse.up();
+  expect(up.cam).toBeLessThan(start - 300);
+  expect(up.cy).toBeLessThan(-150);
 });
 
 test('the shop: buy a wall shelf, put it on the wall, and it stays there', async ({ page }) => {
@@ -164,6 +213,16 @@ test('the shop: buy a wall shelf, put it on the wall, and it stays there', async
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
   expect((await hh(page)).perches).toEqual(after.perches);
+  // up the tall wall: a perch bought while looking up there goes up there
+  await page.locator('.floor-up').click();
+  await page.waitForTimeout(1500);
+  await page.locator('#homeBar [data-act=shop]').click();
+  await page.locator('[data-perch=shelf]').click();
+  await expect(page.locator('.place-bar')).toBeVisible();
+  await page.getByRole('button', { name: 'Put it here' }).click();
+  const high = (await hh(page)).perches;
+  expect(high).toHaveLength(2);
+  expect(high[1].y).toBeLessThan(-100);
 });
 
 test('open the roof garden, and whoosh a cat up to it through the suction tube', async ({ page }) => {
@@ -197,7 +256,7 @@ test('open the roof garden, and whoosh a cat up to it through the suction tube',
         }),
       { timeout: 8000 },
     )
-    .toBeLessThan(-183);
+    .toBeLessThan(-700);
 });
 
 test('the cats leave a present once a day: treats', async ({ page }) => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FLOOR_Y, WORLD_W } from '../src/game/props';
 import { Session } from '../src/game/session';
-import { canSit, houseRoom, portalAt, PORTALS } from '../src/house/homeRoom';
+import { canSit, fittingBoxes, houseRoom } from '../src/house/homeRoom';
 import {
   ALL_CATS,
   DROP_FISH_PER_TREAT,
@@ -31,8 +31,8 @@ import {
   takeGift,
   writeHouse,
 } from '../src/house/house';
-import { BASEMENT_DY, FLOORS, TUBES, floorAt, houseShell, tubeShapes, type FloorId } from '../src/house/layout';
-import { PERCHES, buildPerch, floorTop, placeProblem, snapPerch } from '../src/house/perches';
+import { BASEMENT_DY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, TUBES, VIEWS, floorAt, houseShell, tubeShapes, type FloorId } from '../src/house/layout';
+import { PERCHES, buildPerch, floorTop, perchBox, placeProblem, snapPerch } from '../src/house/perches';
 import { Tubes } from '../src/house/tubes';
 import { polygonArea } from '../src/util/math';
 
@@ -103,7 +103,7 @@ describe('the house', () => {
       const old = { v: 1, residents: ['kitten', 'tabby', 'sphynx'], arriving: ['persian'], welcomed: true, stats: { ...emptyHouse().stats, jarBiggest: 4 } };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(2);
+      expect(h.v).toBe(3);
       expect(h.stats.jarBiggest).toBe(3);
       expect(h.treats).toBe(START_TREATS + WELCOME_BACK);
       expect(h.residents).toEqual(['kitten', 'tabby']);
@@ -111,6 +111,40 @@ describe('the house', () => {
       // once is enough
       writeHouse(h);
       expect(loadHouse().stats.jarBiggest).toBe(3);
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+
+  it('a house from before the living room grew keeps its roof garden on the roof', () => {
+    const store = new Map<string, string>();
+    const ls = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    (globalThis as { localStorage?: unknown }).localStorage = ls;
+    try {
+      // (the old roof deck was at y -183, and the living room's ceiling at 0)
+      const old = {
+        ...emptyHouse(),
+        v: 2,
+        open: ['roof'],
+        perches: [
+          { id: 1, kind: 'cloud', x: 200, y: -383 },
+          { id: 2, kind: 'shelf', x: 120, y: 300 },
+        ],
+        nextPerch: 3,
+        where: { kitten: { x: 200, y: -183 }, tabby: { x: 150, y: FLOOR_Y } },
+      };
+      store.set('cozy-house:v1', JSON.stringify(old));
+      const h = loadHouse();
+      expect(h.v).toBe(3);
+      expect(h.perches.map((p) => [p.y, floorAt(p.y)])).toEqual([
+        [-943, 'roof'],
+        [300, 'living'],
+      ]);
+      expect(h.where.kitten).toEqual({ x: 200, y: FLOORS.roof.floorY });
+      expect(h.where.tabby).toEqual({ x: 150, y: FLOOR_Y });
+      // once is enough
+      writeHouse(h);
+      expect(loadHouse().perches[0].y).toBe(-943);
     } finally {
       delete (globalThis as { localStorage?: unknown }).localStorage;
     }
@@ -145,12 +179,57 @@ describe('the home room', () => {
     expect(s.complete).toBe(false);
   });
 
-  it('the box, the jar and the hatch lead to the three games', () => {
-    expect(PORTALS.map((p) => p.game).sort()).toEqual(['drop', 'fits', 'jar']);
-    expect(portalAt(196, 530)?.game).toBe('fits');
-    expect(portalAt(258, 300)?.game).toBe('jar');
-    expect(portalAt(290, 10)?.game).toBe('drop');
-    expect(portalAt(60, 300)).toBeNull();
+  it('is twice as tall as a room, and the view stops down by its floor and up by its ceiling', () => {
+    expect(FLOORS.living.floorY - FLOORS.living.ceilY).toBe(2 * FLOOR_Y);
+    expect(VIEWS.map((v) => v.id)).toEqual(['roof', 'high', 'living', 'basement']);
+    expect(VIEWS.map((v) => floorAt(v.y))).toEqual(['roof', 'living', 'living', 'basement']);
+    for (let i = 1; i < VIEWS.length; i++) expect(VIEWS[i].y).toBeGreaterThan(VIEWS[i - 1].y);
+  });
+
+  it('the tubes are there from the start, capped: a cat sits on the funnel\'s lid and can\'t get up into the hood', () => {
+    const chute = TUBES.find((t) => t.id === 'chute')!;
+    const lift = TUBES.find((t) => t.id === 'lift')!;
+    expect(tubeShapes(chute, 1, false).length).toBeGreaterThan(tubeShapes(chute, 1, true).length);
+    expect(tubeShapes(lift, 1, false).length).toBeGreaterThan(tubeShapes(lift, 1, true).length);
+    for (const open of [false, true]) {
+      const def = houseRoom({ open: [], residents: ['kitten', 'tabby'], where: {} });
+      const s = new Session(def, { mode: 'sandbox', shell: () => [...houseShell(), ...tubeShapes(chute, 9002, open), ...tubeShapes(lift, 9001, open)] });
+      const [kitten, tabby] = s.cats;
+      tabby.body.placeAt(FUNNEL.x, FUNNEL.rimY - 60);
+      // the kitten, on the top step, is carried up into the hood (as at home: anywhere in the living room)
+      kitten.body.placeAt(HOOD.x - 4, 126 - kitten.body.p.radius);
+      for (let f = 0; f < 30; f++) s.step();
+      s.grabBox = { x0: 4, x1: WORLD_W - 4, y0: LIVING_CEIL + 40, y1: FLOOR_Y - 4 };
+      kitten.body.computeCentroid();
+      s.beginGrab(kitten, kitten.body.cx, kitten.body.cy - kitten.body.p.radius * 0.6);
+      let inBell = false;
+      for (let f = 0; f < 90; f++) {
+        s.moveGrab(HOOD.x - 4, HOOD.y - 60, 0, 0);
+        s.step();
+        for (let i = 0; i < kitten.body.n; i++) if (Math.abs(kitten.body.x[i] - HOOD.x) < 20 && kitten.body.y[i] < HOOD.y - 2) inBell = true;
+      }
+      s.endGrab();
+      for (let f = 0; f < 240; f++) s.step();
+      let bottom = -Infinity;
+      for (let i = 0; i < tabby.body.n; i++) bottom = Math.max(bottom, tabby.body.y[i]);
+      // (an open funnel takes the tabby; a capped one holds it up)
+      expect(bottom < FUNNEL.rimY).toBe(!open);
+      expect(inBell).toBe(open);
+    }
+  });
+
+  it('keeps the tubes\' room clear of perches, open or capped', () => {
+    const fit = fittingBoxes({ open: [] }, 'all');
+    const hits = (kind: 'shelf' | 'cloud', x: number, y: number): boolean => {
+      const b = perchBox(kind, x, y);
+      return fit.some((t) => b.x0 < t.x1 && b.x1 > t.x0 && b.y0 < t.y1 && b.y1 > t.y0);
+    };
+    // up the living room wall beside the roof tube's pipe, and over the funnel
+    expect(hits('shelf', HOOD.x - 10, -300)).toBe(true);
+    expect(hits('shelf', FUNNEL.x + 10, 450)).toBe(true);
+    expect(hits('shelf', 200, -300)).toBe(false);
+    // a cat can sit under a capped hood, not under an open one
+    expect(fittingBoxes({ open: [] }).length).toBeLessThan(fit.length);
   });
 });
 
@@ -216,7 +295,10 @@ describe('perches', () => {
     expect(placeProblem('shelf', 60, 300, all, [])).toBeNull();
     expect(placeProblem('shelf', 60, 300 + BASEMENT_DY, ['living'], [])).toBe('locked');
     expect(placeProblem('shelf', 10, 300, all, [])).toBe('outside');
-    expect(placeProblem('shelf', 60, 10, all, [])).toBe('outside');
+    expect(placeProblem('shelf', 60, LIVING_CEIL + 10, all, [])).toBe('outside');
+    // all the way up the living room's tall wall
+    expect(placeProblem('shelf', 60, 10, all, [])).toBeNull();
+    expect(placeProblem('shelf', 60, LIVING_CEIL + 40, all, [])).toBeNull();
     expect(placeProblem('shelf', 60, FLOOR_Y - 10, all, [])).toBe('outside');
     expect(placeProblem('shelf', 200, FLOORS.roof.floorY - 200, all, [])).toBe('sky');
     expect(placeProblem('cloud', 200, FLOORS.roof.floorY - 200, all, [])).toBeNull();

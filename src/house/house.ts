@@ -7,7 +7,7 @@
 
 import type { BreedId } from '../physics/breeds';
 import type { RunReport } from '../proto/shell';
-import type { ExtraFloor, FloorId } from './layout';
+import { LIVING_CEIL, type ExtraFloor, type FloorId } from './layout';
 import { PERCH_ORDER, perchPrice, type PerchKind, type PerchSave } from './perches';
 
 export type GameId = 'fits' | 'jar' | 'drop';
@@ -38,7 +38,7 @@ export interface HouseStats {
 }
 
 export interface HouseSave {
-  v: 2;
+  v: 3;
   /** Cats living here, in the order they moved in. */
   residents: BreedId[];
   /** Cats who've earned their place: they arrive the next time you're home. */
@@ -112,6 +112,9 @@ export function emptyStats(): HouseStats {
   return { fitsRooms: 0, fitsDone: [], jarGames: 0, jarBiggest: 0, jarBest: 0, dropRuns: 0, dropDeepest: 0, dropMostFish: 0, dropBest: 0 };
 }
 
+/** Where the roof garden began in a house saved before the living room grew (world y). */
+const OLD_ROOF_LINE = -85;
+
 /** Treats in a new house: enough for a first shelf. */
 export const START_TREATS = 20;
 /** And for a house from before there were treats, a welcome-back bag. */
@@ -119,7 +122,7 @@ export const WELCOME_BACK = 40;
 
 export function emptyHouse(): HouseSave {
   return {
-    v: 2,
+    v: 3,
     residents: [...FIRST_RESIDENTS],
     arriving: [],
     welcomed: false,
@@ -153,12 +156,21 @@ export function loadHouse(earlier?: Earlier): HouseSave {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<Omit<HouseSave, 'v'>> & { v?: number };
-      const h: HouseSave = { ...emptyHouse(), ...d, v: 2, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
+      const h: HouseSave = { ...emptyHouse(), ...d, v: 3, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
       if ((d.v ?? 1) < 2) {
         // the first house's Cat Jar had a sphynx between the kitten and the
         // tabby; and there were no treats yet: a bag of them to start with
         h.stats.jarBiggest = Math.max(0, h.stats.jarBiggest - 1);
         h.treats = START_TREATS + WELCOME_BACK;
+      }
+      if ((d.v ?? 1) < 3) {
+        // the living room grew to twice its height (its ceiling was at 0):
+        // the roof garden went up with it, and its perches and cats too
+        const up = (p: unknown): void => {
+          if (p && typeof p === 'object' && Number.isFinite((p as { y: number }).y) && (p as { y: number }).y < OLD_ROOF_LINE) (p as { y: number }).y += LIVING_CEIL;
+        };
+        if (Array.isArray(h.perches)) h.perches.forEach(up);
+        if (h.where && typeof h.where === 'object') Object.values(h.where).forEach(up);
       }
       if (!Array.isArray(h.stats.fitsDone)) h.stats.fitsDone = [];
       h.residents = h.residents.filter((b) => ALL_CATS.includes(b));
