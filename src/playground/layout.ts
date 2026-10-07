@@ -10,6 +10,7 @@ import { capsule, roundedBox, type StaticShape } from '../physics/shapes';
 import type { Surface } from '../game/props';
 import { PERCHES, PERCH_ORDER, buildPerch, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
 import type { RideTube } from '../house/tubes';
+import { pathLength, pointAt } from '../util/path';
 
 /** The respawn cloud: its top's middle at (x, y), and how far it reaches either side. */
 export const SPAWN = { x: 0, y: 0, half: 120, thick: 30 };
@@ -30,13 +31,16 @@ export interface PlayPiece {
   y: number;
 }
 
-/** A tube: a mouth at each end (a and b), each facing away from the other. */
+type Pt = [number, number];
+
+/**
+ * A tube: its middle line, from one mouth (a: its first point) to the other
+ * (b: its last), as drawn: as long and as bendy as you like, its points
+ * evenly spaced along it (see evenTube).
+ */
 export interface PlayTube {
   id: number;
-  ax: number;
-  ay: number;
-  bx: number;
-  by: number;
+  pts: Pt[];
 }
 
 export interface PlaySave {
@@ -81,8 +85,20 @@ export function readPlay(raw: string | null): PlaySave {
   }
   if (Array.isArray(o.tubes)) {
     for (const t of o.tubes as Record<string, unknown>[]) {
-      if (!t || ![t.ax, t.ay, t.bx, t.by].every(near) || !fresh(t.id)) continue;
-      out.tubes.push({ id: t.id as number, ax: t.ax as number, ay: t.ay as number, bx: t.bx as number, by: t.by as number });
+      if (!t) continue;
+      let pts: Pt[] | null = null;
+      if (Array.isArray(t.pts)) {
+        const raw = t.pts as unknown[];
+        if (raw.length >= 2 && raw.length <= MAX_PTS && raw.every((q) => Array.isArray(q) && q.length === 2 && near(q[0]) && near(q[1]))) pts = (raw as Pt[]).map(([x, y]) => [x, y]);
+      } else if ([t.ax, t.ay, t.bx, t.by].every(near)) {
+        // (a straight one, from before tubes bent)
+        pts = evenTube([
+          [t.ax as number, t.ay as number],
+          [t.bx as number, t.by as number],
+        ]);
+      }
+      if (!pts || pathLength(pts) < 1 || !fresh(t.id)) continue;
+      out.tubes.push({ id: t.id as number, pts });
     }
   }
   out.nextId = Math.max(1, ...[...ids].map((i) => i + 1), finite(o.nextId) ? Math.floor(o.nextId) : 1);
@@ -187,8 +203,216 @@ export function pieceBox(p: Pick<PlayPiece, 'kind' | 'x' | 'y'>): Box {
 // ---------------------------------------------------------------------------
 // Tubes
 
-/** A tube's bore, how far its mouth's bell reaches out, how fast a cat comes out, and how near a mouth sucks a cat in. */
-export const TUBE = { bore: 30, bell: 24, speed: 720, reach: 42 };
+/**
+ * A tube's bore; how far its mouths' bells reach out, and how far in their
+ * throats are (where the bell meets the pipe); how fast a cat comes out;
+ * how near a mouth sucks a cat in; how far apart the points along its
+ * middle are; and the tightest it bends (the radius of its middle line
+ * round a bend: any tighter, and its glass would pinch).
+ */
+export const TUBE = { bore: 30, bell: 24, throat: 24, speed: 720, reach: 42, step: 16, bend: 46 };
+
+/** The shortest a tube can be, and the longest (as long as you like, near enough). */
+export const TUBE_LEN = { min: 80, max: 12000 };
+const MAX_PTS = Math.ceil(TUBE_LEN.max / TUBE.step) + 4;
+
+const round1 = (v: number): number => Math.round(v * 10) / 10;
+
+/** A polyline with a point every `step` along it from its first point (its last point where it is: a short last stretch is taken in with the one before). */
+function resample(p: readonly Pt[], step: number): Pt[] {
+  const out: Pt[] = [[p[0][0], p[0][1]]];
+  let need = step;
+  for (let i = 1; i < p.length; i++) {
+    let [ax, ay] = p[i - 1];
+    const [bx, by] = p[i];
+    let seg = Math.hypot(bx - ax, by - ay);
+    while (seg >= need) {
+      const u = need / seg;
+      ax += (bx - ax) * u;
+      ay += (by - ay) * u;
+      out.push([ax, ay]);
+      seg -= need;
+      need = step;
+    }
+    need -= seg;
+  }
+  const last = p[p.length - 1];
+  const tail = out[out.length - 1];
+  if (out.length > 1 && Math.hypot(last[0] - tail[0], last[1] - tail[1]) < step * 0.35) out.pop();
+  out.push([last[0], last[1]]);
+  return out;
+}
+
+/** Ease every bend tighter than a tube can go: each such point a little toward between its neighbours, a pass at a time. True if anything moved. */
+function relax(p: Pt[]): boolean {
+  let moved = false;
+  for (let it = 0; it < 40; it++) {
+    let any = false;
+    for (let i = 1; i < p.length - 1; i++) {
+      const ax = p[i][0] - p[i - 1][0];
+      const ay = p[i][1] - p[i - 1][1];
+      const bx = p[i + 1][0] - p[i][0];
+      const by = p[i + 1][1] - p[i][1];
+      const la = Math.hypot(ax, ay);
+      const lb = Math.hypot(bx, by);
+      if (la < 1e-6 || lb < 1e-6) continue;
+      // (how far it may turn here: its stretches' length over the tightest bend)
+      if ((ax * bx + ay * by) / (la * lb) >= Math.cos(Math.min(Math.PI, (la + lb) / 2 / TUBE.bend) * 1.04)) continue;
+      p[i][0] += ((p[i - 1][0] + p[i + 1][0]) / 2 - p[i][0]) * 0.5;
+      p[i][1] += ((p[i - 1][1] + p[i + 1][1]) / 2 - p[i][1]) * 0.5;
+      any = true;
+    }
+    if (!any) break;
+    moved = true;
+  }
+  return moved;
+}
+
+/**
+ * A tube's middle line made even: a point every TUBE.step along it, its
+ * ends where they are, and no bend tighter than TUBE.bend (a sharp corner
+ * drawn is eased round). Measured out from `anchor`, the end that stays as
+ * it was (dragging the other end, the rest of it doesn't creep along).
+ */
+export function evenTube(pts: readonly Pt[], anchor: 'a' | 'b' = 'a'): Pt[] {
+  let p: Pt[] = [];
+  for (const q of anchor === 'b' ? [...pts].reverse() : pts) {
+    const l = p[p.length - 1];
+    if (!l || Math.hypot(q[0] - l[0], q[1] - l[1]) > 0.5) p.push([q[0], q[1]]);
+  }
+  if (p.length < 2) return p.map(([x, y]) => [round1(x), round1(y)]);
+  for (let round = 0; round < 3; round++) {
+    p = resample(p, TUBE.step);
+    if (!relax(p)) break;
+  }
+  const out: Pt[] = p.map(([x, y]) => [round1(x), round1(y)]);
+  return anchor === 'b' ? out.reverse() : out;
+}
+
+/** A straight tube from (ax, ay) to (bx, by). */
+export function straightTube(id: number, ax: number, ay: number, bx: number, by: number): PlayTube {
+  return {
+    id,
+    pts: evenTube([
+      [ax, ay],
+      [bx, by],
+    ]),
+  };
+}
+
+/** How long a tube is (along its middle, mouth to mouth). */
+export function tubeLength(t: PlayTube): number {
+  return pathLength(t.pts);
+}
+
+/**
+ * A tube with one end (`end`) dragged on to (x, y): it carries on that way,
+ * following the finger (any twists and turns), or, dragged back along
+ * itself, it's taken in: shorter. Not past the longest a tube can be.
+ */
+export function extendTube(pts: readonly Pt[], end: 'a' | 'b', x: number, y: number): Pt[] {
+  // (worked on at its last point: the a end turned round to be that)
+  const p = end === 'a' ? [...pts].reverse() : [...pts];
+  const n = p.length;
+  if (n >= 2) {
+    // back along itself, just behind the end (as far back as the finger's come, and a little): cut back to there
+    const tip = p[n - 1];
+    const back = Math.hypot(x - tip[0], y - tip[1]) + TUBE.step * 2;
+    let s = 0;
+    let cut = -1;
+    let best = TUBE.step * 0.8;
+    for (let j = n - 2; j >= 1; j--) {
+      s += Math.hypot(p[j + 1][0] - p[j][0], p[j + 1][1] - p[j][1]);
+      if (s > back) break;
+      const d = Math.hypot(p[j][0] - x, p[j][1] - y);
+      if (d < best) {
+        best = d;
+        cut = j;
+      }
+    }
+    if (cut >= 1) p.length = cut + 1;
+  }
+  p.push([x, y]);
+  let out = evenTube(p, 'a');
+  // (no longer than a tube can be: the end stops where that runs out)
+  if (pathLength(out) > TUBE_LEN.max) out = evenTube(cutAt(out, TUBE_LEN.max), 'a');
+  return end === 'a' ? out.reverse() : out;
+}
+
+/** A polyline up to arc length s. */
+function cutAt(p: readonly Pt[], s: number): Pt[] {
+  const out: Pt[] = [[p[0][0], p[0][1]]];
+  let acc = 0;
+  for (let i = 1; i < p.length; i++) {
+    const l = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+    if (acc + l >= s) {
+      const u = l > 0 ? (s - acc) / l : 0;
+      out.push([p[i - 1][0] + (p[i][0] - p[i - 1][0]) * u, p[i - 1][1] + (p[i][1] - p[i - 1][1]) * u]);
+      return out;
+    }
+    acc += l;
+    out.push([p[i][0], p[i][1]]);
+  }
+  return out;
+}
+
+/** The stretch of a polyline between arc lengths s0 and s1. */
+export function subPath(p: readonly Pt[], s0: number, s1: number): Pt[] {
+  const a = pointAt(p, s0);
+  const out: Pt[] = [[a.x, a.y]];
+  let acc = 0;
+  for (let i = 1; i < p.length; i++) {
+    acc += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+    if (acc <= s0) continue;
+    if (acc >= s1) break;
+    out.push([p[i][0], p[i][1]]);
+  }
+  const b = pointAt(p, s1);
+  out.push([b.x, b.y]);
+  return out;
+}
+
+/**
+ * A tube pulled by a point along it (at arc length s, by dx, dy): that point
+ * goes with the finger, and the tube round it bends along, less and less
+ * further off (a long tube's pull reaches further along it).
+ */
+export function bendTube(pts: readonly Pt[], s: number, dx: number, dy: number): Pt[] {
+  const R = Math.max(50, Math.min(180, pathLength(pts) * 0.2));
+  let acc = 0;
+  const out = pts.map(([x, y], i): Pt => {
+    if (i > 0) acc += Math.hypot(x - pts[i - 1][0], y - pts[i - 1][1]);
+    const w = Math.exp(-(((acc - s) / R) ** 2));
+    return [x + dx * w, y + dy * w];
+  });
+  return evenTube(out);
+}
+
+/** A tube moved, the whole of it. */
+export function moveTube(pts: readonly Pt[], dx: number, dy: number): Pt[] {
+  return pts.map(([x, y]) => [round1(x + dx), round1(y + dy)]);
+}
+
+/** A tube's mouth: where it is, and the way it faces (out of the tube). */
+export interface TubeEnd {
+  x: number;
+  y: number;
+  fx: number;
+  fy: number;
+}
+
+/** A tube's two mouths (a, b), each facing out along the glass from its throat. */
+export function tubeEnds(t: PlayTube): [TubeEnd, TubeEnd] {
+  const L = pathLength(t.pts);
+  const end = (p: readonly Pt[]): TubeEnd => {
+    const q = pointAt(p, Math.min(TUBE.throat, L / 2));
+    const dx = p[0][0] - q.x;
+    const dy = p[0][1] - q.y;
+    const l = Math.hypot(dx, dy);
+    return l > 1e-6 ? { x: p[0][0], y: p[0][1], fx: dx / l, fy: dy / l } : { x: p[0][0], y: p[0][1], fx: -1, fy: 0 };
+  };
+  return [end(t.pts), end([...t.pts].reverse())];
+}
 
 /** A tube as the house's tubes are ridden (from its upper mouth, a, to its lower one, b), with where each mouth draws cats in. */
 export interface SkyTube extends RideTube {
@@ -197,31 +421,21 @@ export interface SkyTube extends RideTube {
   zones: [{ x: number; y: number; r: number }, { x: number; y: number; r: number }];
 }
 
-/** Which way each end faces: away from the other (a straight tube). */
-export function tubeDirs(t: PlayTube): { ux: number; uy: number; len: number } {
-  const dx = t.bx - t.ax;
-  const dy = t.by - t.ay;
-  const len = Math.hypot(dx, dy);
-  return len > 1e-6 ? { ux: dx / len, uy: dy / len, len } : { ux: 1, uy: 0, len: 0 };
-}
-
 export function skyTube(t: PlayTube): SkyTube {
-  const { ux, uy } = tubeDirs(t);
+  const [a, b] = tubeEnds(t);
   const r = TUBE.reach;
   return {
     id: `sky-${t.id}`,
     play: t,
-    path: [
-      [t.ax, t.ay],
-      [t.bx, t.by],
-    ],
-    upper: { x: t.ax, y: t.ay, dirX: -ux, dirY: -uy, speed: TUBE.speed },
-    lower: { x: t.bx, y: t.by, dirX: ux, dirY: uy, speed: TUBE.speed },
+    path: t.pts,
+    upper: { x: a.x, y: a.y, dirX: a.fx, dirY: a.fy, speed: TUBE.speed },
+    lower: { x: b.x, y: b.y, dirX: b.fx, dirY: b.fy, speed: TUBE.speed },
     bore: TUBE.bore,
-    goSpeed: 900,
+    // (a long one's ridden faster: never more than a few seconds through)
+    goSpeed: Math.max(900, pathLength(t.pts) / 4),
     zones: [
-      { x: t.ax - ux * r * 0.6, y: t.ay - uy * r * 0.6, r },
-      { x: t.bx + ux * r * 0.6, y: t.by + uy * r * 0.6, r },
+      { x: a.x + a.fx * r * 0.6, y: a.y + a.fy * r * 0.6, r },
+      { x: b.x + b.fx * r * 0.6, y: b.y + b.fy * r * 0.6, r },
     ],
   };
 }
@@ -229,31 +443,74 @@ export function skyTube(t: PlayTube): SkyTube {
 /** A tube's colliders carry this plus its id. */
 export const TUBE_PROP_BASE = 300000;
 
+/** A polyline offset to one side by d (to its left, going along it, for d > 0; each point along the way it runs there). */
+export function offsetLine(pts: readonly Pt[], d: number): Pt[] {
+  const n = pts.length;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = pts[Math.max(0, i - 1)];
+    const [bx, by] = pts[Math.min(n - 1, i + 1)];
+    const l = Math.hypot(bx - ax, by - ay) || 1;
+    out.push([pts[i][0] - ((by - ay) / l) * d, pts[i][1] + ((bx - ax) / l) * d]);
+  }
+  return out;
+}
+
+/** A polyline with the points that hardly bend it left out (within `tol` of the line without them). */
+function simplify(p: readonly Pt[], tol: number): Pt[] {
+  if (p.length < 3) return [...p];
+  const keep = new Uint8Array(p.length);
+  keep[0] = keep[p.length - 1] = 1;
+  const stack: [number, number][] = [[0, p.length - 1]];
+  while (stack.length) {
+    const [i0, i1] = stack.pop()!;
+    const [ax, ay] = p[i0];
+    const [bx, by] = p[i1];
+    const ex = bx - ax;
+    const ey = by - ay;
+    const l = Math.hypot(ex, ey) || 1;
+    let far = -1;
+    let fd = tol;
+    for (let i = i0 + 1; i < i1; i++) {
+      const d = Math.abs((p[i][0] - ax) * ey - (p[i][1] - ay) * ex) / l;
+      if (d > fd) {
+        fd = d;
+        far = i;
+      }
+    }
+    if (far >= 0) {
+      keep[far] = 1;
+      stack.push([i0, far], [far, i1]);
+    }
+  }
+  return p.filter((_, i) => keep[i]);
+}
+
+/** The pipe between a tube's bells (from one throat to the other). */
+export function tubeRun(t: PlayTube): Pt[] {
+  const L = pathLength(t.pts);
+  return subPath(t.pts, TUBE.throat, Math.max(TUBE.throat + 1, L - TUBE.throat));
+}
+
 /**
- * A tube's glass: its two walls from bell to bell and the bells' flares (a
- * cat can sit on a tube, and only goes in at a mouth).
+ * A tube's glass: its two walls from bell to bell, along every bend, and the
+ * bells' flares (a cat can sit on a tube, and only goes in at a mouth).
  */
 export function tubeShapes(t: PlayTube): StaticShape[] {
-  const { ux, uy } = tubeDirs(t);
   const o = { material: 'ceramic' as const, friction: 0.3, propId: TUBE_PROP_BASE + t.id };
   const half = 18;
   const bell = TUBE.bell + 1;
+  const run = tubeRun(t);
+  const [a, b] = tubeEnds(t);
   const out: StaticShape[] = [];
-  // (each end's own frame: across it, and the way its mouth faces)
-  const ends: [number, number, number, number][] = [
-    [t.ax, t.ay, -ux, -uy],
-    [t.bx, t.by, ux, uy],
-  ];
-  const at = (e: [number, number, number, number], across: number, along: number): [number, number] => [e[0] + e[3] * across + e[2] * along, e[1] - e[2] * across + e[3] * along];
   for (const side of [-1, 1]) {
-    const [x0, y0] = at(ends[0], side * half, -24);
-    const [x1, y1] = at(ends[1], -side * half, -24);
-    out.push(capsule(x0, y0, x1, y1, 3, o));
-    for (const e of ends) {
-      const [tx, ty] = at(e, side * half, -24);
-      const [mx, my] = at(e, side * bell, 0);
-      out.push(capsule(tx, ty, mx, my, 3, o));
-    }
+    const wall = simplify(offsetLine(run, side * half), 1.2);
+    for (let i = 1; i < wall.length; i++) out.push(capsule(wall[i - 1][0], wall[i - 1][1], wall[i][0], wall[i][1], 3, o));
+    // the bells: from the wall's end out to the rim, this side (the same side going along the tube: across a's way out the other way round)
+    const wa = wall[0];
+    const wb = wall[wall.length - 1];
+    out.push(capsule(wa[0], wa[1], a.x + a.fy * side * bell, a.y - a.fx * side * bell, 3, o));
+    out.push(capsule(wb[0], wb[1], b.x - b.fy * side * bell, b.y + b.fx * side * bell, 3, o));
   }
   return out;
 }
@@ -267,31 +524,61 @@ export function mouthOf(t: SkyTube, x: number, y: number): 0 | 1 | null {
   return null;
 }
 
-/** The shortest a tube can be (between its mouths), and the longest. */
-export const TUBE_LEN = { min: 70, max: 1400 };
-
 /** What a tube covers: its glass and both bells. */
 export function tubeBox(t: PlayTube): Box {
   const pad = TUBE.bell + 4;
-  return { x0: Math.min(t.ax, t.bx) - pad, y0: Math.min(t.ay, t.by) - pad, x1: Math.max(t.ax, t.bx) + pad, y1: Math.max(t.ay, t.by) + pad };
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [x, y] of t.pts) {
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  }
+  return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
 }
 
-/** How far (x, y) is from a tube's glass (from the line between its mouths). */
+/** The nearest point along a tube's middle to (x, y): how far off it is, and how far along the tube (arc length from a). */
+export function nearestOnTube(t: PlayTube, x: number, y: number): { d: number; s: number } {
+  const p = t.pts;
+  let best = Infinity;
+  let bs = 0;
+  let acc = 0;
+  for (let i = 1; i < p.length; i++) {
+    const [ax, ay] = p[i - 1];
+    const ex = p[i][0] - ax;
+    const ey = p[i][1] - ay;
+    const l2 = ex * ex + ey * ey;
+    const l = Math.sqrt(l2);
+    const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * ex + (y - ay) * ey) / l2)) : 0;
+    const d = Math.hypot(x - (ax + ex * u), y - (ay + ey * u));
+    if (d < best) {
+      best = d;
+      bs = acc + u * l;
+    }
+    acc += l;
+  }
+  if (p.length === 1) best = Math.hypot(x - p[0][0], y - p[0][1]);
+  return { d: best, s: bs };
+}
+
+/** How far (x, y) is from a tube's glass (from the line along its middle). */
 export function distToTube(t: PlayTube, x: number, y: number): number {
-  const { ux, uy, len } = tubeDirs(t);
-  const u = Math.max(0, Math.min(len, (x - t.ax) * ux + (y - t.ay) * uy));
-  return Math.hypot(x - (t.ax + ux * u), y - (t.ay + uy * u));
+  return nearestOnTube(t, x, y).d;
 }
 
-/** A new tube, its middle at (x, y): a short one, rising to the right (a cat in at the bottom is shot out of the top). */
-export function newTube(id: number, x: number, y: number): PlayTube {
-  return { id, ax: x - 70, ay: y + 50, bx: x + 70, by: y - 50 };
+/** The point halfway along a tube (where its grip is, to move it by). */
+export function tubeMiddle(t: PlayTube): { x: number; y: number } {
+  const p = pointAt(t.pts, pathLength(t.pts) / 2);
+  return { x: p.x, y: p.y };
 }
 
 /** The lowest anything in the sky reaches (what a cat falls past before it's back on the respawn cloud). */
 export function lowest(s: Pick<PlaySave, 'pieces' | 'tubes'>): number {
   let y = SPAWN.y + SPAWN.thick;
   for (const p of s.pieces) y = Math.max(y, pieceBox(p).y1);
-  for (const t of s.tubes) y = Math.max(y, t.ay, t.by);
+  for (const t of s.tubes) for (const q of t.pts) y = Math.max(y, q[1]);
   return y;
 }

@@ -44,6 +44,8 @@ export interface DecorPlacement {
   w?: number;
   h?: number;
   variant?: number;
+  /** A window's view: from up high, or at the level of the ground outside (the basement's). */
+  outlook?: 'high' | 'ground';
 }
 
 export interface CatPlacement {

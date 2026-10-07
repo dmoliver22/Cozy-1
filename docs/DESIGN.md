@@ -315,8 +315,8 @@ Notes on the choices:
   at the top and bottom of the view naming the next stop up and down; and a
   cat carried to the top or the bottom of the screen takes the view along
   with it, up and down the tall wall). The house's own art: the roof garden
-  (sky, neighbours' roofs, a deck, a railing with bunting, a chimney a cat
-  can sit on), the attic (a room-tall loft under the roof's slope: timber
+  (sky with clouds over and under its railing, a deck, a railing with
+  bunting, a chimney a cat can sit on), the attic (a room-tall loft under the roof's slope: timber
   rafters into the top corners, a round window, string lights, a pendant
   lamp, a rug, an old crate, a cabinet and a shelf; while it's shut, dust
   sheets over everything and a shade over the lot), the living room's tall
@@ -328,6 +328,23 @@ Notes on the choices:
   went in under the roof, has its roof garden's perches and cats moved up
   with the roof, and a perch that's where a tube now always is goes back in
   the cupboard.
+- **Outside, the ground is level with the living room floor**
+  (`outsideArt.ts`). The house is a tower in its garden: out either side of
+  its walls (wide screens, a phone turned on its side) there's a lawn with
+  a picket fence at `GROUND_Y` (the living room's floor, its front edge
+  level with the floor's), neighbours' houses and trees along the street
+  behind, the hills far off, and under the lawn the earth cut through, with
+  roots, pebbles, a worm and a buried fish's bones, the basement dug down
+  into it. The sky is one gradient fixed to the world, clear up high and
+  warming down to the hills, with clouds all the way up; the roof garden
+  is up in it, nothing over its railing but sky and clouds (some below the
+  deck, peeping over), so it reads as high up. It used to have the
+  neighbours' roofs along its railing, which made the roof look like the
+  ground. The windows agree: the living room's high one looks down on the
+  treetops and a neighbour's roof, with the hills low (`outlook: 'high'`),
+  and the basement's, at the level of the lawn outside, has the grass right
+  up against it, a daisy and the fence (`outlook: 'ground'`). All of it is
+  in the cached tiles, so it costs nothing per frame.
 - **The living room's floor**: the funnel, a tall thin glass vase (where
   Inkwell starts, poured in), a bouncy cushion and the laundry basket. It had
   a big glass box as well as the basket, two of a kind: the vase took over
@@ -653,8 +670,8 @@ as its kind isn't kept); a house from before keeps the names its cats had
 Up in the clouds, a corner of the sky of your own (`src/playground/`): the
 same soft cats in a `Session` like the house's, built of the house's
 perches (`buildPerch`, their art from `perchArt.ts`) and of tubes ridden
-like the house's (`Tubes` takes any path with a mouth at each end), with the
-house's leaps (`leap.ts`) for the cats' hops. Notes on the choices:
+like the house's (`Tubes` takes any path with a mouth at each end). Notes on
+the choices:
 
 - **Getting there.** A cloud tin on the home bar asks who's coming (your
   cats as faces to tap: last time's lot, or your own cat, picked to begin
@@ -692,27 +709,52 @@ house's leaps (`leap.ts`) for the cats' hops. Notes on the choices:
   cloud of its own. Pieces may overlap: it's a sandbox. Press and hold
   anything built to pick it up (Remove takes it away). The layout is saved
   separately from the house (`cozy-playground:v1`), made safe on load.
-- **Tubes** are straight, from end to end, a hood at each end facing away
-  from the other (so where you put the ends says which way a cat is shot
-  out). A cat whose middle comes into the reach just in front of a mouth,
-  let go there or wandering in, rides through and is shot out of the other
-  end at 720 (about 235 straight up, 470 across at 45°). Out of one mouth,
+- **Tubes are drawn.** A tube is its middle line, a point every 16
+  (`TUBE.step`) from one mouth to the other, as long as you like (up to
+  12,000) and as bendy: no bend tighter than a radius of 46 (`TUBE.bend`),
+  or its glass would pinch. `evenTube` keeps it so after every change:
+  points evenly spaced along it (measured out from the end that isn't being
+  dragged, so the rest doesn't creep), and any sharper corner eased round,
+  each such point nudged toward between its neighbours, a pass at a time.
+  Build → Tube starts with nothing: the first finger on the sky draws it,
+  the glass following the finger (`extendTube`: the finger's point added at
+  the end, evened), and a finger by the screen's edge takes the view along,
+  drawing on as it goes, which is how a tube gets really long. Then: drag an
+  end to draw on from there (dragged back along itself, within as far as the
+  finger's come, it's cut back: shorter), pull it anywhere along it to bend
+  it (`bendTube`: that point goes with the finger, the tube round it less
+  and less further off, a long tube's pull reaching further), or drag the
+  knob halfway along it to move the whole of it. Redraw rubs it out. Saves
+  from when tubes were straight (`ax, ay, bx, by`) come back as a line of
+  points.
+- **Riding one.** Each mouth faces out along the glass from its throat, a
+  bell's height in; a cat whose middle comes into the reach just in front
+  of a mouth, let go there, rides round every bend (the ride follows the
+  points: `Tubes` takes any path) and is shot out of the other end at 720
+  (about 235 straight up, 470 across at 45°); a long one is ridden faster,
+  never more than about four seconds through. Following a cat in a tube,
+  the view goes along as far as it's gone each frame. Out of one mouth,
   it's a moment before any mouth can have it again: its own is right there.
-  The glass is two walls and the bells' flares (`tubeShapes`), so a cat can
-  sit on a tube and only goes in at a mouth. Placing one, you drag either
-  end by its handle, or the middle.
-- **The cats** hop on their own: now and then one that's been sitting a while
-  picks somewhere it can reach (along, up to 250, or down a long way) with
-  room for it, liking higher places, perches, and (the playful ones) the
-  bouncy cushions, and sometimes a tube's mouth. Bouncy cushions and
-  hammocks work as at home.
+  The glass is two walls along every bend, offset either side of the middle
+  line and with the points that hardly bend it left out (a long curly tube
+  is a few hundred capsules), and the bells' flares (`tubeShapes`), so a
+  cat can sit on a tube and only goes in at a mouth.
+- **The cats stay put.** They used to hop from piece to piece on their own
+  every second or two; they're yours to play with now: carried, flung,
+  dropped on a bouncy cushion or let go at a tube's mouth. Bouncy cushions
+  and hammocks work as at home.
 - **The sky** is a gradient that warms the lower you go, a sun so far off
   it hardly moves, and clouds at two depths drifting past slower than the
   view. They're painted once into sprites and stamped (zoomed out, a view
   takes in a lot of sky). So are the pieces: each kind in three looks, as
-  sharp as the zoom needs, and each tube along its own length (turned to
-  point its way). A hammock or bouncy cushion is painted live only while
-  it's moving. With 40 pieces and 6 tubes a frame paints in about 2.5 ms in
-  a software-rendered browser, zoomed in or out (it was 8 to 41 painting
-  everything live).
+  sharp as the zoom needs. A hammock or bouncy cushion is painted live only
+  while it's moving. With 40 pieces and 6 tubes a frame paints in about 2.5
+  ms in a software-rendered browser, zoomed in or out (it was 8 to 41
+  painting everything live). A tube's glass is painted live, a few strokes
+  along its line, curved through its points (`paintPipeRun`: quick at any
+  length and bend, where the house's glass, built of union outlines, is far
+  too slow to paint every frame), only the stretches of it on screen, its
+  dashes of light pinned to the glass as more comes into view; its bells
+  are one painting, turned each way. A 9,600-long spiral, all on screen,
+  paints in 3.5 ms.
 

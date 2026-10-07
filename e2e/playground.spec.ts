@@ -10,9 +10,9 @@ interface SkyHandle {
   renderer: { cam: { x: number; y: number; zoom: number }; worldToScreen(x: number, y: number): { x: number; y: number } };
   session: { cats: { breed: string; body: { cx: number; cy: number; computeCentroid(): void; placeAt(x: number, y: number): void } }[]; world: { statics: unknown[] } };
   playground: {
-    placing: { k: string; piece?: { x: number; y: number }; tube?: { ax: number; ay: number; bx: number; by: number } } | null;
+    placing: { k: string; piece?: { x: number; y: number }; tube?: { pts: [number, number][] } } | null;
     follow: { breed: string } | null;
-    save: { pieces: { kind: string; x: number; y: number }[]; tubes: { ax: number; ay: number; bx: number; by: number }[] };
+    save: { pieces: { kind: string; x: number; y: number }[]; tubes: { pts: [number, number][] }[] };
     tubes: { transits: { cat: { breed: string } }[] };
   };
 }
@@ -46,6 +46,20 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
   await page.mouse.up();
 }
 
+/** Draw with a finger through these world points (the finger down at the first, up at the last). */
+async function drawPath(page: Page, pts: { x: number; y: number }[]): Promise<void> {
+  const a = await screen(page, pts[0].x, pts[0].y);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  for (const p of pts.slice(1)) {
+    const b = await screen(page, p.x, p.y);
+    await page.mouse.move(b.x, b.y, { steps: 12 });
+  }
+  await page.mouse.up();
+}
+
+const lengthOf = (pts: [number, number][]): number => pts.slice(1).reduce((L, p, i) => L + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+
 test('pick who comes up to the Playground, build a shelf and another joined on to it, and a tube: they are there next time', async ({ page }) => {
   await upToTheSky(page, ['kitten', 'tabby', 'persian']);
   // your two, picked; the Persian too
@@ -78,12 +92,30 @@ test('pick who comes up to the Playground, build a shelf and another joined on t
   expect(pieces.map((x) => x.kind)).toEqual(['shelf', 'cloud']);
   expect(pieces[1].y).toBe(first.y);
   expect(pieces[1].x).toBe(first.x + 33 + 42);
-  // a tube
+  // a tube, drawn with a finger: round a bend and back
   await page.locator('[data-pg=build]').click();
   await page.locator('[data-piece=tube]').click();
-  await expect(page.locator('.play-place .place-hint')).toHaveText('Drag either end where you like, or the middle to move it');
+  await expect(page.locator('.play-place .place-hint')).toHaveText('Draw your tube: drag a finger through the sky');
+  await expect(page.getByRole('button', { name: 'Put it here' })).toBeDisabled();
+  // (well inside the screen: a finger at its edge takes the view along, the tube drawn on as it goes)
+  const c = await sky(page, (a) => a.renderer.cam);
+  const at = (dx: number, dy: number): { x: number; y: number } => ({ x: c.x + dx, y: c.y + dy });
+  await drawPath(page, [at(40, -20), at(100, -60), at(90, -150), at(10, -190)]);
+  await expect(page.locator('.play-place .place-hint')).toHaveText(/^Drag an end to draw on/);
+  const drawn = await sky(page, (a) => a.playground.placing!.tube!.pts);
+  expect(Math.hypot(drawn[0][0] - at(40, -20).x, drawn[0][1] - at(40, -20).y)).toBeLessThan(8);
+  expect(Math.hypot(drawn[drawn.length - 1][0] - at(10, -190).x, drawn[drawn.length - 1][1] - at(10, -190).y)).toBeLessThan(8);
+  // (it bends: well out to the right of the line between its ends)
+  expect(Math.max(...drawn.map((q) => q[0]))).toBeGreaterThan(c.x + 70);
+  // drawn on from its end: longer
+  await drawPath(page, [at(10, -190), at(-50, -210), at(-100, -180)]);
+  const longer = await sky(page, (a) => a.playground.placing!.tube!.pts);
+  expect(lengthOf(longer)).toBeGreaterThan(lengthOf(drawn) + 100);
+  expect(longer[0]).toEqual(drawn[0]);
   await page.getByRole('button', { name: 'Put it here' }).click();
-  expect(await sky(page, (a) => a.playground.save.tubes.length)).toBe(1);
+  const tubes = await sky(page, (a) => a.playground.save.tubes);
+  expect(tubes.length).toBe(1);
+  expect(lengthOf(tubes[0].pts)).toBeCloseTo(lengthOf(longer), 0);
   // next time, it's all there
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
@@ -109,7 +141,7 @@ test('pick who comes up to the Playground, build a shelf and another joined on t
 });
 
 test('a cat carried to a tube and let go goes in, whoosh, and out of the other end', async ({ page }) => {
-  // (a tube off the cloud's end, rising to the right)
+  // (a tube off the cloud's end, rising to the right: saved straight, from before tubes bent)
   await upToTheSky(page, ['kitten'], { v: 1, pieces: [], tubes: [{ id: 1, ax: 200, ay: -70, bx: 340, by: -250 }], nextId: 2, cats: ['kitten'] });
   await page.getByRole('button', { name: 'Up we go!' }).click();
   await page.waitForFunction(() => (window as unknown as { __app: SkyHandle }).__app.kind === 'playground');

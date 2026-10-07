@@ -40,6 +40,7 @@ import { paintCeiling } from './homeArt';
 import { GIFT_SPOT, THING, fittingBoxes, houseRoom, houseSpawnOk, onWall, settleMoved, snapThing, thingBoxes, thingPos, thingProblem, thingProp, type Thing, type ThingId } from './homeRoom';
 import { inRingOf, planFlight, release, stepFlight, type Flight } from './leap';
 import { ATTIC_THEME, BASEMENT_THEME, paintAttic, paintAtticShade, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
+import { paintAround } from './outsideArt';
 import {
   ALL_CATS,
   FLOOR_PRICES,
@@ -480,7 +481,7 @@ export class Home {
       ctx.restore();
     }
     for (const t of TUBES) paintTubeBack(ctx, t, !isOpen(h, t.needs));
-    paintHouseFrame(ctx, r);
+    paintHouseFrame(ctx, r, seed);
   }
 
   /** The vase and the glass tub on a floor, under the cats (the renderer paints their fronts over them). */
@@ -2170,17 +2171,14 @@ function isFlat(d: DecorPlacement): boolean {
   return d.type === 'rug' || d.type === 'backsplash' || d.type === 'window' || d.type === 'picture' || d.type === 'mirror' || d.type === 'clock' || d.type === 'garland' || d.type === 'radiator' || d.type === 'towel';
 }
 
-/** The house's side walls, cut (the dollhouse is open at the front), and the dark beyond. */
-function paintHouseFrame(ctx: Ctx, r: Rect): void {
+/** The house's side walls, cut (the dollhouse is open at the front), and the world outside them. */
+function paintHouseFrame(ctx: Ctx, r: Rect, seed: number): void {
   const edge = '#E9DCCB';
   const cut = '#B9A58E';
-  const out = '#3E3A4F';
   const y0 = Math.max(r.y0, FLOORS.roof.floorY);
   if (y0 >= r.y1) return;
+  paintAround(ctx, r, seed);
   ctx.save();
-  ctx.fillStyle = out;
-  ctx.fillRect(r.x0, y0, -r.x0 - 7, r.y1 - y0);
-  ctx.fillRect(WORLD_W + 7, y0, r.x1 - WORLD_W - 7, r.y1 - y0);
   ctx.fillStyle = edge;
   ctx.fillRect(-7, y0, 7, r.y1 - y0);
   ctx.fillRect(WORLD_W, y0, 7, r.y1 - y0);

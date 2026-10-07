@@ -12,6 +12,7 @@ import { glint, hash01, lightOf, mix, rgba, roundRect, shadowOf, softShadow, typ
 import { glassSolid, rimLip, ribbonPath, sparkle, type GlassPart } from '../render/propKit';
 import { THEMES, drawDecor, drawShell, drawSunbeams, paintFloor, type Theme } from '../render/roomArt';
 import { castShadow, cylinderShade, inkLine, knob, paintTex } from '../render/roomKit';
+import { paintSkyOverRoof } from './outsideArt';
 import {
   ATTIC_DY,
   ATTIC_FLOOR_FRONT,
@@ -90,86 +91,6 @@ export function paintCut(ctx: Ctx, r: Rect, y0: number, y1: number, seams: numbe
 
 // ---------------------------------------------------------------------------
 // The roof garden
-
-/** Puffy afternoon cloud: overlapping rounds, lit on top, a lilac shade underneath. */
-function cloud(ctx: Ctx, x: number, y: number, s: number, seed: number): void {
-  const puffs: [number, number, number][] = [];
-  const n = 5;
-  for (let k = 0; k < n; k++) {
-    const u = k / (n - 1) - 0.5;
-    puffs.push([x + u * 70 * s, y - (1 - Math.abs(u) * 1.6) * 10 * s + hash01(seed, k) * 4 * s, (14 + (1 - Math.abs(u) * 1.5) * 12 + hash01(seed, k + 9) * 5) * s]);
-  }
-  const path = (): void => {
-    ctx.beginPath();
-    for (const [px, py, pr] of puffs) {
-      ctx.moveTo(px + pr, py);
-      ctx.arc(px, py, pr, 0, TAU);
-    }
-    ctx.rect(x - 38 * s, y - 2 * s, 76 * s, 12 * s);
-  };
-  ctx.save();
-  ctx.fillStyle = 'rgba(255,253,248,0.92)';
-  path();
-  ctx.fill();
-  ctx.clip();
-  const g = ctx.createLinearGradient(0, y - 30 * s, 0, y + 12 * s);
-  g.addColorStop(0, 'rgba(255,255,255,0)');
-  g.addColorStop(0.55, 'rgba(206,196,226,0.05)');
-  g.addColorStop(1, 'rgba(176,164,206,0.45)');
-  ctx.fillStyle = g;
-  ctx.fillRect(x - 80 * s, y - 40 * s, 160 * s, 60 * s);
-  ctx.restore();
-}
-
-/** Neighbours' roofs and trees along the horizon, soft with distance. */
-function skyline(ctx: Ctx, x0: number, x1: number, base: number, seed: number): void {
-  // far row: pale lilac roofs and round trees
-  const far = '#C9C3DD';
-  const near = '#B4ADCF';
-  for (const [color, scale, offset, rows] of [
-    [far, 0.75, 0, 1],
-    [near, 1, 37, 0],
-  ] as const) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    let x = x0 - 30 - offset;
-    let k = 0;
-    while (x < x1 + 30) {
-      const w = (48 + hash01(seed + rows, k) * 46) * scale;
-      const h = (34 + hash01(seed + rows, k + 50) * 48) * scale;
-      const kind = hash01(seed + rows, k + 100);
-      if (kind < 0.62) {
-        // a gabled house with a chimney
-        ctx.moveTo(x, base);
-        ctx.lineTo(x, base - h);
-        ctx.lineTo(x + w / 2, base - h - w * 0.36);
-        ctx.lineTo(x + w, base - h);
-        ctx.lineTo(x + w, base);
-        ctx.rect(x + w * 0.68, base - h - w * 0.3, 7 * scale, w * 0.22);
-      } else if (kind < 0.8) {
-        // a round tree
-        const r = w * 0.32;
-        ctx.moveTo(x + w / 2 + r, base - h * 0.6);
-        ctx.arc(x + w / 2, base - h * 0.6, r, 0, TAU);
-        ctx.rect(x + w / 2 - 2, base - h * 0.6, 4, h * 0.6);
-      } else {
-        // a church spire, far off
-        ctx.moveTo(x + w * 0.3, base);
-        ctx.lineTo(x + w * 0.3, base - h * 1.2);
-        ctx.lineTo(x + w * 0.5, base - h * 2.1);
-        ctx.lineTo(x + w * 0.7, base - h * 1.2);
-        ctx.lineTo(x + w * 0.7, base);
-      }
-      ctx.closePath();
-      x += w + 6 * scale;
-      k++;
-    }
-    ctx.fill();
-    // a few lit windows
-    ctx.fillStyle = rgba('#FFF4DA', rows ? 0.35 : 0.5);
-    for (let j = 0; j < 9; j++) ctx.fillRect(x0 + hash01(seed, j + 200) * (x1 - x0), base - 10 - hash01(seed, j + 300) * 40 * scale, 3 * scale, 4 * scale);
-  }
-}
 
 /** The deck's railing, along its back edge. */
 function railing(ctx: Ctx, x0: number, x1: number, y: number, seed: number): void {
@@ -283,7 +204,7 @@ function chimney(ctx: Ctx, seed: number): void {
   ctx.stroke();
 }
 
-/** Sky, distant rooftops, the deck, its railing, the chimney and some pots of green. */
+/** Sky, the deck, its railing, the chimney and some pots of green. */
 export function paintRoof(ctx: Ctx, r: Rect, seed: number): void {
   const deck = FLOORS.roof.floorY;
   ctx.save();
@@ -291,30 +212,8 @@ export function paintRoof(ctx: Ctx, r: Rect, seed: number): void {
     ctx.restore();
     return;
   }
-  // the sky (over the whole width: on wide screens the garden is out in the open)
-  const g = ctx.createLinearGradient(0, FLOORS.roof.view0, 0, deck);
-  g.addColorStop(0, '#9EC3E3');
-  g.addColorStop(0.5, '#C6DDEF');
-  g.addColorStop(0.85, '#F3E4D3');
-  g.addColorStop(1, '#F7D7B8');
-  ctx.fillStyle = g;
-  ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, deck - r.y0 + 1);
-  // the sun, up to the left, and its warmth
-  const sx = 64;
-  const sy = deck - 418;
-  const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 220);
-  sg.addColorStop(0, 'rgba(255,246,214,0.95)');
-  sg.addColorStop(0.08, 'rgba(255,240,200,0.85)');
-  sg.addColorStop(0.1, 'rgba(255,236,196,0.5)');
-  sg.addColorStop(0.45, 'rgba(255,226,180,0.16)');
-  sg.addColorStop(1, 'rgba(255,226,180,0)');
-  ctx.fillStyle = sg;
-  ctx.fillRect(sx - 220, sy - 220, 440, 440);
-  cloud(ctx, 268, deck - 470, 1.05, seed);
-  cloud(ctx, 150, deck - 330, 0.7, seed + 3);
-  cloud(ctx, 330, deck - 250, 0.55, seed + 7);
-  cloud(ctx, -20, deck - 230, 0.8, seed + 11);
-  skyline(ctx, r.x0, r.x1, deck - 40, seed);
+  // the sky over it, the whole width (the clouds and the sun in it), the deck the bottom of it all: the town is far below
+  paintSkyOverRoof(ctx, r, seed);
   // the deck (laid like a floor, in the roof's own room frame)
   ctx.save();
   ctx.beginPath();
@@ -616,7 +515,7 @@ export function paintAtticShade(ctx: Ctx, r: Rect): void {
 
 /** The basement's own decor, laid out in its room frame. */
 export const BASEMENT_DECOR: DecorPlacement[] = [
-  { type: 'window', x: 236, y: 20, w: 96, h: 70, variant: 0 },
+  { type: 'window', x: 236, y: 20, w: 96, h: 70, variant: 0, outlook: 'ground' },
   { type: 'garland', x: 190, y: 8, w: 340 },
   { type: 'picture', x: 150, y: 250, w: 44, h: 36, variant: 2 },
   { type: 'radiator', x: 184, y: FLOOR_Y, w: 70 },
@@ -1147,6 +1046,89 @@ export function paintSkyTube(ctx: Ctx, ax: number, ay: number, bx: number, by: n
     ctx.restore();
   }
   if (layer === 'front') pipeFront(ctx, run, []);
+}
+
+/** A sky tube's bell with its mouth at (0, 0) facing down, its throat up at y -24 (the Playground's tubes keep it as a painting, turned each way). */
+export function paintSkyBell(ctx: Ctx, layer: 'back' | 'front'): void {
+  if (layer === 'back') bellBack(ctx, 0, 0);
+  else bellFront(ctx, 0, 0);
+}
+
+/**
+ * A run of glass pipe along any line, however long and bendy (the
+ * Playground's tubes): its far half and its shadow (back), or its near walls
+ * seen edge on and a streak of light (front). Painted with strokes along the
+ * line, quick enough for every frame. `s0`: how far along its tube the run
+ * starts (the streak's dashes stay put on the glass as more of it comes into
+ * view).
+ */
+export function paintPipeRun(ctx: Ctx, pts: [number, number][], layer: 'back' | 'front', s0 = 0): void {
+  if (pts.length < 2) return;
+  // (smooth through its points: a curve from each stretch's middle to the next, round the point between)
+  const line = (p: readonly [number, number][]): void => {
+    const n = p.length;
+    ctx.beginPath();
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < n - 1; i++) ctx.quadraticCurveTo(p[i][0], p[i][1], (p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2);
+    ctx.lineTo(p[n - 1][0], p[n - 1][1]);
+  };
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'butt';
+  if (layer === 'back') {
+    // its soft shadow, and the glass seen through
+    ctx.translate(7, 6);
+    line(pts);
+    ctx.strokeStyle = 'rgba(74,64,96,0.09)';
+    ctx.lineWidth = HALF * 2 + 2;
+    ctx.stroke();
+    ctx.translate(-7, -6);
+    line(pts);
+    ctx.strokeStyle = rgba(mix(GLASS_TINT, shadowOf(GLASS_TINT, 0.5), 0.3), 0.3);
+    ctx.lineWidth = HALF * 2;
+    ctx.stroke();
+    // the far wall's inner face, darker on the side away from the light
+    line(offsetLine(pts, HALF - 6));
+    ctx.strokeStyle = rgba(shadowOf(GLASS_TINT, 0.4), 0.22);
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  } else {
+    line(pts);
+    ctx.strokeStyle = rgba(GLASS_TINT, 0.12);
+    ctx.lineWidth = HALF * 2;
+    ctx.stroke();
+    // the near walls seen edge on: a band of glass each side, deeper inside, bright along its outer edge
+    for (const side of [-1, 1]) {
+      const wall = offsetLine(pts, side * (HALF - 2));
+      line(wall);
+      ctx.strokeStyle = rgba(mix(GLASS_TINT, shadowOf(GLASS_TINT, 0.35), 0.5), 0.34);
+      ctx.lineWidth = 5.2;
+      ctx.stroke();
+      ctx.strokeStyle = rgba(shadowOf(GLASS_TINT, 0.55), side < 0 ? 0.3 : 0.45);
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      line(offsetLine(pts, side * (HALF + 0.6)));
+      ctx.strokeStyle = rgba(shadowOf(GLASS_TINT, 0.65), side < 0 ? 0.4 : 0.55);
+      ctx.lineWidth = 2.3;
+      ctx.stroke();
+      ctx.strokeStyle = side < 0 ? 'rgba(255,255,255,0.95)' : rgba(lightOf(GLASS_TINT, 0.7), 0.8);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      line(offsetLine(pts, side * (HALF - 4.6)));
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+    }
+    // a long streak down the lit side
+    ctx.lineCap = 'round';
+    line(offsetLine(pts, -HALF * 0.5));
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 2.4;
+    ctx.setLineDash([60, 26, 14, 30]);
+    ctx.lineDashOffset = s0;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /** A tube's far half, the hoods' insides and the funnel's back (with its lid, while it's capped): under the cats. */

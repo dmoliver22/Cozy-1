@@ -1075,6 +1075,9 @@ button:focus-visible {
   opacity: 0.45;
   pointer-events: none;
 }
+.place-btns .btn[hidden] {
+  display: none;
+}
 .shop-card .shop-treats {
   display: flex;
   align-items: center;

@@ -18,8 +18,11 @@ up the living room's tall wall) and on opening up the rest of the house: a
 **basement** right under the living room, an **attic** over it and a **roof
 garden** up top, joined to it by glass tubes that are there from the start,
 capped and padlocked until you open the floor they go to. Scroll up and down
-to look round. Up in the clouds there's **the Playground**: as much sky as you
-like, to build your cats the best playground ever.
+to look round: the house stands in its garden on a street of neighbours, the
+lawn level with the living room floor, the basement down in the earth and
+the roof garden high up among the clouds. Up in the clouds there's **the
+Playground**: as much sky as you like, to build your cats the best
+playground ever.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -133,17 +136,23 @@ The Playground (the cloud tin on the bar along the bottom):
   like. Shelves, ledges and clouds dragged up to the end of another join on,
   end to end at its height: one long platform. A cushion, a bed or a cat tree
   dragged just over something's top stands on it; anywhere else it floats on
-  a little cloud of its own. A tube has a hood at each end, facing away from
-  the other: drag either end anywhere (or the middle to move it). A cat that
-  goes in at one end is shot out of the other, the way it points. Press and
-  hold anything to move it or take it away.
+  a little cloud of its own. A **tube** you draw with your finger, as long as
+  you like and with any twists and turns: the glass follows the finger (hold
+  it by the edge of the screen and the view goes along, the tube with it),
+  and sharp corners ease into bends a cat can go round. Then drag either end
+  to draw on from there (or back along it, to make it shorter), pull it
+  anywhere along it to bend it there, or drag the knob in its middle to move
+  the whole of it; **Redraw** starts it again. A cat that goes in at one end
+  is carried round every bend and shot out of the other, the way it points.
+  Press and hold anything to move it or take it away.
 - **Look about**: drag the sky, pinch (or a mouse wheel) to zoom in and out,
   and tap a cat's face in the top bar for the view to follow it wherever it
   goes (tap it again to stop).
-- **The cats** hop from piece to piece on their own, bounce on the cushions,
-  nap in the beds and go up the tubes. One that falls off everything drops
-  into the sea of cloud far below and comes back on the respawn cloud;
-  **Respawn** brings everyone back there.
+- **The cats** stay where you put them: they're yours to play with. Carry
+  one anywhere, fling it, drop it on a bouncy cushion, or let it go at a
+  tube's mouth. One that falls off everything drops into the sea of cloud far
+  below and comes back on the respawn cloud; **Respawn** brings everyone back
+  there.
 - **The sky tube**: once the roof garden's open, a cat let go under the hood
   hanging over the middle of it goes up and away, out of the top of the house
   and down out of the clouds onto the respawn cloud.

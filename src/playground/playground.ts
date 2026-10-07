@@ -2,12 +2,13 @@
 // you bring start on the respawn cloud. You build with perches and tubes (as
 // many as you like, free: pieces join end to end into longer platforms),
 // look about with a finger and zoom with two, and tap a cat's face up top
-// for the view to follow it wherever it goes. The cats hop from piece to
-// piece on their own, bounce and nap, and go up the tubes (in at either
-// end, shot out of the other). One that falls off everything drops into the
-// sea of cloud and comes back on the respawn cloud; Respawn brings everyone
-// back there. It's built like the house (house/home.ts): the same soft cats
-// in a Session, and the house's perches, tubes and leaps.
+// for the view to follow it wherever it goes. The cats stay where they're
+// put (they're yours to play with: carry one anywhere, fling it, drop it on
+// a bouncy cushion, or into a tube's mouth: in at either end, shot out of
+// the other). One that falls off everything drops into the sea of cloud and
+// comes back on the respawn cloud; Respawn brings everyone back there. It's
+// built like the house (house/home.ts): the same soft cats in a Session, and
+// the house's perches and tubes.
 
 import type { AudioEngine } from '../audio/audio';
 import type { RoomDef } from '../game/room';
@@ -21,10 +22,9 @@ import { roundRect, type Ctx } from '../render/paint';
 import type { Renderer, Stage } from '../render/renderer';
 import { faceSVG } from '../ui/faces';
 import { clamp } from '../util/math';
-import { TEMPERS } from '../house/antics';
 import { NAMES } from '../house/house';
-import { paintSkyTube } from '../house/houseArt';
-import { inRingOf, planFlight, release, stepFlight, type Flight } from '../house/leap';
+import { paintPipeRun, paintSkyBell } from '../house/houseArt';
+import { inRingOf } from '../house/leap';
 import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack, paintPerchFront, perchThumb } from '../house/perchArt';
 import { PERCHES, PERCH_ORDER, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
 import { Tubes } from '../house/tubes';
@@ -32,15 +32,18 @@ import {
   FALL,
   PLAY_KEY,
   SPAWN,
-  SPAWN_SURFACE,
   TUBE,
   TUBE_LEN,
+  TUBE_PROP_BASE,
   ZOOM,
+  bendTube,
   buildPiece,
   distToTube,
+  extendTube,
   lowest,
   mouthOf,
-  newTube,
+  moveTube,
+  nearestOnTube,
   pieceBox,
   readPlay,
   skyTube,
@@ -50,7 +53,10 @@ import {
   standing,
   surfacesOf,
   tubeBox,
-  tubeDirs,
+  tubeEnds,
+  tubeLength,
+  tubeMiddle,
+  tubeRun,
   tubeShapes,
   type PlayPiece,
   type PlaySave,
@@ -81,11 +87,20 @@ const EDGE = 70;
 /** Something being put somewhere: a piece (new, or picked up: `prev`), or a tube. */
 type Placing = { k: 'piece'; piece: PlayPiece; prev: PlayPiece | null } | { k: 'tube'; tube: PlayTube; prev: PlayTube | null };
 
+type Pt = [number, number];
+
 type Drag =
   | { k: 'pan'; id: number; sx: number; sy: number; cx: number; cy: number; moved: boolean; lastX: number; lastY: number; lastT: number; vx: number; vy: number }
   | { k: 'hold'; id: number; sx: number; sy: number; timer: number }
-  /** Dragging what's being placed (a tube by one end, or the whole of it). */
-  | { k: 'ghost'; id: number; dx: number; dy: number; sx: number; sy: number; end: 'a' | 'b' | null };
+  /** Dragging a piece that's being placed. */
+  | { k: 'ghost'; id: number; dx: number; dy: number; sx: number; sy: number }
+  /**
+   * Working on a tube that's being placed: drawing it on from an end (the
+   * finger `dx, dy` off the end), moving the whole of it by its grip, or
+   * bending it, pulled by the point `at` along it (as it was, `from`, when
+   * the finger came down at x0, y0).
+   */
+  | ({ k: 'tube'; id: number; sx: number; sy: number } & ({ how: 'end'; end: 'a' | 'b'; dx: number; dy: number } | { how: 'move'; lx: number; ly: number } | { how: 'bend'; at: number; from: Pt[]; x0: number; y0: number }));
 
 /** What each piece is, up here (there are no walls or floors in the sky). */
 const SKY_BLURBS: Record<PerchKind, string> = {
@@ -99,9 +114,6 @@ const SKY_BLURBS: Record<PerchKind, string> = {
   cloud: 'A little cloud to sit on',
   tree: 'A tall scratching post with two decks',
 };
-
-/** A cat on its way somewhere: a leap's arc out of the physics (see house/leap.ts). */
-type Leap = Flight & { cat: Cat };
 
 export class Playground {
   save: PlaySave;
@@ -117,19 +129,21 @@ export class Playground {
   private camV = { x: 0, y: 0 };
   /** The cat the view follows (tap its face). */
   follow: Cat | null = null;
+  /** Where it was last frame (a cat in a tube: how far it's gone since). */
+  private followAt: { cat: Cat; x: number; y: number } | null = null;
   /** Fingers down on the sky (two: a pinch), and the pinch: how far apart they started, and what was under them. */
   private fingers = new Map<number, { sx: number; sy: number }>();
   private pinch: { d0: number; z0: number; wx: number; wy: number } | null = null;
   private drag: Drag | null = null;
   placing: Placing | null = null;
-  private leaps: Leap[] = [];
   private cooldown = new Map<Cat, number>();
   private fellAt = new WeakMap<SoftBody, number>();
-  private hopIn = 2;
   private frame = 0;
   private time = 0;
   /** Painted pieces, kept (a piece's kind and look, how sharp: pixels per unit). */
   private sprites = new Map<string, { c: HTMLCanvasElement; ppu: number; x0: number; y0: number; w: number; h: number }>();
+  /** Each tube's pipe and mouths, worked out once. */
+  private geoms = new WeakMap<PlayTube, { run: Pt[]; along: number[]; ends: ReturnType<typeof tubeEnds> }>();
   private readonly bar: HTMLElement;
   private readonly placeBar: HTMLElement;
   private lastHud = '';
@@ -156,8 +170,9 @@ export class Playground {
     // the bar shown while putting something somewhere
     this.placeBar = document.createElement('div');
     this.placeBar.className = 'play-place hidden';
-    this.placeBar.innerHTML = `<p class="place-hint"></p><div class="place-btns"><button class="btn" data-place="away">Remove</button><button class="btn primary" data-place="ok">Put it here</button></div>`;
+    this.placeBar.innerHTML = `<p class="place-hint"></p><div class="place-btns"><button class="btn" data-place="redraw" hidden>Redraw</button><button class="btn" data-place="away">Remove</button><button class="btn primary" data-place="ok">Put it here</button></div>`;
     this.placeBar.querySelector('[data-place=away]')!.addEventListener('click', () => this.endPlacing(false));
+    this.placeBar.querySelector('[data-place=redraw]')!.addEventListener('click', () => this.redraw());
     this.placeBar.querySelector('[data-place=ok]')!.addEventListener('click', () => this.endPlacing(true));
     document.getElementById('app')!.appendChild(this.placeBar);
   }
@@ -194,7 +209,6 @@ export class Playground {
     this.active = true;
     this.time = 0;
     this.frame = 0;
-    this.leaps = [];
     this.cooldown.clear();
     this.follow = null;
     this.camV = { x: 0, y: 0 };
@@ -204,7 +218,6 @@ export class Playground {
     this.host.renderer.invalidate();
     this.bar.classList.remove('hidden');
     this.lastHud = '';
-    this.hopIn = 2.5;
     const cat = arriving ? this.host.session.cats.find((c) => c.breed === arriving) : null;
     if (cat) {
       // out of the clouds overhead, down onto the respawn cloud (the view goes with it)
@@ -221,8 +234,6 @@ export class Playground {
     if (this.active) {
       if (this.placing) this.endPlacing(false, true);
       this.tubes.finishAll();
-      for (const l of this.leaps) l.t = l.T;
-      this.stepLeaps();
       this.write();
     }
     this.active = false;
@@ -258,7 +269,7 @@ export class Playground {
         <h2>The Playground</h2>
         <p class="sub">Up in the clouds, as much sky as you like: build them the best playground ever. Who's coming?</p>
         <div class="pg-picks">${chips}</div>
-        <p class="hc-games">Build with perches and tubes (they're free up there): put shelves end to end and they join into longer platforms. Pinch to zoom, drag the sky to look about, and tap a cat's face up top to follow it.</p>
+        <p class="hc-games">Build with perches and tubes (they're free up there): put shelves end to end and they join into longer platforms, and draw tubes with your finger, as long and twisty as you like. Pinch to zoom, drag the sky to look about, and tap a cat's face up top to follow it.</p>
         <div class="btns"><button class="btn primary" data-go>Up we go!</button><button class="btn" data-close>Not now</button></div>
       </div>`,
       (root) => {
@@ -315,7 +326,7 @@ export class Playground {
   private paintBack(ctx: Ctx, r: Rect): void {
     paintSky(ctx, r, this.cam.x, this.cam.y, this.seaY);
     paintSpawn(ctx, this.time);
-    for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.stampTube(ctx, t, 'back');
+    for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.paintTube(ctx, t, 'back', r);
     const tops = surfacesOf(this.save.pieces);
     for (const p of this.props) {
       const s = p.save;
@@ -335,7 +346,7 @@ export class Playground {
       const s = p.save;
       if (hasFront(s.kind) && !this.moving(p) && overlaps(p.box, r, 40)) this.stampPiece(ctx, s.kind, s.x, s.y, s.id, 'front');
     }
-    for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.stampTube(ctx, t, 'front');
+    for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.paintTube(ctx, t, 'front', r);
   }
 
   /** A hammock or a bouncy cushion that's moving (one at rest looks as it always does, and is painted from what's kept). */
@@ -357,32 +368,67 @@ export class Playground {
   }
 
   /**
-   * A tube, from a painting of it kept along its own length (a tube is the
-   * same whichever way it points: turned to point its way), as sharp as the
-   * view needs and the painting can be.
+   * A tube: its glass painted along it, however it bends (only the stretches
+   * of it on screen), and a bell at each end, from a painting of one kept as
+   * sharp as the view needs and turned to face its way.
    */
-  private stampTube(ctx: Ctx, t: PlayTube, layer: 'back' | 'front'): void {
-    const { ux, uy, len } = tubeDirs(t);
-    const pad = TUBE.bell + 10;
-    const w = len + pad * 2;
-    const h = pad * 2;
+  private paintTube(ctx: Ctx, t: PlayTube, layer: 'back' | 'front', r: Rect): void {
+    const g = this.tubeGeom(t);
+    const pad = 70;
+    const inView = (x: number, y: number): boolean => x > r.x0 - pad && x < r.x1 + pad && y > r.y0 - pad && y < r.y1 + pad;
+    // (the stretches of it in view, each with the point either side, from how far along the tube it starts)
+    const run = g.run;
+    let from = -1;
+    for (let i = 0; i <= run.length; i++) {
+      const on = i < run.length && inView(run[i][0], run[i][1]);
+      if (on && from < 0) from = i;
+      if (!on && from >= 0) {
+        const i0 = Math.max(0, from - 1);
+        const i1 = Math.min(run.length - 1, i);
+        if (i1 > i0) paintPipeRun(ctx, run.slice(i0, i1 + 1), layer, g.along[i0]);
+        from = -1;
+      }
+    }
+    for (const e of g.ends) if (inView(e.x, e.y)) this.stampBell(ctx, e.x, e.y, e.fx, e.fy, layer);
+  }
+
+  /** A tube's pipe between its bells, how far along it each of its points is, and its mouths (kept while it's as it is). */
+  private tubeGeom(t: PlayTube): { run: Pt[]; along: number[]; ends: ReturnType<typeof tubeEnds> } {
+    let g = this.geoms.get(t);
+    if (!g) {
+      const run = tubeRun(t);
+      const along = [0];
+      for (let i = 1; i < run.length; i++) along.push(along[i - 1] + Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]));
+      g = { run, along, ends: tubeEnds(t) };
+      this.geoms.set(t, g);
+    }
+    return g;
+  }
+
+  /** A tube's bell, its mouth at (x, y) facing (fx, fy), from a painting of one. */
+  private stampBell(ctx: Ctx, x: number, y: number, fx: number, fy: number, layer: 'back' | 'front'): void {
     const need = this.host.renderer.scale * this.cam.zoom * this.host.renderer.dpr;
-    const ppu = Math.min(8, 2 ** Math.ceil(Math.log2(Math.max(0.5, need))), 4096 / w);
-    const key = `t${t.id}:${Math.round(len)}:${layer}`;
+    const ppu = Math.min(8, 2 ** Math.ceil(Math.log2(Math.max(0.5, need))));
+    const key = `bell:${layer}`;
     let sp = this.sprites.get(key);
-    if (!sp || sp.ppu < ppu * 0.99) {
+    if (!sp || sp.ppu < ppu) {
+      const x0 = -34;
+      const y0 = -38;
+      const w = 68;
+      const h = 48;
       const c = sp?.c ?? document.createElement('canvas');
       c.width = Math.ceil(w * ppu);
       c.height = Math.ceil(h * ppu);
       const g = c.getContext('2d')!;
-      g.setTransform(ppu, 0, 0, ppu, pad * ppu, pad * ppu);
-      paintSkyTube(g, 0, 0, len, 0, layer);
-      sp = { c, ppu, x0: -pad, y0: -pad, w, h };
+      g.setTransform(ppu, 0, 0, ppu, -x0 * ppu, -y0 * ppu);
+      paintSkyBell(g, layer);
+      sp = { c, ppu, x0, y0, w, h };
       this.sprites.set(key, sp);
     }
     ctx.save();
-    ctx.translate(t.ax, t.ay);
-    ctx.rotate(Math.atan2(uy, ux));
+    ctx.translate(x, y);
+    // (a bell faces down: turned to face its way)
+    ctx.rotate(Math.atan2(-fx, fy));
     ctx.drawImage(sp.c, sp.x0, sp.y0, sp.w, sp.h);
     ctx.restore();
   }
@@ -445,51 +491,78 @@ export class Playground {
     }
     const pl = this.placing;
     if (!pl) return;
+    if (pl.k === 'tube') {
+      this.paintTubeGhost(ctx, pl.tube);
+      return;
+    }
     const ok = this.problem(pl) === null;
     const b = this.placeBox(pl);
     ctx.save();
-    if (pl.k === 'tube') {
-      // (a glow along it: a slanting tube's box is mostly sky)
-      ctx.strokeStyle = ok ? 'rgba(127,196,140,0.32)' : 'rgba(226,120,120,0.38)';
-      ctx.lineWidth = TUBE.bell * 2 + 16;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(pl.tube.ax, pl.tube.ay);
-      ctx.lineTo(pl.tube.bx, pl.tube.by);
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = ok ? 'rgba(127,196,140,0.18)' : 'rgba(226,120,120,0.24)';
-      ctx.strokeStyle = ok ? 'rgba(79,154,107,0.9)' : 'rgba(200,90,90,0.9)';
-      ctx.lineWidth = 1.6 / Math.max(0.6, this.cam.zoom);
-      ctx.setLineDash([5, 4]);
-      roundRect(ctx, b.x0 - 6, b.y0 - 6, b.x1 - b.x0 + 12, b.y1 - b.y0 + 12, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+    ctx.fillStyle = ok ? 'rgba(127,196,140,0.18)' : 'rgba(226,120,120,0.24)';
+    ctx.strokeStyle = ok ? 'rgba(79,154,107,0.9)' : 'rgba(200,90,90,0.9)';
+    ctx.lineWidth = 1.6 / Math.max(0.6, this.cam.zoom);
+    ctx.setLineDash([5, 4]);
+    roundRect(ctx, b.x0 - 6, b.y0 - 6, b.x1 - b.x0 + 12, b.y1 - b.y0 + 12, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.globalAlpha = ok ? 1 : 0.7;
-    if (pl.k === 'piece') {
-      const p = pl.piece;
-      if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + PERCHES[p.kind].height, (b.x1 - b.x0) * 1.2);
-      paintPerchBack(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
-      if (hasFront(p.kind)) paintPerchFront(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
-    } else {
-      const t = pl.tube;
-      paintSkyTube(ctx, t.ax, t.ay, t.bx, t.by, 'back');
-      paintSkyTube(ctx, t.ax, t.ay, t.bx, t.by, 'front');
-      // its handles: an end each, to drag
-      for (const [x, y] of [
-        [t.ax, t.ay],
-        [t.bx, t.by],
-      ]) {
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = 'rgba(255,253,248,0.9)';
+    const p = pl.piece;
+    if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + PERCHES[p.kind].height, (b.x1 - b.x0) * 1.2);
+    paintPerchBack(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+    if (hasFront(p.kind)) paintPerchFront(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+    ctx.restore();
+  }
+
+  /**
+   * The tube being drawn: a glow along it (green, or red where it can't go),
+   * the tube itself, and its handles: an end each (drag one to draw on, or
+   * back along it to take it in) and a grip in its middle to move it by.
+   */
+  private paintTubeGhost(ctx: Ctx, t: PlayTube): void {
+    const pts = t.pts;
+    if (!pts.length) return;
+    const pl = this.placing;
+    const ok = pl !== null && this.problem(pl) === null;
+    const k = 1 / Math.max(0.6, this.cam.zoom);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = ok ? 'rgba(127,196,140,0.32)' : 'rgba(226,120,120,0.38)';
+    ctx.lineWidth = TUBE.bell * 2 + 16;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.1, pts[0][1]);
+    ctx.stroke();
+    if (pts.length >= 2) {
+      const r = this.host.renderer.onScreen();
+      this.paintTube(ctx, t, 'back', r);
+      this.paintTube(ctx, t, 'front', r);
+      const handle = (x: number, y: number, rad: number): void => {
+        ctx.fillStyle = 'rgba(255,253,248,0.92)';
         ctx.strokeStyle = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
-        ctx.lineWidth = 2.4 / Math.max(0.6, this.cam.zoom);
+        ctx.lineWidth = 2.4 * k;
         ctx.beginPath();
-        ctx.arc(x, y, 11 / Math.max(0.6, this.cam.zoom), 0, Math.PI * 2);
+        ctx.arc(x, y, rad * k, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+      };
+      for (const e of tubeEnds(t)) handle(e.x, e.y, 11);
+      // the grip: four little arrows (move it)
+      const m = tubeMiddle(t);
+      handle(m.x, m.y, 13);
+      ctx.fillStyle = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
+      for (let q = 0; q < 4; q++) {
+        const a = (q * Math.PI) / 2;
+        const cx = Math.cos(a);
+        const cy = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(m.x + cx * 9 * k, m.y + cy * 9 * k);
+        ctx.lineTo(m.x + (cx * 4.5 - cy * 3.6) * k, m.y + (cy * 4.5 + cx * 3.6) * k);
+        ctx.lineTo(m.x + (cx * 4.5 + cy * 3.6) * k, m.y + (cy * 4.5 - cx * 3.6) * k);
+        ctx.closePath();
+        ctx.fill();
       }
     }
     ctx.restore();
@@ -532,13 +605,13 @@ export class Playground {
     const r = this.host.renderer;
     const upp = 1 / (r.scale * this.cam.zoom);
     // a carried cat, or what's being placed, at the edge of the screen: the view goes that way
-    const f = this.host.carryFinger() ?? (this.drag?.k === 'ghost' ? { x: this.drag.sx, y: this.drag.sy } : null);
+    const f = this.host.carryFinger() ?? (this.drag?.k === 'ghost' || this.drag?.k === 'tube' ? { x: this.drag.sx, y: this.drag.sy } : null);
     const edge = f ? edgePush(f.x, f.y, r.W, r.H, r.insets.top, r.insets.bottom) : null;
     if (edge && (edge.x || edge.y)) {
       this.follow = null;
       this.cam.x += edge.x * 560 * upp * dt;
       this.cam.y += edge.y * 560 * upp * dt;
-      if (this.drag?.k === 'ghost') {
+      if (this.drag?.k === 'ghost' || this.drag?.k === 'tube') {
         const w = r.screenToWorld(this.drag.sx, this.drag.sy);
         this.dragGhostTo(w.x, w.y);
       }
@@ -546,11 +619,16 @@ export class Playground {
       const c = this.follow;
       const b = c.body;
       b.computeCentroid();
-      // (along at its speed, so even a long fall is kept in view; not while it's in a tube or mid-leap, moved by hand, its speed's not its own)
-      if (!this.tubes.riding(c) && !this.leaping(c)) {
+      // (along at its speed, so even a long fall is kept in view; in a tube, its speed's not its own: along as far as it's gone since)
+      const last = this.followAt;
+      if (!this.tubes.riding(c)) {
         this.cam.x += b.vcx * dt;
         this.cam.y += b.vcy * dt;
+      } else if (last && last.cat === c) {
+        this.cam.x += b.cx - last.x;
+        this.cam.y += b.cy - last.y;
       }
+      this.followAt = { cat: c, x: b.cx, y: b.cy };
       const k = 1 - Math.exp(-6 * dt);
       this.cam.x += (b.cx - this.cam.x) * k;
       this.cam.y += (b.cy - 30 - this.cam.y) * k;
@@ -567,12 +645,6 @@ export class Playground {
     this.cam.y = clamp(this.cam.y, reach.y0, reach.y1);
     this.syncCam();
     this.updateHud();
-    // the cats get up to things
-    this.hopIn -= dt;
-    if (this.hopIn <= 0 && !this.host.overlayOpen()) {
-      this.hopIn = 0.9 + Math.random() * 1.6;
-      this.wander();
-    }
   }
 
   /** How far the view goes: a good way round everything there is (more as you build). */
@@ -586,9 +658,10 @@ export class Playground {
       y0 = Math.min(y0, p.y);
     }
     for (const t of this.save.tubes) {
-      x0 = Math.min(x0, t.ax, t.bx);
-      x1 = Math.max(x1, t.ax, t.bx);
-      y0 = Math.min(y0, t.ay, t.by);
+      const b = tubeBox(t);
+      x0 = Math.min(x0, b.x0);
+      x1 = Math.max(x1, b.x1);
+      y0 = Math.min(y0, b.y0);
     }
     const more = 1400;
     return { x0: x0 - more, x1: x1 + more, y0: y0 - more, y1: this.seaY };
@@ -663,21 +736,40 @@ export class Playground {
     if (this.fingers.size > 2) return true;
     const pl = this.placing;
     if (pl) {
-      // a finger on what's being placed drags it (a tube by the end it's on, or by its middle)
+      // a finger on what's being placed drags it
       const zoomSlop = 26 / (this.host.renderer.scale * this.cam.zoom);
       if (pl.k === 'tube') {
         const t = pl.tube;
-        const end = Math.hypot(wx - t.ax, wy - t.ay) < zoomSlop + 6 ? 'a' : Math.hypot(wx - t.bx, wy - t.by) < zoomSlop + 6 ? 'b' : distToTube(t, wx, wy) < zoomSlop + TUBE.bell ? null : undefined;
-        if (end !== undefined) {
-          const ax = end === 'b' ? t.bx : t.ax;
-          const ay = end === 'b' ? t.by : t.ay;
-          this.drag = { k: 'ghost', id, dx: ax - wx, dy: ay - wy, sx, sy, end };
+        if (t.pts.length < 2) {
+          // nothing drawn yet: the finger draws it, from here
+          pl.tube = { ...t, pts: [[Math.round(wx), Math.round(wy)]] };
+          this.drag = { k: 'tube', id, sx, sy, how: 'end', end: 'b', dx: 0, dy: 0 };
+          this.refreshPlaceBar();
+          return true;
+        }
+        // by an end: drawn on from there; by its grip: moved; anywhere along it: bent
+        const [a, b] = tubeEnds(t);
+        const da = Math.hypot(wx - a.x, wy - a.y);
+        const db = Math.hypot(wx - b.x, wy - b.y);
+        const m = tubeMiddle(t);
+        if (Math.min(da, db) < zoomSlop + 8) {
+          const e = da <= db ? a : b;
+          this.drag = { k: 'tube', id, sx, sy, how: 'end', end: da <= db ? 'a' : 'b', dx: e.x - wx, dy: e.y - wy };
+          return true;
+        }
+        if (Math.hypot(wx - m.x, wy - m.y) < zoomSlop + 6) {
+          this.drag = { k: 'tube', id, sx, sy, how: 'move', lx: wx, ly: wy };
+          return true;
+        }
+        const near = nearestOnTube(t, wx, wy);
+        if (near.d < zoomSlop + TUBE.bell) {
+          this.drag = { k: 'tube', id, sx, sy, how: 'bend', at: near.s, from: t.pts, x0: wx, y0: wy };
           return true;
         }
       } else {
         const b = this.placeBox(pl);
         if (wx > b.x0 - zoomSlop && wx < b.x1 + zoomSlop && wy > b.y0 - zoomSlop && wy < b.y1 + zoomSlop) {
-          this.drag = { k: 'ghost', id, dx: pl.piece.x - wx, dy: pl.piece.y - wy, sx, sy, end: null };
+          this.drag = { k: 'ghost', id, dx: pl.piece.x - wx, dy: pl.piece.y - wy, sx, sy };
           return true;
         }
       }
@@ -763,6 +855,7 @@ export class Playground {
     if (!d || d.id !== id) return false;
     this.drag = null;
     if (d.k === 'hold') clearTimeout(d.timer);
+    if (d.k === 'tube') this.refreshPlaceBar();
     if (d.k === 'pan' && d.moved && performance.now() - d.lastT < 80) this.camV = { x: clamp(d.vx, -3000, 3000), y: clamp(d.vy, -3000, 3000) };
     return true;
   }
@@ -773,27 +866,29 @@ export class Playground {
     this.drag = null;
   }
 
-  /** What's being placed follows the finger. */
+  /** What's being placed follows the finger: a piece, or the tube (drawn on, moved or bent). */
   private dragGhostTo(wx: number, wy: number): void {
     const d = this.drag;
     const pl = this.placing;
-    if (d?.k !== 'ghost' || !pl) return;
-    const x = wx + d.dx;
-    const y = wy + d.dy;
-    if (pl.k === 'piece') {
-      const p = snapPiece(pl.piece.kind, x, y, this.save.pieces.filter((q) => q.id !== pl.piece.id));
+    if (!pl || !d) return;
+    if (d.k === 'ghost' && pl.k === 'piece') {
+      const p = snapPiece(pl.piece.kind, wx + d.dx, wy + d.dy, this.save.pieces.filter((q) => q.id !== pl.piece.id));
       pl.piece = { ...pl.piece, x: p.x, y: p.y };
-    } else {
+    } else if (d.k === 'tube' && pl.k === 'tube') {
       const t = pl.tube;
-      if (d.end === 'a') pl.tube = { ...t, ax: Math.round(x), ay: Math.round(y) };
-      else if (d.end === 'b') pl.tube = { ...t, bx: Math.round(x), by: Math.round(y) };
-      else {
-        // (the whole tube: by its first end)
-        const mx = Math.round(x) - t.ax;
-        const my = Math.round(y) - t.ay;
-        pl.tube = { ...t, ax: t.ax + mx, ay: t.ay + my, bx: t.bx + mx, by: t.by + my };
-      }
-    }
+      if (d.how === 'end') {
+        const x = wx + d.dx;
+        const y = wy + d.dy;
+        const tip = d.end === 'a' ? t.pts[0] : t.pts[t.pts.length - 1];
+        // (a little way at a time)
+        if (Math.hypot(x - tip[0], y - tip[1]) < 1.5) return;
+        pl.tube = { ...t, pts: extendTube(t.pts, d.end, x, y) };
+      } else if (d.how === 'move') {
+        pl.tube = { ...t, pts: moveTube(t.pts, wx - d.lx, wy - d.ly) };
+        d.lx = wx;
+        d.ly = wy;
+      } else pl.tube = { ...t, pts: bendTube(d.from, d.at, wx - d.x0, wy - d.y0) };
+    } else return;
     this.refreshPlaceBar();
   }
 
@@ -829,7 +924,7 @@ export class Playground {
         <h2>Build</h2>
         <p class="sub">As many as you like, free. Shelves, ledges and clouds put end to end join into one long platform.</p>
         <div class="shop-rows">
-          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M10 38 L54 8" stroke="#BFD9E4" stroke-width="13" stroke-linecap="round"/><path d="M10 38 L54 8" stroke="#E8F4F8" stroke-width="6" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Tube</b><small>In at either end, whoosh, and out of the other: drag its ends anywhere</small></span></button>
+          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M10 38 L54 8" stroke="#BFD9E4" stroke-width="13" stroke-linecap="round"/><path d="M10 38 L54 8" stroke="#E8F4F8" stroke-width="6" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Tube</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
           ${rows}
         </div>
         <p class="shop-tip">Press and hold anything you've built to move it, or to take it away.</p>
@@ -860,9 +955,10 @@ export class Playground {
     this.beginPlacing(at);
   }
 
+  /** A new tube: nothing yet, till a finger draws it. */
   private startTube(): void {
     const id = this.save.nextId++;
-    this.beginPlacing(this.freeSpot((x, y) => ({ k: 'tube', tube: newTube(id, Math.round(x), Math.round(y)), prev: null })));
+    this.beginPlacing({ k: 'tube', tube: { id, pts: [] }, prev: null });
   }
 
   /** Something new to put somewhere, in the middle of the view if it can go there, or the nearest place it can (rings out from there). */
@@ -900,12 +996,11 @@ export class Playground {
     this.bar.classList.add('hidden');
     this.placeBar.classList.remove('hidden');
     this.refreshPlaceBar();
-    // (the finger that picked it up carries on dragging it)
+    // (the finger that picked it up carries on dragging it: a tube, the whole of it)
     if (d?.k === 'hold') {
       const w = this.host.renderer.screenToWorld(d.sx, d.sy);
-      const x = pl.k === 'piece' ? pl.piece.x : pl.tube.ax;
-      const y = pl.k === 'piece' ? pl.piece.y : pl.tube.ay;
-      this.drag = { k: 'ghost', id: d.id, dx: x - w.x, dy: y - w.y, sx: d.sx, sy: d.sy, end: null };
+      if (pl.k === 'piece') this.drag = { k: 'ghost', id: d.id, dx: pl.piece.x - w.x, dy: pl.piece.y - w.y, sx: d.sx, sy: d.sy };
+      else this.drag = { k: 'tube', id: d.id, sx: d.sx, sy: d.sy, how: 'move', lx: w.x, ly: w.y };
     }
   }
 
@@ -913,12 +1008,13 @@ export class Playground {
     return pl.k === 'piece' ? pieceBox(pl.piece) : tubeBox(pl.tube);
   }
 
-  /** Why it can't go there (null: it can): on a cat, or a tube too short or long. */
-  private problem(pl: Placing): 'cat' | 'short' | 'long' | null {
+  /** Why it can't go there (null: it can): on a cat, or a tube not drawn yet, or too short or long. */
+  private problem(pl: Placing): 'cat' | 'empty' | 'short' | 'long' | null {
     if (pl.k === 'tube') {
-      const len = tubeDirs(pl.tube).len;
+      if (pl.tube.pts.length < 2) return 'empty';
+      const len = tubeLength(pl.tube);
       if (len < TUBE_LEN.min) return 'short';
-      if (len > TUBE_LEN.max) return 'long';
+      if (len > TUBE_LEN.max + 1) return 'long';
     }
     const b = this.placeBox(pl);
     for (const c of this.host.session.cats) {
@@ -940,11 +1036,18 @@ export class Playground {
     if (!pl) return;
     const pr = this.problem(pl);
     const what = pl.k === 'piece' ? PERCHES[pl.piece.kind].name.toLowerCase() : 'tube';
-    const why = { cat: 'A cat’s in the way', short: 'Pull its ends further apart', long: 'That’s too long for one tube' };
-    const hint = pl.k === 'tube' ? 'Drag either end where you like, or the middle to move it' : `Drag the ${what} where you’d like it`;
+    const why = {
+      cat: 'A cat’s in the way',
+      empty: 'Draw your tube: drag a finger through the sky',
+      short: 'Keep going: draw it a little longer',
+      long: 'That’s as long as a tube can be',
+    };
+    const hint = pl.k === 'tube' ? 'Drag an end to draw on (or back, shorter), the tube to bend it, its knob to move it' : `Drag the ${what} where you’d like it`;
     (this.placeBar.querySelector('.place-hint') as HTMLElement).textContent = pr ? why[pr] : hint;
     (this.placeBar.querySelector('[data-place=ok]') as HTMLButtonElement).disabled = pr !== null;
-    (this.placeBar.querySelector('[data-place=away]') as HTMLElement).textContent = (pl.k === 'piece' ? pl.prev : pl.prev) ? 'Remove' : 'Cancel';
+    (this.placeBar.querySelector('[data-place=away]') as HTMLElement).textContent = pl.prev ? 'Remove' : 'Cancel';
+    const redraw = this.placeBar.querySelector('[data-place=redraw]') as HTMLElement;
+    redraw.hidden = pl.k !== 'tube' || pl.tube.pts.length === 0;
   }
 
   /** Done placing: put it there (or, cancelled, away: a new one's never built, one picked up is taken away; leaving, it goes back). */
@@ -967,6 +1070,16 @@ export class Playground {
       }
     } else if (!ok && pl.prev) this.host.renderer.puff((this.placeBox(pl).x0 + this.placeBox(pl).x1) / 2, this.placeBox(pl).y1, 8);
     this.write();
+  }
+
+  /** The tube being drawn, rubbed out: draw it again. */
+  private redraw(): void {
+    const pl = this.placing;
+    if (pl?.k !== 'tube') return;
+    this.host.audio.click();
+    if (this.drag?.k === 'tube') this.drag = null;
+    pl.tube = { ...pl.tube, pts: [] };
+    this.refreshPlaceBar();
   }
 
   private addPiece(p: PlayPiece): void {
@@ -997,9 +1110,8 @@ export class Playground {
 
   private removeTube(id: number): void {
     this.save.tubes = this.save.tubes.filter((t) => t.id !== id);
-    for (const k of [...this.sprites.keys()]) if (k.startsWith(`t${id}:`)) this.sprites.delete(k);
     this.skyTubes = this.skyTubes.filter((t) => t.play.id !== id);
-    this.host.session.world.removeStaticsOfProp(tubeShapesProp(id));
+    this.host.session.world.removeStaticsOfProp(TUBE_PROP_BASE + id);
     this.host.session.registerShapes();
   }
 
@@ -1018,7 +1130,7 @@ export class Playground {
   // Life up here
 
   canTouch(cat: Cat): boolean {
-    return !this.tubes.riding(cat) && !this.leaping(cat);
+    return !this.tubes.riding(cat);
   }
 
   /** A cat can be carried anywhere up here. */
@@ -1045,11 +1157,7 @@ export class Playground {
     this.tubes.start(cat, t, mouth === 1);
   }
 
-  private leaping(cat: Cat): boolean {
-    return this.leaps.some((l) => l.cat === cat);
-  }
-
-  /** One physics step: the springy pieces, the tubes, the leaps, cats wandering into a tube's mouth or falling into the sea. */
+  /** One physics step: the springy pieces, the tubes, cats put in a tube's mouth or falling into the sea. */
   step(): void {
     if (!this.active) return;
     this.frame++;
@@ -1070,10 +1178,9 @@ export class Playground {
         this.cooldown.set(e.cat, 45);
       }
     }
-    this.stepLeaps();
     const sea = this.seaY;
     for (const c of s.cats) {
-      if (c.grabbed || this.tubes.riding(c) || this.leaping(c)) continue;
+      if (c.grabbed || this.tubes.riding(c)) continue;
       const b = c.body;
       b.computeCentroid();
       if (b.cy > sea) {
@@ -1102,7 +1209,7 @@ export class Playground {
     const catOf = (b: SoftBody): Cat | undefined => s.cats.find((c) => c.body === b);
     const free = (b: SoftBody): boolean => {
       const c = catOf(b);
-      return !c || (!c.grabbed && !this.tubes.riding(c) && !this.leaping(c));
+      return !c || (!c.grabbed && !this.tubes.riding(c));
     };
     const fell = (b: SoftBody): number => this.fellAt.get(b) ?? 0;
     for (const p of this.props) {
@@ -1123,17 +1230,6 @@ export class Playground {
       }
     }
     for (const b of bodies) this.fellAt.set(b, b.vcy);
-  }
-
-  private stepLeaps(): void {
-    const w = this.host.session.world;
-    for (const l of [...this.leaps]) {
-      const b = l.cat.body;
-      if (stepFlight(l, b, w.statics, w.bodies) === 'flying') continue;
-      release(l, b);
-      w.addBody(b);
-      this.leaps.splice(this.leaps.indexOf(l), 1);
-    }
   }
 
   /** Back on the respawn cloud, where there's room (or dropped onto it from above), with a puff. */
@@ -1162,8 +1258,6 @@ export class Playground {
   respawnAll(): void {
     this.host.audio.click();
     this.tubes.finishAll();
-    for (const l of this.leaps) l.t = l.T;
-    this.stepLeaps();
     for (const c of this.host.session.cats) {
       if (c.grabbed) continue;
       this.respawn(c);
@@ -1192,76 +1286,6 @@ export class Playground {
     }
     return by.length > 0;
   }
-
-  /**
-   * Now and then a cat that's been sitting a while hops off somewhere it can
-   * reach: up onto a piece above (they like going up, and the bouncy
-   * cushions, the playful ones), along to the next, or into a tube's mouth.
-   */
-  private wander(): void {
-    const s = this.host.session;
-    const idle = s.cats.filter((c) => !c.grabbed && !this.tubes.riding(c) && !this.leaping(c) && c.settled > 40 && c.sinceTouch > 90 && !(this.cooldown.get(c) ?? 0));
-    if (!idle.length) return;
-    const cat = idle[Math.floor(Math.random() * idle.length)];
-    const b = cat.body;
-    b.computeCentroid();
-    let bottom = -Infinity;
-    for (let i = 0; i < b.n; i++) bottom = Math.max(bottom, b.y[i]);
-    const r = b.p.radius;
-    const rings = s.cats
-      .filter((c) => c !== cat && !this.tubes.riding(c))
-      .map((c) => {
-        c.body.computeCentroid();
-        return { x: c.body.cx, y: c.body.cy, r: c.body.p.radius };
-      });
-    const play = (TEMPERS[cat.breed]?.play ?? 0.5) > 0.6;
-    const spots: { x: number; y: number; w: number }[] = [];
-    const tops = [SPAWN_SURFACE, ...this.props.flatMap((p) => p.surfaces.map((sf) => ({ ...sf, kind: p.save.kind })))] as (typeof SPAWN_SURFACE & { kind?: PerchKind })[];
-    for (const t of tops) {
-      if (t.x1 - t.x0 < r * 1.2) continue;
-      const x = t.x0 + r * 0.7 + Math.random() * Math.max(0, t.x1 - t.x0 - r * 1.4);
-      const dx = x - b.cx;
-      const rise = bottom - t.y;
-      // (in reach: along, up a way, or down a long way)
-      if (Math.abs(dx) > 330 || rise > 250 || rise < -620) continue;
-      if (Math.abs(dx) < 34 && Math.abs(rise) < 24) continue;
-      // (not straight up into the underside of something)
-      if (rise > 10 && Math.abs(dx) < (t.x1 - t.x0) / 2 + r) continue;
-      const ly = t.y - r * 0.92 - 2;
-      if (!roomFor(s.world.statics, rings, x, ly, r)) continue;
-      const w = (1 + Math.max(0, rise) / 60) * (t.kind ? 2 : 1) * (t.kind === 'bounce' ? (play ? 4 : 1.5) : t.kind === 'bed' || t.kind === 'hammock' || t.kind === 'pod' ? 2 : 1);
-      spots.push({ x, y: t.y, w });
-    }
-    // into a tube's mouth, now and then
-    for (const t of this.skyTubes) {
-      for (const z of t.zones) {
-        const dx = z.x - b.cx;
-        const rise = bottom - (z.y + r);
-        if (Math.abs(dx) > 300 || rise > 240 || rise < -500 || Math.abs(dx) < 30) continue;
-        spots.push({ x: z.x, y: z.y + r * 0.9, w: play ? 1.6 : 0.8 });
-      }
-    }
-    if (!spots.length) {
-      b.kick(0, -b.p.hop * 0.5);
-      cat.sinceTouch = 0;
-      return;
-    }
-    let pick = Math.random() * spots.reduce((a, p) => a + p.w, 0);
-    let to = spots[0];
-    for (const p of spots) {
-      pick -= p.w;
-      if (pick <= 0) {
-        to = p;
-        break;
-      }
-    }
-    const f = planFlight(b, to.x, to.y, false, b.cy - 900);
-    s.world.removeBody(b);
-    this.leaps.push({ ...f, cat });
-    cat.intent = null;
-    cat.sinceTouch = 0;
-    if (Math.random() < 0.5) this.host.audio.grab(BREEDS[cat.breed].voice.pitch, false);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,10 +1301,6 @@ function edgePush(x: number, y: number, W: number, H: number, top: number, botto
   const b0 = H - bottom - EDGE * 0.8;
   const ey = y < t0 ? -(t0 - y) / EDGE : y > b0 ? (y - b0) / EDGE : 0;
   return { x: clamp(ex, -1, 1), y: clamp(ey, -1, 1) };
-}
-
-function tubeShapesProp(id: number): number {
-  return tubeShapes({ id, ax: 0, ay: 0, bx: 100, by: 0 })[0].propId;
 }
 
 function safeGet(k: string): string | null {

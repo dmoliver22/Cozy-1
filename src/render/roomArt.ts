@@ -929,7 +929,7 @@ function drawWindow(ctx: Ctx, d: DecorPlacement, theme: Theme, seed: number): vo
   // the view
   ctx.save();
   clipRect(ctx, x, y, w, h);
-  windowView(ctx, b, v, seed);
+  windowView(ctx, b, v, seed, d.outlook);
   glassSheen(ctx, b, night);
   ctx.restore();
   // sash frame and glazing bars, bevelled
@@ -1141,7 +1141,7 @@ function tree(ctx: Ctx, x: number, y: number, s: number, green: string, trunk: s
 }
 
 /** The painted landscape seen through a window (clipped to the glass by the caller). */
-function windowView(ctx: Ctx, b: WinBox, v: number, seed: number): void {
+function windowView(ctx: Ctx, b: WinBox, v: number, seed: number, outlook?: 'high' | 'ground'): void {
   const { x, y, w, h } = b;
   const night = v === 3;
   const golden = v === 2;
@@ -1193,6 +1193,15 @@ function windowView(ctx: Ctx, b: WinBox, v: number, seed: number): void {
   const farC = night ? '#3A3F6A' : golden ? '#C9B7B9' : '#A9C2C6';
   const midC = night ? '#30365C' : golden ? '#B4B48A' : '#A3BF94';
   const nearC = night ? '#282D4E' : golden ? '#A3A774' : '#8EB083';
+  if (outlook === 'high') {
+    highView(ctx, b, farC, midC, seed);
+    if (v === 1) blossomBranch(ctx, b, seed);
+    return;
+  }
+  if (outlook === 'ground') {
+    groundView(ctx, b, farC, nearC, seed);
+    return;
+  }
   const far = hillYs(seed + 3, 7, y + h * 0.64, h * 0.05);
   ctx.fillStyle = farC;
   ridge(ctx, x, x + w, far, y + h + 2);
@@ -1240,6 +1249,137 @@ function windowView(ctx: Ctx, b: WinBox, v: number, seed: number): void {
     ctx.fillRect(x, y + h * 0.5, w, h * 0.3);
   }
   if (v === 1) blossomBranch(ctx, b, seed);
+}
+
+/**
+ * The view from a window high up a wall: the hills far off and low, and
+ * down below, the tops of the garden's trees and a neighbour's roof.
+ */
+function highView(ctx: Ctx, b: WinBox, farC: string, midC: string, seed: number): void {
+  const { x, y, w, h } = b;
+  const far = hillYs(seed + 3, 7, y + h * 0.8, h * 0.035);
+  ctx.fillStyle = farC;
+  ridge(ctx, x, x + w, far, y + h + 2);
+  ctx.fill();
+  const mid = hillYs(seed + 9, 6, y + h * 0.87, h * 0.03);
+  ctx.fillStyle = midC;
+  ridge(ctx, x, x + w, mid, y + h + 2);
+  ctx.fill();
+  // haze over the distance
+  const hz = ctx.createLinearGradient(0, y + h * 0.66, 0, y + h * 0.92);
+  hz.addColorStop(0, 'rgba(255,248,232,0)');
+  hz.addColorStop(0.6, 'rgba(255,248,232,0.3)');
+  hz.addColorStop(1, 'rgba(255,248,232,0.1)');
+  ctx.fillStyle = hz;
+  ctx.fillRect(x, y + h * 0.66, w, h * 0.34);
+  // a neighbour's roof, down below, and its chimney
+  const rx = x + w * (0.58 + hash01(seed, 120) * 0.12);
+  ctx.fillStyle = '#B98A76';
+  ctx.fillRect(rx + w * 0.16, y + h * 0.86, w * 0.06, h * 0.1);
+  ctx.fillStyle = '#C58F78';
+  ctx.beginPath();
+  ctx.moveTo(rx - w * 0.04, y + h + 2);
+  ctx.lineTo(rx + w * 0.2, y + h * 0.9);
+  ctx.lineTo(rx + w * 0.5, y + h + 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,240,222,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(rx - w * 0.04, y + h + 2);
+  ctx.lineTo(rx + w * 0.2, y + h * 0.9);
+  ctx.lineTo(rx + w * 0.2, y + h + 2);
+  ctx.closePath();
+  ctx.fill();
+  // the tops of the trees, rising from below the sill
+  for (const [t, r] of [
+    [0.12, 0.2],
+    [0.38, 0.15],
+    [0.98, 0.17],
+  ] as const) {
+    const cx = x + w * t;
+    const cy = y + h * 1.04;
+    const R = h * r;
+    ctx.fillStyle = '#6F9566';
+    ctx.beginPath();
+    ctx.arc(cx + R * 0.12, cy + R * 0.1, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#86AB76';
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 0.92, 0, Math.PI * 2);
+    ctx.arc(cx - R * 0.6, cy + R * 0.25, R * 0.62, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(214,232,180,0.55)';
+    ctx.beginPath();
+    ctx.arc(cx - R * 0.3, cy - R * 0.45, R * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/**
+ * The view from a window at the level of the ground outside (the
+ * basement's, high in its wall): the lawn right there, its blades of grass
+ * and a daisy up close, the garden fence and the hills beyond.
+ */
+function groundView(ctx: Ctx, b: WinBox, farC: string, nearC: string, seed: number): void {
+  const { x, y, w, h } = b;
+  const far = hillYs(seed + 3, 7, y + h * 0.5, h * 0.05);
+  ctx.fillStyle = farC;
+  ridge(ctx, x, x + w, far, y + h + 2);
+  ctx.fill();
+  // the fence along the back of the lawn
+  const fy = y + h * 0.58;
+  ctx.fillStyle = '#F4EDE2';
+  ctx.fillRect(x, fy + h * 0.04, w, h * 0.025);
+  for (let px = x + 3; px < x + w; px += w * 0.07) {
+    ctx.beginPath();
+    ctx.moveTo(px - w * 0.016, fy + h * 0.13);
+    ctx.lineTo(px - w * 0.016, fy + h * 0.01);
+    ctx.lineTo(px, fy - h * 0.015);
+    ctx.lineTo(px + w * 0.016, fy + h * 0.01);
+    ctx.lineTo(px + w * 0.016, fy + h * 0.13);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // the lawn, coming right up to the glass
+  const lawn = ctx.createLinearGradient(0, y + h * 0.68, 0, y + h);
+  lawn.addColorStop(0, '#9DBE83');
+  lawn.addColorStop(1, nearC);
+  ctx.fillStyle = lawn;
+  ctx.fillRect(x, y + h * 0.69, w, h * 0.32);
+  // blades of grass up close
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 26; k++) {
+    const t = (k + hash01(seed, k + 140)) / 26;
+    const bx = x + w * t;
+    const tall = h * (0.18 + hash01(seed, k + 160) * 0.3);
+    const lean = (hash01(seed, k + 180) - 0.5) * w * 0.12;
+    ctx.strokeStyle = k % 3 ? '#7FA466' : '#97BA79';
+    ctx.lineWidth = w * (0.012 + hash01(seed, k + 200) * 0.01);
+    ctx.beginPath();
+    ctx.moveTo(bx, y + h + 2);
+    ctx.quadraticCurveTo(bx + lean * 0.3, y + h - tall * 0.6, bx + lean, y + h - tall);
+    ctx.stroke();
+  }
+  // a daisy
+  const dx = x + w * (0.25 + hash01(seed, 220) * 0.15);
+  const dy = y + h * 0.66;
+  ctx.strokeStyle = '#7FA466';
+  ctx.lineWidth = w * 0.012;
+  ctx.beginPath();
+  ctx.moveTo(dx + w * 0.02, y + h + 2);
+  ctx.quadraticCurveTo(dx + w * 0.03, dy + h * 0.15, dx, dy);
+  ctx.stroke();
+  ctx.fillStyle = '#FFF8EE';
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 7) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.ellipse(dx + Math.cos(a) * w * 0.035, dy + Math.sin(a) * w * 0.035, w * 0.03, w * 0.014, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#F2C14E';
+  ctx.beginPath();
+  ctx.arc(dx, dy, w * 0.022, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function nightSky(ctx: Ctx, b: WinBox, sky: CanvasGradient, seed: number): void {

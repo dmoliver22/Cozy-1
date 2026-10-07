@@ -200,7 +200,7 @@ export function homeDecor(): DecorPlacement[] {
     { type: 'clock', x: 228, y: 112, w: 15 },
     { type: 'pendant', x: 160, y: 44, h: 44 - LIVING_CEIL },
     { type: 'rug', x: 238, y: FLOOR_Y, w: 220 },
-    { type: 'window', x: 236, y: -410, w: 92, h: 118, variant: 1 },
+    { type: 'window', x: 236, y: -410, w: 92, h: 118, variant: 1, outlook: 'high' },
     // (clear of the attic tube's pipe and hood, and the step under it)
     { type: 'picture', x: 124, y: -370, w: 44, h: 56, variant: 0 },
     { type: 'picture', x: 124, y: -150, w: 40, h: 34, variant: 2 },

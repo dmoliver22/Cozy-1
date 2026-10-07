@@ -3,25 +3,49 @@ import { Session, type Cat } from '../src/game/session';
 import { distToShape } from '../src/game/spawn';
 import { PERCHES } from '../src/house/perches';
 import { Tubes } from '../src/house/tubes';
+import { pathLength, pointAt } from '../src/util/path';
 import {
   JOIN,
   SPAWN,
   TUBE,
+  TUBE_LEN,
+  bendTube,
   buildPiece,
+  evenTube,
+  extendTube,
   lowest,
   mouthOf,
-  newTube,
   readPlay,
   skyTube,
   snapPiece,
   spawnShapes,
   spawnSpots,
+  straightTube,
   surfacesOf,
-  tubeDirs,
+  tubeEnds,
+  tubeLength,
   tubeShapes,
   type PlayPiece,
   type SkyTube,
 } from '../src/playground/layout';
+
+type Pt = [number, number];
+
+/** The sharpest a polyline turns anywhere along it, for how far apart its points are (radians a unit: 1 / its tightest radius). */
+const sharpest = (p: readonly Pt[]): number => {
+  let k = 0;
+  for (let i = 1; i < p.length - 1; i++) {
+    const ax = p[i][0] - p[i - 1][0];
+    const ay = p[i][1] - p[i - 1][1];
+    const bx = p[i + 1][0] - p[i][0];
+    const by = p[i + 1][1] - p[i][1];
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    const turn = Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (la * lb))));
+    k = Math.max(k, turn / ((la + lb) / 2));
+  }
+  return k;
+};
 
 // The Playground: a corner of the sky of your own, built of perches and tubes.
 
@@ -43,15 +67,33 @@ describe('the playground, as saved', () => {
         { id: 6, kind: 'bounce', x: 1e9, y: 0 },
         { id: 7, kind: 'tree', x: -200, y: -40 },
       ],
-      tubes: [{ id: 9, ax: 0, ay: 0, bx: 100, by: -100 }, { id: 10, ax: 'x' }],
+      tubes: [
+        // (a straight one from before tubes bent, a drawn one, and some nonsense)
+        { id: 9, ax: 0, ay: 0, bx: 100, by: -100 },
+        { id: 10, ax: 'x' },
+        { id: 11, pts: [[0, 0], [16, 0], [32, 4]] },
+        { id: 12, pts: [[0, 0]] },
+        { id: 13, pts: [[0, 0], [1, Number.NaN]] },
+        { id: 14, pts: [[5, 5], [5, 5]] },
+      ],
       nextId: 2,
       cats: ['kitten', 'mine', 'kitten', 'unicorn'],
     });
     const s = readPlay(raw);
     expect(s.pieces.map((p) => p.id)).toEqual([3, 7]);
-    expect(s.tubes.map((t) => t.id)).toEqual([9]);
+    expect(s.tubes.map((t) => t.id)).toEqual([9, 11]);
+    // the straight one, as a line of points from end to end
+    const old = s.tubes[0].pts;
+    expect(old[0]).toEqual([0, 0]);
+    expect(old[old.length - 1]).toEqual([100, -100]);
+    expect(old.length).toBeGreaterThan(5);
+    expect(s.tubes[1].pts).toEqual([
+      [0, 0],
+      [16, 0],
+      [32, 4],
+    ]);
     // (new ids never clash with old ones)
-    expect(s.nextId).toBe(10);
+    expect(s.nextId).toBe(12);
     expect(s.cats).toEqual(['kitten', 'mine']);
     expect(readPlay('nonsense{').pieces).toEqual([]);
     expect(readPlay(null)).toEqual({ v: 1, pieces: [], tubes: [], nextId: 1, cats: [] });
@@ -87,7 +129,8 @@ describe('building', () => {
   it("the lowest thing up there sets where the sea of cloud is (a cat falls past it, it's back on the respawn cloud)", () => {
     expect(lowest({ pieces: [], tubes: [] })).toBe(SPAWN.y + SPAWN.thick);
     expect(lowest({ pieces: [{ id: 1, kind: 'tree', x: 0, y: 400 }], tubes: [] })).toBe(400 + PERCHES.tree.height);
-    expect(lowest({ pieces: [], tubes: [{ id: 1, ax: 0, ay: 0, bx: 0, by: 900 }] })).toBe(900);
+    expect(lowest({ pieces: [], tubes: [straightTube(1, 0, 0, 0, 900)] })).toBe(900);
+    expect(lowest({ pieces: [], tubes: [{ id: 1, pts: evenTube([[0, 0], [200, 1300], [400, 0]]) }] })).toBeGreaterThan(1000);
   });
 
   it('a cat walks across the seam of two joined shelves', () => {
@@ -115,10 +158,94 @@ describe('building', () => {
   });
 });
 
+describe('drawing a tube', () => {
+  it('is evened out: a point every step along it, its ends where they were drawn', () => {
+    const p = evenTube([
+      [0, 0],
+      [3, 1],
+      [90, 2],
+      [100, 70],
+      [101, 300],
+    ]);
+    expect(p[0]).toEqual([0, 0]);
+    expect(p[p.length - 1]).toEqual([101, 300]);
+    for (let i = 1; i < p.length - 1; i++) expect(Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])).toBeCloseTo(TUBE.step, 0);
+    // (the last stretch takes up the rest)
+    const last = Math.hypot(p[p.length - 1][0] - p[p.length - 2][0], p[p.length - 1][1] - p[p.length - 2][1]);
+    expect(last).toBeGreaterThan(TUBE.step * 0.3);
+    expect(last).toBeLessThan(TUBE.step * 1.4);
+  });
+
+  it('a sharp corner drawn is eased round: no tighter than a tube bends', () => {
+    // an L, and a zigzag
+    for (const raw of [
+      [
+        [0, 0],
+        [300, 0],
+        [300, 300],
+      ],
+      [
+        [0, 0],
+        [200, 0],
+        [0, 120],
+        [200, 240],
+      ],
+    ] as Pt[][]) {
+      const p = evenTube(raw);
+      expect(sharpest(p)).toBeLessThan((1 / TUBE.bend) * 1.25);
+      expect(p[0]).toEqual(raw[0]);
+      expect(p[p.length - 1]).toEqual(raw[raw.length - 1]);
+    }
+  });
+
+  it('drawn on from an end, it follows the finger; back along itself, it gets shorter', () => {
+    let p: Pt[] = [[0, 0]];
+    // a finger going right, then curling round and up
+    for (let k = 1; k <= 60; k++) {
+      const a = (k / 60) * Math.PI;
+      p = extendTube(p, 'b', 200 * Math.sin(a) + k * 4, -200 + 200 * Math.cos(a));
+    }
+    const tip = p[p.length - 1];
+    expect(tip[0]).toBeCloseTo(240, 0);
+    expect(tip[1]).toBeCloseTo(-400, 0);
+    expect(p[0]).toEqual([0, 0]);
+    const long = pathLength(p);
+    expect(long).toBeGreaterThan(600);
+    // dragged back along itself a way: taken in, still from where it began
+    const back = pointAt(p, long - 150);
+    const q = extendTube(p, 'b', back.x, back.y);
+    expect(pathLength(q)).toBeLessThan(long - 120);
+    expect(q[0]).toEqual([0, 0]);
+    // and from its other end too, the far end staying put
+    const r = extendTube(p, 'a', -120, 10);
+    expect(r[0]).toEqual([-120, 10]);
+    expect(r[r.length - 1]).toEqual(tip);
+    expect(pathLength(r)).toBeGreaterThan(long + 100);
+  });
+
+  it('as long as you like, up to a point', () => {
+    let p: Pt[] = [[0, 0]];
+    for (let x = 400; x <= TUBE_LEN.max + 2000; x += 400) p = extendTube(p, 'b', x, 0);
+    expect(pathLength(p)).toBeGreaterThan(TUBE_LEN.max - TUBE.step);
+    expect(pathLength(p)).toBeLessThanOrEqual(TUBE_LEN.max + 1);
+  });
+
+  it('pulled by its middle, it bends there and its ends stay put', () => {
+    const t = straightTube(1, 0, 0, 600, 0);
+    const p = bendTube(t.pts, 300, 0, -160);
+    const mid = pointAt(p, pathLength(p) / 2);
+    expect(mid.y).toBeLessThan(-140);
+    expect(p[0][1]).toBeCloseTo(0, 0);
+    expect(p[p.length - 1][0]).toBeCloseTo(600, -1);
+    expect(p[p.length - 1][1]).toBeGreaterThan(-12);
+  });
+});
+
 describe('tubes', () => {
   it('face away from each other, with a reach in front of each mouth', () => {
-    const t = skyTube({ id: 1, ax: 0, ay: 0, bx: 300, by: -300 });
-    const { ux, uy } = tubeDirs(t.play);
+    const t = skyTube(straightTube(1, 0, 0, 300, -300));
+    const ux = Math.SQRT1_2;
+    const uy = -Math.SQRT1_2;
     expect(t.upper.dirX * ux + t.upper.dirY * uy).toBeCloseTo(-1);
     expect(t.lower.dirX * ux + t.lower.dirY * uy).toBeCloseTo(1);
     expect(mouthOf(t, -20, 20)).toBe(0);
@@ -128,15 +255,29 @@ describe('tubes', () => {
     const shapes = tubeShapes(t.play);
     expect(shapes).toHaveLength(6);
     for (const z of t.zones) for (const sh of shapes) expect(distToShape(sh, z.x, z.y)).toBeGreaterThan(TUBE.bore / 2);
-    // a new one rises to the right: in at the bottom, out of the top
-    const n = newTube(2, 0, 0);
-    expect(n.by).toBeLessThan(n.ay);
+  });
+
+  it('a bendy one: its mouths face out along it, its walls follow every bend, and nothing blocks its bore', () => {
+    // up, over and down: a hairpin bend
+    const t = skyTube({ id: 2, pts: evenTube([[0, 0], [0, -300], [200, -300], [200, 0]]) });
+    const [a, b] = tubeEnds(t.play);
+    expect(a.fy).toBeGreaterThan(0.9);
+    expect(b.fy).toBeGreaterThan(0.9);
+    const shapes = tubeShapes(t.play);
+    expect(shapes.length).toBeGreaterThan(10);
+    for (const z of t.zones) for (const sh of shapes) expect(distToShape(sh, z.x, z.y)).toBeGreaterThan(TUBE.bore / 2);
+    // (all along its middle, the walls are clear of the bore)
+    const L = tubeLength(t.play);
+    for (let s = 30; s < L - 30; s += 10) {
+      const q = pointAt(t.play.pts, s);
+      for (const sh of shapes) expect(distToShape(sh, q.x, q.y)).toBeGreaterThan(TUBE.bore / 2 - 1);
+    }
   });
 
   it('a cat in at one end comes out of the other, going the way that mouth faces', () => {
     const s = sky([], ['kitten']);
     const cat = s.cats[0];
-    const t: SkyTube = skyTube({ id: 1, ax: 0, ay: -40, bx: 260, by: -300 });
+    const t: SkyTube = skyTube(straightTube(1, 0, -40, 260, -300));
     for (const sh of tubeShapes(t.play)) s.world.addStatic(sh);
     const tubes = new Tubes<Cat, SkyTube>(() => s.world);
     cat.body.placeAt(t.zones[0].x, t.zones[0].y);
@@ -165,5 +306,33 @@ describe('tubes', () => {
       top = Math.min(top, cat.body.cy);
     }
     expect(top).toBeLessThan(out!.y - 60);
+  });
+
+  it('round every bend of a twisty one and out of the far end', () => {
+    const s = sky([], ['kitten']);
+    const cat = s.cats[0];
+    // an S: along, down, back, down and out to the right
+    const t: SkyTube = skyTube({ id: 3, pts: evenTube([[-300, -600], [200, -600], [200, -450], [-200, -450], [-200, -300], [300, -300]]) });
+    for (const sh of tubeShapes(t.play)) s.world.addStatic(sh);
+    const tubes = new Tubes<Cat, SkyTube>(() => s.world);
+    cat.body.placeAt(t.zones[0].x, t.zones[0].y);
+    tubes.start(cat, t, false);
+    let out: { x: number; y: number } | null = null;
+    let lowestY = -Infinity;
+    for (let f = 0; f < 600 && !out; f++) {
+      tubes.step();
+      s.step();
+      cat.body.computeCentroid();
+      lowestY = Math.max(lowestY, cat.body.cy);
+      for (const e of tubes.drain()) if (e.t === 'out') out = { x: e.x, y: e.y };
+    }
+    expect(out).not.toBeNull();
+    const end = t.play.pts[t.play.pts.length - 1];
+    expect(Math.hypot(out!.x - end[0], out!.y - end[1])).toBeLessThan(80);
+    // (it went the whole way round: down past the second bend)
+    expect(lowestY).toBeGreaterThan(-340);
+    let vx = 0;
+    for (let i = 0; i < cat.body.n; i++) vx += cat.body.vx[i] / cat.body.n;
+    expect(vx).toBeGreaterThan(200);
   });
 });
