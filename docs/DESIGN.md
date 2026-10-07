@@ -502,7 +502,10 @@ Notes on the choices:
   and back. The attic's tube is the basement's the other way up: a hood high
   on the living room's left wall, over a little step, whooshes a cat up to
   the attic, where it pops out of a funnel in the floor, and a cat dropped
-  in that funnel slides back down to the step. Both are there from the start, so you can see where they go:
+  in that funnel slides back down to the step. And a hood hangs over the
+  middle of the roof garden, its pipe going straight up out of sight: a cat
+  let go under it goes up and away to the Playground (see there). All are
+  there from the start, so you can see where they go:
   until the floor a tube goes to is open it's capped, a wooden lid on the
   funnel and a steel cap on each hood, padlocked (colliders too: a cat can
   sit on the funnel's lid and can't get into a hood), and a tap on a capped
@@ -536,7 +539,12 @@ Notes on the choices:
   and a low guided leap onto the yarn or the other cat's back. The wiggle
   is painted, not simulated (`CatPose.wiggle` bends the drawn outline):
   shape matching ironed a physics wiggle flat. The yarn is a little soft
-  body of its own, with drag so it rolls to a stop; batted, it shoots off.
+  body of its own, with drag so it rolls to a stop; batted, it shoots off,
+  away from the cat that got it and never into a wall (boxed in, straight
+  up). Pounced on in a corner (the long shelf's end, against the glass
+  tub), with the cat coming down on it, it used to stay pinned there, the
+  pounce gone for nothing (about one in twenty times): a moment after it's
+  batted, if it hasn't got anywhere, it squirts out up over the cat.
   A pounced-on cat plays along (chases, or pounces back), takes no notice,
   or hisses (ears flat, fangs) and the pouncer runs off; both are cross for
   a while. Two touchy cats, or cross ones, now and then scrap instead
@@ -639,4 +647,72 @@ name is its design's. Names keep to the same letters as your cat's. The
 save is v7: `names`, a name for each resident you've named (a name the same
 as its kind isn't kept); a house from before keeps the names its cats had
 (Pip, Mochi, Duchess and so on), and `moved` (see the house's things).
+
+## The Playground
+
+Up in the clouds, a corner of the sky of your own (`src/playground/`): the
+same soft cats in a `Session` like the house's, built of the house's
+perches (`buildPerch`, their art from `perchArt.ts`) and of tubes ridden
+like the house's (`Tubes` takes any path with a mouth at each end), with the
+house's leaps (`leap.ts`) for the cats' hops. Notes on the choices:
+
+- **Getting there.** A cloud tin on the home bar asks who's coming (your
+  cats as faces to tap: last time's lot, or your own cat, picked to begin
+  with) and goes up; and once the roof garden is open, a cat let go under
+  the sky tube's hood over the middle of the garden rides up it, out of the
+  top of the house, and drops out of the clouds onto the respawn cloud, the
+  view following it. Back home, it's on the roof garden under the hood. The
+  house waits while you're up there: the Playground has a session of its own
+  (the app swaps them: `App.goPlayground`, `leavePlayground`), and the input,
+  the loop and the HUD go to whichever is showing.
+- **The respawn cloud** sits at the world's origin: a soft slab with a star
+  on a wand at one end, where the cats start. Below everything (the lowest
+  thing built, plus `FALL`) is a **sea of cloud**: a cat that falls into it
+  is put back on the respawn cloud where there's room, with a puff; the
+  Respawn tin brings everyone back. The view can't wander off for good
+  either: it keeps within a good way of everything there is.
+- **The camera is free** (`Stage.camera`): the stage says where the view's
+  middle is and how far it's zoomed (0.3 to 2.4 times the house's), and the
+  renderer draws from there, painting the back and front live rather than
+  from cached tiles. One finger on the sky looks about (and coasts when
+  flicked), two pinch (the point between them stays put: `Renderer.camFor`),
+  a mouse wheel zooms where it points (a trackpad's pinch too, and its
+  two-finger slide looks about). Carry a cat, or drag what you're placing, to
+  the screen's edge and the view goes that way. Tap a cat's face in the top
+  bar and the view follows it, along at its speed (so even a long fall stays
+  in view) and easing onto it; a gold marker bobs over it.
+- **Building** is free and unlimited: Build lists every perch and a tube. A
+  new one appears in the middle of the view, or the nearest place nothing's
+  in the way of (a cat can't have something put on it). Shelves, ledges and
+  clouds join: dragged up to the end of another hanging piece at about its
+  height (within `JOIN`, 18), one snaps on end to end at exactly its height,
+  their tops one long walk (the cats cross the seam without a bump: tested).
+  A piece that stands (a beanbag, a bouncy cushion, a bed, a cat tree)
+  dragged just over a top stands on it; anywhere else it floats on a little
+  cloud of its own. Pieces may overlap: it's a sandbox. Press and hold
+  anything built to pick it up (Remove takes it away). The layout is saved
+  separately from the house (`cozy-playground:v1`), made safe on load.
+- **Tubes** are straight, from end to end, a hood at each end facing away
+  from the other (so where you put the ends says which way a cat is shot
+  out). A cat whose middle comes into the reach just in front of a mouth,
+  let go there or wandering in, rides through and is shot out of the other
+  end at 720 (about 235 straight up, 470 across at 45°). Out of one mouth,
+  it's a moment before any mouth can have it again: its own is right there.
+  The glass is two walls and the bells' flares (`tubeShapes`), so a cat can
+  sit on a tube and only goes in at a mouth. Placing one, you drag either
+  end by its handle, or the middle.
+- **The cats** hop on their own: now and then one that's been sitting a while
+  picks somewhere it can reach (along, up to 250, or down a long way) with
+  room for it, liking higher places, perches, and (the playful ones) the
+  bouncy cushions, and sometimes a tube's mouth. Bouncy cushions and
+  hammocks work as at home.
+- **The sky** is a gradient that warms the lower you go, a sun so far off
+  it hardly moves, and clouds at two depths drifting past slower than the
+  view. They're painted once into sprites and stamped (zoomed out, a view
+  takes in a lot of sky). So are the pieces: each kind in three looks, as
+  sharp as the zoom needs, and each tube along its own length (turned to
+  point its way). A hammock or bouncy cushion is painted live only while
+  it's moving. With 40 pieces and 6 tubes a frame paints in about 2.5 ms in
+  a software-rendered browser, zoomed in or out (it was 8 to 41 painting
+  everything live).
 

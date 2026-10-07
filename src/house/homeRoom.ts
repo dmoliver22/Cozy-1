@@ -8,7 +8,7 @@ import type { CatPlacement, DecorPlacement, RoomDef, SpawnOk } from '../game/roo
 import { BREEDS, type BreedId } from '../physics/breeds';
 import type { HouseSave } from './house';
 import { NAMES, isOpen, openFloors } from './house';
-import { ATTIC_DY, ATTIC_FUNNEL, ATTIC_FURNITURE, BASEMENT_DY, CHIMNEY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, LIVING_CUSHION_X, LOFT_HOOD, LOFT_STEP, OUTLET, RAFTER, SPOUT, TUBES, floorAt, type FloorId, type Tube } from './layout';
+import { ATTIC_DY, ATTIC_FUNNEL, ATTIC_FURNITURE, BASEMENT_DY, CHIMNEY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, LIVING_CUSHION_X, LOFT_HOOD, LOFT_STEP, OUTLET, RAFTER, SKY_HOOD, SKY_TOP, SPOUT, TUBES, floorAt, type FloorId, type Tube } from './layout';
 import { BOUNCE, type Box, type PlaceProblem } from './perches';
 
 /** The top cat step, under the roof tube's hood. */
@@ -248,6 +248,7 @@ function glassBoxes(t: Tube): Box[] {
       { x0: SPOUT.x - 26, y0: BASEMENT_DY - 4, x1: SPOUT.x + 26, y1: SPOUT.y + 6 },
     ];
   }
+  if (t.id === 'sky') return [{ x0: SKY_HOOD.x - 26, y0: SKY_TOP, x1: SKY_HOOD.x + 26, y1: SKY_HOOD.y + 6 }];
   if (t.id === 'loft') {
     return [
       { x0: ATTIC_FUNNEL.x - ATTIC_FUNNEL.rimHw - 6, y0: ATTIC_FUNNEL.rimY - 6, x1: ATTIC_FUNNEL.x + ATTIC_FUNNEL.rimHw + 6, y1: ATTIC_FUNNEL.floorY },

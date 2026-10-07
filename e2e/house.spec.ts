@@ -24,7 +24,7 @@ test('home: your cats, and a way into each game', async ({ page }) => {
   expect(names).toEqual(['Pip', 'Mochi']);
   // the games are on the bar along the bottom (and only there)
   for (const name of ['Cat Jar', 'Cat Drop']) await expect(page.locator('#homeBar .tin', { hasText: name })).toBeVisible();
-  await expect(page.locator('#homeBar .tin')).toHaveCount(3);
+  await expect(page.locator('#homeBar .tin')).toHaveCount(4);
   await expect(page.locator('.home-label:not(.home-sign)')).toHaveCount(0);
   // the cats card: your own cat to make, who lives here and what brings the others home
   await page.locator('.home-cats').click();
@@ -279,7 +279,7 @@ test("move the house's own things: a long press picks one up, and it goes where 
   await page.mouse.down();
   await page.waitForTimeout(700);
   await expect(page.locator('.place-bar')).toBeVisible();
-  await expect(page.locator('.place-hint')).toHaveText('Drag the vase where you’d like it');
+  await expect(page.locator('.place-bar .place-hint')).toHaveText('Drag the vase where you’d like it');
   // carried to the bottom of the screen the view goes down with it, to the basement
   const vp = page.viewportSize()!;
   await page.mouse.move(vp.width / 2, vp.height - 12, { steps: 10 });

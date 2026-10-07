@@ -523,6 +523,8 @@ button:focus-visible {
   line-height: 1;
   white-space: nowrap;
   margin-top: -2px;
+  /* (an empty one keeps its line, so the tins' lids stay level) */
+  min-height: 1em;
 }
 .face-badge {
   position: absolute;
@@ -1038,7 +1040,9 @@ button:focus-visible {
 .floor-pill:active {
   transform: translateX(-50%) scale(0.95);
 }
-.place-bar {
+/* (the house's, and the Playground's) */
+.place-bar,
+.play-place {
   position: absolute;
   left: 50%;
   bottom: calc(10px + var(--safe-bottom));
@@ -1161,4 +1165,123 @@ button:focus-visible {
   font-weight: 700;
   color: var(--panel-muted);
   text-align: center;
+}
+
+/* ---------- the Playground ---------- */
+.play-bar {
+  gap: clamp(14px, 7vw, 34px);
+  padding: 9px 18px 7px;
+}
+.play-bar .tin-label {
+  white-space: nowrap;
+  margin-top: 2px;
+}
+/* who's coming: a face to tap for each of your cats */
+.pg-picks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+.pg-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 76px;
+  padding: 6px 4px 5px;
+  border-radius: 18px;
+  border: 2px dashed var(--line);
+  background: transparent;
+  color: var(--panel-muted);
+  transition:
+    transform 0.15s ease,
+    background 0.2s;
+}
+.pg-pick .pg-face {
+  width: 46px;
+  height: 46px;
+  filter: grayscale(1) opacity(0.5);
+  transition: filter 0.25s;
+}
+.pg-pick .pg-name {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 14px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-pick.on {
+  border-style: solid;
+  border-color: var(--ginger);
+  background: color-mix(in srgb, var(--ginger) 12%, transparent);
+  color: var(--panel-ink);
+}
+.pg-pick.on .pg-face {
+  filter: none;
+}
+.pg-pick:active {
+  transform: scale(0.95);
+}
+/* the cats up here, in the top bar: tap one to follow it */
+.face.pg-follow {
+  width: 32px;
+  height: 32px;
+  padding: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  filter: none;
+}
+.face.pg-follow.on {
+  background: color-mix(in srgb, var(--ginger) 26%, transparent);
+  box-shadow: 0 0 0 2px var(--ginger);
+  transform: scale(1.1);
+}
+@media (max-width: 370px) {
+  .face.pg-follow {
+    width: 28px;
+    height: 28px;
+  }
+}
+/* the build card */
+.pg-piece {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--line);
+  color: var(--panel-ink);
+  text-align: left;
+  font: inherit;
+  transition: transform 0.12s ease;
+}
+.pg-piece:active {
+  transform: scale(0.98);
+}
+.pg-tube-pic svg {
+  width: 56px;
+  height: 40px;
+}
+.pg-confirm {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: color-mix(in srgb, #c85a5a 10%, transparent);
+  text-align: center;
+  font-weight: 800;
+}
+.pg-confirm p {
+  margin: 0 0 8px;
+}
+.menu-item[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
 }

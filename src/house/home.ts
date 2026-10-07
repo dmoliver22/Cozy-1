@@ -92,6 +92,7 @@ import {
   LIVING_CUT,
   LOFT_HOOD,
   OUTLET,
+  SKY_HOOD,
   SPOUT,
   TUBES,
   VIEWS,
@@ -127,6 +128,10 @@ export interface HomeHost {
   rebuild(): void;
   /** Where the finger carrying a cat is on screen (null if no cat is being carried). */
   carryFinger(): { x: number; y: number } | null;
+  /** Up to the Playground (who's coming, first). */
+  playground(): void;
+  /** A cat gone up the sky tube from the roof garden: up to the Playground with it. */
+  toSky(b: BreedId): void;
 }
 
 const GAME_NAMES: Record<GameId, string> = { jar: 'Cat Jar', drop: 'Cat Drop' };
@@ -147,7 +152,7 @@ interface Spot {
 }
 
 /** Collider ids of the house's own fittings (the tubes, the chimney). */
-const FITTING_IDS = { chute: 90001, lift: 90002, chimney: 90003, loft: 90004 };
+const FITTING_IDS = { chute: 90001, lift: 90002, chimney: 90003, loft: 90004, sky: 90005 };
 
 /** What each floor is, in the shop; and how to get a cat there, once it's open. */
 const FLOOR_BLURBS: Record<ExtraFloor, string> = {
@@ -236,6 +241,8 @@ export class Home {
   private boinging = new Map<Cat, number>();
   /** Physics steps while home. */
   private frame = 0;
+  /** A cat that's just gone up the sky tube, off to the Playground. */
+  private skyBound: BreedId | null = null;
   /** How fast each body was coming down last frame (a bouncy cushion's landings). */
   private fellAt = new WeakMap<SoftBody, number>();
   /** The cat last let go of, and when: one dropped in the funnel takes the view down with it. */
@@ -297,6 +304,7 @@ export class Home {
     document.getElementById('app')!.appendChild(this.labels);
     for (const b of this.bar.querySelectorAll<HTMLElement>('[data-game]')) b.addEventListener('click', () => host.play(b.dataset.game as GameId));
     this.bar.querySelector('[data-act=shop]')?.addEventListener('click', () => this.showShop());
+    this.bar.querySelector('[data-act=playground]')?.addEventListener('click', () => host.playground());
     // the next stop up and down: a pill at the top and the bottom of the view
     this.lift = document.createElement('div');
     this.lift.className = 'home-floors hidden';
@@ -693,7 +701,7 @@ export class Home {
       if (near(LOFT_HOOD, 30, LOFT_HOOD.y - LIVING_CEIL, 22)) return 'attic';
     }
     if (!isOpen(this.house, 'roof')) {
-      if (near(HOOD, 30, HOOD.y - LIVING_CEIL, 22) || near(OUTLET, 30, 40, 22)) return 'roof';
+      if (near(HOOD, 30, HOOD.y - LIVING_CEIL, 22) || near(OUTLET, 30, 40, 22) || near(SKY_HOOD, 30, 40, 22)) return 'roof';
     }
     return null;
   }
@@ -826,6 +834,13 @@ export class Home {
     }
     for (const e of this.tubes.drain()) {
       const b = BREEDS[e.cat.breed];
+      if (e.t === 'out' && e.tube.id === 'sky') {
+        // up and away to the clouds (and when it's back, it's on the roof garden, under the hood)
+        const body = e.cat.body;
+        body.placeAt(SKY_HOOD.x, FLOORS.roof.floorY - body.p.radius - 2);
+        this.skyBound = e.cat.breed;
+        continue;
+      }
       if (e.t === 'in') {
         this.host.audio.glorp(b.voice.pitch * 1.1, 0.4, 0.1);
       } else {
@@ -893,6 +908,13 @@ export class Home {
 
   tick(dt: number): void {
     if (!this.active) return;
+    // (a cat that's gone up the sky tube: the Playground, now the step it came out in is over)
+    const sky = this.skyBound;
+    if (sky) {
+      this.skyBound = null;
+      this.host.toSky(sky);
+      return;
+    }
     this.since += dt;
     this.moveCamera(dt);
     this.placeLabels();
@@ -1455,7 +1477,8 @@ export class Home {
    * (a scroll, a perch, the present), false to let the room have it.
    */
   pointerDown(id: number, sx: number, sy: number, wx: number, wy: number): boolean {
-    if (!this.active) return false;
+    // (one finger at a time: a second does nothing)
+    if (!this.active || this.drag) return false;
     const pl = this.placing;
     if (pl) {
       const b = this.placeBox(pl);
@@ -1832,6 +1855,7 @@ export class Home {
         <p class="hc-games">Pick them up, carry them about, boop them, pour them into the vase. Rename any cat any time, in <b>Your cats</b> (the faces up top).</p>
         <p class="hc-games"><b>Make your own cat</b> to live here too: its coat, its fur, how big, and how squishy, from a firm loaf to a puddle.</p>
         <p class="hc-games">Play <b>Cat Jar</b> and <b>Cat Drop</b> (the big buttons along the bottom) to earn treats for the <b>shop</b>, and more cats will move in. Swipe up and down to look round the house.</p>
+        <p class="hc-games">And take them up to the <b>Playground</b> in the clouds: build them anything you like, as big as you like.</p>
         <div class="btns"><button class="btn primary" data-act="make">Make my cat</button><button class="btn" data-close>Later</button></div>
       </div>`,
       (root) => {

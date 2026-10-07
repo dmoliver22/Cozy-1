@@ -132,7 +132,7 @@ export interface Mouth {
 }
 
 export interface Tube {
-  id: 'chute' | 'loft' | 'lift';
+  id: 'chute' | 'loft' | 'lift' | 'sky';
   /** The floor that has to be open for it to be there. */
   needs: ExtraFloor;
   /** The glass, as a path from the upper mouth to the lower one (world points). */
@@ -173,6 +173,14 @@ export const SPOUT = { x: FUNNEL.x, y: BASEMENT_DY + 400 };
 export const HOOD = { x: 354, y: 36 };
 /** The roof end of the lift: up out of the deck and over, a hood facing down. */
 export const OUTLET = { x: 312, y: FLOORS.roof.floorY - 104, top: FLOORS.roof.floorY - 152 };
+/**
+ * The sky tube's hood, hanging over the middle of the roof garden (with
+ * room under it for the biggest cat): a cat let go under it goes up and
+ * away, out of the top of the house to the Playground in the clouds.
+ */
+export const SKY_HOOD = { x: 196, y: FLOORS.roof.floorY - 176 };
+/** Where its pipe goes up to: out of sight, over the top of the sky. */
+export const SKY_TOP = HOUSE_TOP - 300;
 
 const arc = (cx: number, cy: number, r: number, a0: number, a1: number, n: number): [number, number][] => {
   const out: [number, number][] = [];
@@ -280,6 +288,38 @@ export const TUBES: Tube[] = [
     },
     bore: 30,
   },
+  {
+    // up from the roof garden to the clouds (see Home: a cat that goes up it is off to the Playground)
+    id: 'sky',
+    needs: 'roof',
+    path: [
+      [SKY_HOOD.x, SKY_TOP],
+      [SKY_HOOD.x, SKY_HOOD.y - 4],
+    ],
+    upper: {
+      floor: 'roof',
+      x: SKY_HOOD.x,
+      y: SKY_TOP,
+      dirX: 0,
+      dirY: -1,
+      speed: 300,
+      // (nothing goes in at the top: it's out of sight)
+      zone: { x0: 1, y0: 1, x1: 0, y1: 0 },
+      kind: 'hood',
+    },
+    lower: {
+      floor: 'roof',
+      x: SKY_HOOD.x,
+      y: SKY_HOOD.y + 8,
+      dirX: 0,
+      dirY: 1,
+      speed: 120,
+      // (down to just over the biggest cat sitting on the deck: the room round a mouth is kept clear, and a cat sitting there isn't in its way)
+      zone: { x0: SKY_HOOD.x - 46, y0: SKY_HOOD.y, x1: SKY_HOOD.x + 46, y1: SKY_HOOD.y + 84 },
+      kind: 'hood',
+    },
+    bore: 30,
+  },
 ];
 
 /** Where the living room's bouncy cushion stands (its middle), between the vase and the basket. */
@@ -360,6 +400,11 @@ export function tubeShapes(t: Tube, propId: number, open = true): StaticShape[] 
     funnel(ATTIC_FUNNEL);
     // down through the living room's ceiling to the hood high on the wall
     hood(LOFT_HOOD, LIVING_CEIL - 4);
+    return out;
+  }
+  if (t.id === 'sky') {
+    // the hood over the roof garden, and its pipe on up out of sight
+    hood(SKY_HOOD, SKY_TOP);
     return out;
   }
   // the living room hood, and its pipe up the wall; up through the attic; the roof's hood

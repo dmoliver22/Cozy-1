@@ -62,6 +62,13 @@ export interface Stage {
   face?(cat: Cat): { expression: Expression; look?: number; shadow?: boolean; wiggle?: { sway: number; rear: 1 | -1 } } | null;
   /** Cats drawn under the front layer (in a tube, or curled in something with a front). */
   behindFront?(cat: Cat): boolean;
+  /**
+   * A stage with a camera of its own (the playground: anywhere, as near or
+   * far as you like): where the view's middle is and how far it's zoomed in,
+   * each frame. Nothing is cached in tiles then: paintBack and paintFront
+   * are painted live, for what's on screen.
+   */
+  camera?(): { x: number; y: number; zoom: number };
 }
 
 interface Tile {
@@ -205,6 +212,14 @@ export class Renderer {
     return { s, tx: restX - this.cam.x * s, ty: restY - this.cam.y * s };
   }
 
+  /** Where the camera has to be for world (wx, wy) to be at screen (sx, sy), zoomed in `zoom` times (a pinch keeps what's under the fingers there). */
+  camFor(wx: number, wy: number, sx: number, sy: number, zoom: number): { x: number; y: number } {
+    const s = this.scale * zoom;
+    const restX = this.ox + (WORLD_W / 2) * this.scale;
+    const restY = this.oy + ((ROOM_TOP + ROOM_BOTTOM) / 2) * this.scale;
+    return { x: wx - (sx - restX) / s, y: wy - (sy - restY) / s };
+  }
+
   screenToWorld(px: number, py: number): { x: number; y: number } {
     const { s, tx, ty } = this.camTransform();
     return { x: (px - tx) / s, y: (py - ty) / s };
@@ -233,6 +248,13 @@ export class Renderer {
     const y0 = -this.oy / this.scale;
     const y1 = (this.H - this.oy) / this.scale;
     return { x0, y0, x1, y1 };
+  }
+
+  /** The part of the world on screen right now. */
+  onScreen(): { x0: number; y0: number; x1: number; y1: number } {
+    const a = this.screenToWorld(0, 0);
+    const b = this.screenToWorld(this.W, this.H);
+    return { x0: a.x, y0: a.y, x1: b.x, y1: b.y };
   }
 
   /** The world rows on screen right now. */
@@ -586,12 +608,20 @@ export class Renderer {
     this.resize();
     if (!s || !this.W) return;
     this.ensureLayers();
-    // camera easing
-    const k = damp(this.reducedMotion ? 30 : 3.2, dt);
-    this.cam.x = lerp(this.cam.x, this.camTarget.x, k);
-    this.cam.y = lerp(this.cam.y, this.camTarget.y, k);
-    this.cam.zoom = lerp(this.cam.zoom, this.camTarget.zoom, k);
-    this.clampCamera();
+    const st = this.stage;
+    const own = st?.camera?.();
+    if (own) {
+      // (the stage moves it)
+      this.cam = { ...own };
+      this.camTarget = { ...own };
+    } else {
+      // camera easing
+      const k = damp(this.reducedMotion ? 30 : 3.2, dt);
+      this.cam.x = lerp(this.cam.x, this.camTarget.x, k);
+      this.cam.y = lerp(this.cam.y, this.camTarget.y, k);
+      this.cam.zoom = lerp(this.cam.zoom, this.camTarget.zoom, k);
+      this.clampCamera();
+    }
 
     const dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -601,9 +631,11 @@ export class Renderer {
     ctx.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * tx, dpr * ty);
     const lr = this.layerRect;
     // Back layer
-    const st = this.stage;
     const rows = st ? this.viewRows() : null;
-    if (st && rows) {
+    if (st && own) {
+      st.paintBack(ctx, this.onScreen(), sc);
+      st.underlay?.(ctx, dt);
+    } else if (st && rows) {
       for (const t of this.tiles) {
         if (!t.back || !t.key || t.y1 < rows.y0 || t.y0 > rows.y1) continue;
         const r = t.rect;
@@ -632,7 +664,8 @@ export class Renderer {
     if (behind) for (let i = 0; i < s.cats.length; i++) if (behind[i]) drawCat(ctx, s.cats[i].body, this.view(s.cats[i]), poses[i], this.scale, 'all');
     // Front layer
     const fr = this.frontRect;
-    if (st && rows) {
+    if (st && own) st.paintFront?.(ctx, this.onScreen());
+    else if (st && rows) {
       for (const t of this.tiles) {
         if (!t.front || !t.key || t.y1 < rows.y0 || t.y0 > rows.y1) continue;
         const r = t.rect;

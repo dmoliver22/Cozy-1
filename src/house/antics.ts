@@ -10,6 +10,7 @@
 import type { AudioEngine } from '../audio/audio';
 import { WORLD_W } from '../game/props';
 import type { Cat, Session } from '../game/session';
+import { roomFor } from '../game/spawn';
 import { BREEDS, type BreedId } from '../physics/breeds';
 import { SoftBody } from '../physics/softbody';
 import { FRAME_DT, GRAVITY } from '../physics/world';
@@ -204,6 +205,8 @@ export class Antics {
   private toyAngle = 0;
   /** Frames the yarn has sat still somewhere off limits. */
   private toyStuck = 0;
+  /** Just batted (by a cat): where it was, and how long till we see whether it got anywhere. */
+  private batted: { x: number; y: number; t: number } | null = null;
 
   constructor(private readonly host: AnticsHost) {}
 
@@ -512,14 +515,45 @@ export class Antics {
     this.react(c, s.target.cat, s.dir, s.chain);
   }
 
-  /** The yarn's batted away (out from under the cat that got it). */
+  /** Pinned yarn up out over the cats on it or by it (if there's room up there), on its way off the open side. */
+  private popOut(toy: SoftBody): void {
+    let top = toy.cy;
+    for (const c of this.host.session.cats) {
+      const b = c.body;
+      b.computeCentroid();
+      if (Math.abs(b.cx - toy.cx) < b.p.radius + YARN_R + 6 && Math.abs(b.cy - toy.cy) < b.p.radius + YARN_R + 6) top = Math.min(top, topOf(b));
+    }
+    const y = top - YARN_R - 5;
+    if (!roomFor(this.host.session.world.statics, [], toy.cx, y, YARN_R, 1)) return;
+    toy.placeAt(toy.cx, y);
+    const away = toy.cx < WORLD_W / 2 ? 1 : -1;
+    toy.kick(away * (90 + Math.random() * 60), -(240 + Math.random() * 80));
+    this.toySpin = away * 14;
+    this.host.renderer.puff(toy.cx, y + YARN_R, 3);
+  }
+
+  /** The yarn's batted away (out from under the cat that got it, and away from it: not into a wall). */
   private bat(dir: number, by: Cat | null): void {
     const toy = this.toy;
     if (!toy) return;
     toy.computeCentroid();
-    if (by) dir = this.clearOf(by, dir);
-    toy.kick(dir * (150 + Math.random() * 110), -(150 + Math.random() * 140));
-    this.toySpin = dir * (12 + Math.random() * 8);
+    if (by) {
+      dir = this.clearOf(by, dir);
+      by.body.computeCentroid();
+      toy.computeCentroid();
+      // (away from the cat that got it: batted toward it, it's only pinned)
+      if (Math.abs(toy.cx - by.body.cx) > 2) dir = toy.cx > by.body.cx ? 1 : -1;
+    }
+    // (wedged against something on that side, a wall or the tub: it pops out the other way; boxed in
+    // both ways, by the cat too, it pops straight up)
+    const statics = this.host.session.world.statics;
+    const cat = by ? [{ x: by.body.cx, y: by.body.cy, r: by.body.p.radius }] : [];
+    const open = (d: number): boolean => roomFor(statics, cat, toy.cx + d * (YARN_R + 8), toy.cy - 4, YARN_R, 1);
+    if (!open(dir)) dir = open(-dir) ? -dir : 0;
+    if (dir) toy.kick(dir * (150 + Math.random() * 110), -(150 + Math.random() * 140));
+    else toy.kick((Math.random() - 0.5) * 60, -(300 + Math.random() * 80));
+    if (by) this.batted = { x: toy.cx, y: toy.cy, t: 0.25 };
+    this.toySpin = (dir || 1) * (12 + Math.random() * 8);
     this.host.audio.impact('rubber', 420, 0.15);
   }
 
@@ -535,10 +569,13 @@ export class Antics {
     toy.computeCentroid();
     const reach = b.p.radius + YARN_R + 3;
     if (Math.hypot(toy.cx - b.cx, toy.cy - b.cy) > reach) return dir;
+    const y = Math.min(toy.cy, b.cy);
+    const statics = this.host.session.world.statics;
     for (const d of [dir, -dir]) {
       const x = b.cx + d * reach;
-      if (x > YARN_R + 2 && x < WORLD_W - YARN_R - 2) {
-        toy.placeAt(x, Math.min(toy.cy, b.cy));
+      // (somewhere it fits: not in a wall, a shelf or the glass)
+      if (x > YARN_R + 2 && x < WORLD_W - YARN_R - 2 && roomFor(statics, [], x, y, YARN_R, 1)) {
+        toy.placeAt(x, y);
         return d;
       }
     }
@@ -881,6 +918,13 @@ export class Antics {
         this.toyStuck = 0;
         toy.kick(toy.cx < WORLD_W / 2 ? 170 : -170, -440);
         this.toySpin = 10;
+      }
+      // batted, and still where it was a moment later (in a corner with the cat
+      // that got it on top of it, or up against it): it squirts out up over the cat
+      const bt = this.batted;
+      if (bt && (bt.t -= dt) <= 0) {
+        this.batted = null;
+        if (Math.hypot(toy.cx - bt.x, toy.cy - bt.y) < 6) this.popOut(toy);
       }
     }
     if (toy && !toy.asleep) {

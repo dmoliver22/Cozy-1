@@ -58,6 +58,11 @@ export class Sling {
   /** Who's lying in it (they ride along, and are kept awake while it moves). */
   riders: SoftBody[] = [];
 
+  /** Hanging still, with nothing in it (it looks as it does at rest). */
+  get still(): boolean {
+    return this.idle > 60;
+  }
+
   constructor(
     ax: number,
     ay: number,

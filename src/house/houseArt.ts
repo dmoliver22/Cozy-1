@@ -32,6 +32,8 @@ import {
   OUTLET,
   RAFTER,
   ROOF_DY,
+  SKY_HOOD,
+  SKY_TOP,
   SPOUT,
   type Funnel,
   type Tube,
@@ -838,6 +840,7 @@ function offsetLine(pts: readonly [number, number][], d: number): [number, numbe
 
 /** The runs of a tube between its mouths, as drawn (the hoods' bells and the funnel are drawn on their own). */
 function runs(t: Tube): [number, number][][] {
+  if (t.id === 'sky') return [[[SKY_HOOD.x, SKY_TOP], [SKY_HOOD.x, SKY_HOOD.y - 22]]];
   if (t.id === 'chute') return [[[FUNNEL.x, FUNNEL.neckY], [SPOUT.x, SPOUT.y - 22]]];
   if (t.id === 'loft') return [[[ATTIC_FUNNEL.x, ATTIC_FUNNEL.neckY], [LOFT_HOOD.x, LOFT_HOOD.y - 22]]];
   // the lift: from the roof's bell, up and over, down through the deck and attic to the living room's bell
@@ -1116,10 +1119,41 @@ function padlock(ctx: Ctx, x: number, y: number): void {
 /** Where the roof tube's pipe goes through floors and is clipped to the wall. */
 const LIFT_COLLARS = [FLOORS.roof.floorY - 4, FLOORS.attic.ceilY + 6, FLOORS.attic.ceilY + 280, FLOORS.attic.floorY - 4, LIVING_CEIL + 4, LIVING_CEIL + 200, LIVING_CEIL + 400];
 
+/**
+ * A tube anywhere (the playground's): a straight run of glass between two
+ * hoods, each facing away from the other: its far half (`back`, under the
+ * cats) or its near half.
+ */
+export function paintSkyTube(ctx: Ctx, ax: number, ay: number, bx: number, by: number, layer: 'back' | 'front'): void {
+  const len = Math.hypot(bx - ax, by - ay) || 1;
+  const ux = (bx - ax) / len;
+  const uy = (by - ay) / len;
+  // (the pipe runs between the bells' throats, each its height in from its mouth)
+  const run: [number, number][] = [
+    [ax + ux * 24, ay + uy * 24],
+    [bx - ux * 24, by - uy * 24],
+  ];
+  if (layer === 'back') pipeBack(ctx, run);
+  for (const [x, y, fx, fy] of [
+    [ax, ay, -ux, -uy],
+    [bx, by, ux, uy],
+  ]) {
+    // (a bell faces down: turned to face this end's way)
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(-fx, fy));
+    if (layer === 'back') bellBack(ctx, 0, 0);
+    else bellFront(ctx, 0, 0);
+    ctx.restore();
+  }
+  if (layer === 'front') pipeFront(ctx, run, []);
+}
+
 /** A tube's far half, the hoods' insides and the funnel's back (with its lid, while it's capped): under the cats. */
 export function paintTubeBack(ctx: Ctx, t: Tube, capped = false): void {
   for (const run of runs(t)) pipeBack(ctx, run);
-  if (t.id === 'chute' || t.id === 'loft') {
+  if (t.id === 'sky') bellBack(ctx, SKY_HOOD.x, SKY_HOOD.y);
+  else if (t.id === 'chute' || t.id === 'loft') {
     const f = t.id === 'chute' ? FUNNEL : ATTIC_FUNNEL;
     funnelBack(ctx, f);
     if (capped) funnelLid(ctx, f);
@@ -1133,7 +1167,14 @@ export function paintTubeBack(ctx: Ctx, t: Tube, capped = false): void {
 
 /** A tube's near half: over a cat going through it (and while it's capped, the caps and padlocks). */
 export function paintTubeFront(ctx: Ctx, t: Tube, capped = false): void {
-  if (t.id === 'chute' || t.id === 'loft') {
+  if (t.id === 'sky') {
+    pipeFront(ctx, runs(t)[0], [SKY_HOOD.y - 120]);
+    bellFront(ctx, SKY_HOOD.x, SKY_HOOD.y);
+    if (capped) {
+      hoodCap(ctx, SKY_HOOD.x, SKY_HOOD.y);
+      padlock(ctx, SKY_HOOD.x + 17, SKY_HOOD.y - 21);
+    }
+  } else if (t.id === 'chute' || t.id === 'loft') {
     const f = t.id === 'chute' ? FUNNEL : ATTIC_FUNNEL;
     const m = t.id === 'chute' ? SPOUT : LOFT_HOOD;
     pipeFront(ctx, runs(t)[0], t.id === 'chute' ? [FLOOR_Y + 30, BASEMENT_DY + 8] : [ATTIC_FUNNEL.floorY + 30, LIVING_CEIL + 8]);

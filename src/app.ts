@@ -1,15 +1,18 @@
 // App controller: the house's home room (the frame loop, input, the menu and
-// overlays, sound settings; the house itself is house/home.ts), and Cat Jar
-// and Cat Drop, mounted over the page while they're played.
+// overlays, sound settings; the house itself is house/home.ts), the
+// Playground up in the clouds (playground/playground.ts: the same canvas, the
+// same cats), and Cat Jar and Cat Drop, mounted over the page while they're
+// played.
 
 import { AudioEngine } from './audio/audio';
 import { Session, type GameEvent } from './game/session';
-import { BREEDS } from './physics/breeds';
+import { BREEDS, type BreedId } from './physics/breeds';
 import { FRAME_DT } from './physics/world';
 import { Home } from './house/home';
 import { NAMES, type GameId } from './house/house';
 import type { ExtraFloor } from './house/layout';
 import { pageStyles } from './pageStyles';
+import { Playground } from './playground/playground';
 import { mountDrop } from './proto/drop/mount';
 import { mountJar } from './proto/jar/mount';
 import { loadBest } from './proto/kit';
@@ -48,8 +51,8 @@ export class App {
   readonly renderer = new Renderer(this.canvas);
   readonly audio = new AudioEngine();
   readonly settings: Settings = loadSettings();
-  /** What's on screen: the house, or a game over it. */
-  kind: 'home' | GameId = 'home';
+  /** What's on screen: the house, the Playground, or a game over the house. */
+  kind: 'home' | 'playground' | GameId = 'home';
   session!: Session;
   private acc = 0;
   private last = 0;
@@ -58,12 +61,13 @@ export class App {
   private zTimer = 0;
   private paused = false;
   readonly home: Home;
+  readonly playground: Playground;
   /** Cat Jar or Cat Drop, while one is being played (the page is hidden). */
   private away: { game: GameId; mounted: Mounted; host: HTMLElement } | null = null;
   /** A tap on one of the house's capped tubes (it offers to open the floor it goes to). */
   private lockTap: { id: number; floor: ExtraFloor; sx: number; sy: number } | null = null;
-  /** A finger the house has (scrolling it, putting a perch somewhere). */
-  private homeDrag: number | null = null;
+  /** Fingers the house or the Playground has (looking about, zooming, putting something somewhere). */
+  private placeFingers = new Set<number>();
 
   constructor() {
     const app = this;
@@ -83,14 +87,36 @@ export class App {
           this.home.leave();
           this.goHome();
         },
-        carryFinger: () => {
-          const g = this.gesture;
-          if (!g || !g.dragging || !g.xs.length) return null;
-          return { x: g.xs[g.xs.length - 1], y: g.ys[g.ys.length - 1] };
-        },
+        carryFinger: () => this.carryFinger(),
+        playground: () => this.openPlayground(),
+        toSky: (b) => this.goPlayground([b], b),
       },
       { jarBest: loadBest('catjar.best'), dropBest: loadBest('catdrop.best') },
     );
+    this.playground = new Playground({
+      renderer: this.renderer,
+      audio: this.audio,
+      get session() {
+        return app.session;
+      },
+      openOverlay: (html, onBind) => this.openOverlay(html, onBind),
+      closeOverlay: () => this.closeOverlay(),
+      overlayOpen: () => !$('overlay').classList.contains('hidden'),
+      carryFinger: () => this.carryFinger(),
+      home: () => this.leavePlayground(),
+    });
+  }
+
+  /** Where the finger carrying a cat is on screen (null if no cat is being carried). */
+  private carryFinger(): { x: number; y: number } | null {
+    const g = this.gesture;
+    if (!g || !g.dragging || !g.xs.length) return null;
+    return { x: g.xs[g.xs.length - 1], y: g.ys[g.ys.length - 1] };
+  }
+
+  /** Up in the clouds? */
+  private get inSky(): boolean {
+    return this.kind === 'playground';
   }
 
   async start(): Promise<void> {
@@ -132,6 +158,46 @@ export class App {
     this.lastFaces = '';
     this.updateHud();
     this.home.enter();
+    // (the Playground's tin says it's new till you've been up)
+    const note = document.querySelector<HTMLElement>('#homeBar [data-act=playground] .tin-note');
+    if (note) note.textContent = this.playground.save.cats.length ? '' : 'new!';
+  }
+
+  // ---------------------------------------------------------------------------
+  // The Playground
+
+  /** Who's coming, and then up to the Playground. */
+  openPlayground(): void {
+    this.audio.unlock();
+    this.audio.click();
+    this.playground.askWho(this.home.house.residents, (who) => this.goPlayground(who));
+  }
+
+  /** Up to the Playground with these cats (the house waits): `arriving`, one that's come up the sky tube, drops in from above. */
+  goPlayground(who: BreedId[], arriving: BreedId | null = null): void {
+    if (this.away || !who.length) return;
+    this.closeOverlay();
+    this.audio.stopAllPurrs();
+    this.home.leave();
+    this.gesture = null;
+    this.lockTap = null;
+    this.placeFingers.clear();
+    this.canvas.classList.remove('grabbing');
+    this.playground.who = who;
+    this.session = new Session(this.playground.room(), this.playground.sessionOptions);
+    this.renderer.setRoom(this.session);
+    this.kind = 'playground';
+    this.lastFaces = '';
+    this.playground.enter(arriving);
+  }
+
+  /** Back home from the Playground. */
+  leavePlayground(): void {
+    if (!this.inSky) return;
+    this.playground.leave();
+    this.kind = 'home';
+    this.placeFingers.clear();
+    this.goHome();
   }
 
   /** Into a game from the home room. */
@@ -202,13 +268,15 @@ export class App {
       this.feedFinger(t - (this.acc - FRAME_DT) * 1000);
       this.session.rememberPositions();
       this.session.step();
-      this.home.step();
+      if (this.inSky) this.playground.step();
+      else this.home.step();
       this.acc -= FRAME_DT;
       steps++;
     }
     if (steps === 4) this.acc = 0;
     this.handleEvents(this.session.drainEvents());
-    this.home.tick(dt);
+    if (this.inSky) this.playground.tick(dt);
+    else this.home.tick(dt);
     this.tickAmbient(dt);
     // Draw between the last two physics steps: smooth on 90/120 Hz screens
     // and through uneven frame times.
@@ -288,7 +356,7 @@ export class App {
         case 'seat': {
           // a cat who settles into the vase or the basket is happy about it
           // (not the ones settling back into their spots as you come home)
-          if (this.home.since > 1.5) {
+          if (!this.inSky && this.home.since > 1.5) {
             const v = r.view(e.cat);
             r.hearts(v.hx, v.hy - 12, 2);
             this.audio.seat(88);
@@ -323,6 +391,8 @@ export class App {
 
   /** Everyone who lives here, in the top bar (tap for the cats card). */
   private updateHud(): void {
+    // (up in the clouds, the top bar's the Playground's: see Playground.updateHud)
+    if (this.inSky) return;
     const s = this.session;
     const key = `${s.cats.map((c) => c.breed).join('|')}:${this.home.catKey}:${this.home.house.arriving.length}`;
     if (key === this.lastFaces) return;
@@ -384,6 +454,10 @@ export class App {
   /** The menu: your cat, the cats card, the shop, the two games, sound and music. */
   showMenu(): void {
     this.audio.click();
+    if (this.inSky) {
+      this.showSkyMenu();
+      return;
+    }
     const h = this.home.house;
     const best = (k: string): string => {
       const b = loadBest(k);
@@ -419,6 +493,40 @@ export class App {
     );
   }
 
+  /** Up in the clouds: home, everyone back on the respawn cloud, a clean sky. */
+  private showSkyMenu(): void {
+    const n = this.playground.save.pieces.length + this.playground.save.tubes.length;
+    this.openOverlay(
+      `<div class="card" role="dialog" aria-label="Menu">
+        <h2>Playground</h2>
+        <p class="sub">${n ? `${n} thing${n === 1 ? '' : 's'} built up here` : 'Nothing built up here yet: tap Build'}</p>
+        <div class="menu-list">
+          <button class="menu-item" data-act="home"><span class="mi-icon">🏠</span><span>Back home<small>The house, and everyone in it</small></span></button>
+          <button class="menu-item" data-act="respawn"><span class="mi-icon">⭐</span><span>Respawn<small>Everyone back on the respawn cloud</small></span></button>
+          <button class="menu-item" data-act="clear" ${n ? '' : 'disabled'}><span class="mi-icon">☁️</span><span>Clear the sky<small>Take away everything you've built</small></span></button>
+        </div>
+        <div class="pg-confirm hidden"><p>Take away all ${n} for good?</p><div class="btns"><button class="btn primary" data-act="clear-yes">Clear it all</button><button class="btn" data-act="clear-no">Keep it</button></div></div>
+        ${this.togglesHtml()}
+        <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back</button></div>
+      </div>`,
+      (root) => {
+        root.querySelector('[data-act=home]')!.addEventListener('click', () => this.leavePlayground());
+        root.querySelector('[data-act=respawn]')!.addEventListener('click', () => {
+          this.closeOverlay();
+          this.playground.respawnAll();
+        });
+        const confirm = root.querySelector<HTMLElement>('.pg-confirm')!;
+        root.querySelector('[data-act=clear]')!.addEventListener('click', () => confirm.classList.remove('hidden'));
+        root.querySelector('[data-act=clear-no]')!.addEventListener('click', () => confirm.classList.add('hidden'));
+        root.querySelector('[data-act=clear-yes]')!.addEventListener('click', () => {
+          this.closeOverlay();
+          this.playground.clearSky();
+        });
+        this.bindToggles(root);
+      },
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Input
 
@@ -437,16 +545,38 @@ export class App {
 
   private bindInput(): void {
     const c = this.canvas;
-    const pos = (e: PointerEvent): { x: number; y: number } => {
+    const pos = (e: MouseEvent): { x: number; y: number } => {
       const r = c.getBoundingClientRect();
       return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+    // (a pointer the browser doesn't count as down, as a test's can be, can't be captured: no matter)
+    const capture = (id: number): void => {
+      try {
+        c.setPointerCapture(id);
+      } catch {
+        // (it still gets its moves while it's over the canvas)
+      }
     };
     c.addEventListener('pointerdown', (e) => {
       this.audio.unlock();
       if (this.gesture) return;
       const p = pos(e);
       const w = this.renderer.screenToWorld(p.x, p.y);
-      let cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
+      let cat = this.session.catAt(w.x, w.y, 18 * this.renderer.unitsPerPx + 6);
+      if (this.inSky) {
+        // (a cat in a tube or mid-leap can't be picked up, nor any while something's being placed; and a second finger is a pinch)
+        if (cat && (!this.playground.canTouch(cat) || this.playground.placing || this.placeFingers.size)) cat = null;
+        if (!cat) {
+          if (this.playground.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
+            this.placeFingers.add(e.pointerId);
+            capture(e.pointerId);
+          }
+          return;
+        }
+        capture(e.pointerId);
+        this.gesture = { id: e.pointerId, catIndex: cat.index, sx: p.x, sy: p.y, t0: performance.now(), dragging: false, ts: [], xs: [], ys: [] };
+        return;
+      }
       // no picking up a cat that's in a tube, or while a perch is being put
       // somewhere; and a tap on the yarn or the present beside a cat (not on the cat itself) is for them
       if (cat && (!this.home.canTouch(cat) || this.home.placing || ((this.home.yarnAt(w.x, w.y) || this.home.giftAt(w.x, w.y)) && !this.session.catAt(w.x, w.y, 0)))) cat = null;
@@ -457,20 +587,21 @@ export class App {
         // a tap on a capped tube offers to open the floor it goes to; a drag scrolls the house
         const floor = this.home.lockAt(w.x, w.y);
         if (floor) this.lockTap = { id: e.pointerId, floor, sx: p.x, sy: p.y };
-        if (this.homeDrag === null && this.home.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
-          this.homeDrag = e.pointerId;
-          c.setPointerCapture(e.pointerId);
+        if (this.home.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
+          this.placeFingers.add(e.pointerId);
+          capture(e.pointerId);
         }
         return;
       }
-      c.setPointerCapture(e.pointerId);
+      capture(e.pointerId);
       this.gesture = { id: e.pointerId, catIndex: cat.index, sx: p.x, sy: p.y, t0: performance.now(), dragging: false, ts: [], xs: [], ys: [] };
     });
     c.addEventListener('pointermove', (e) => {
-      if (this.homeDrag === e.pointerId) {
+      if (this.placeFingers.has(e.pointerId)) {
         const p = pos(e);
         const w = this.renderer.screenToWorld(p.x, p.y);
-        this.home.pointerMove(e.pointerId, p.x, p.y, w.x, w.y);
+        if (this.inSky) this.playground.pointerMove(e.pointerId, p.x, p.y, w.x, w.y);
+        else this.home.pointerMove(e.pointerId, p.x, p.y, w.x, w.y);
         return;
       }
       const g = this.gesture;
@@ -481,8 +612,8 @@ export class App {
       if (!cat) return;
       if (!g.dragging && (Math.hypot(p.x - g.sx, p.y - g.sy) > 7 || now - g.t0 > 180)) {
         const start = this.renderer.screenToWorld(g.sx, g.sy);
-        // (a cat is carried about the floor it's on)
-        this.session.grabBox = this.home.carryBox(cat);
+        // (a cat is carried about the floor it's on; up in the clouds, anywhere)
+        this.session.grabBox = this.inSky ? this.playground.carryBox() : this.home.carryBox(cat);
         this.session.beginGrab(cat, start.x, start.y);
         g.dragging = true;
         c.classList.add('grabbing');
@@ -512,9 +643,10 @@ export class App {
       }
     });
     const end = (e: PointerEvent): void => {
-      if (this.homeDrag === e.pointerId) {
-        this.homeDrag = null;
-        this.home.pointerUp(e.pointerId);
+      if (this.placeFingers.has(e.pointerId)) {
+        this.placeFingers.delete(e.pointerId);
+        if (this.inSky) this.playground.pointerUp(e.pointerId);
+        else this.home.pointerUp(e.pointerId);
       }
       const tap = this.lockTap;
       if (tap && tap.id === e.pointerId) {
@@ -531,24 +663,29 @@ export class App {
       if (!cat) return;
       if (g.dragging) {
         this.session.endGrab();
-        // let go under a suction hood: whoosh
-        this.home.released(cat);
+        // let go under a suction hood (or by a tube's mouth, up in the clouds): whoosh
+        if (this.inSky) this.playground.released(cat);
+        else this.home.released(cat);
       } else if (e.type === 'pointerup') {
         const p = pos(e);
         const w = this.renderer.screenToWorld(p.x, p.y);
         // (a hurt cat is fed a fish instead)
-        if (!this.home.tapCat(cat)) this.session.boop(cat, w.x, w.y);
+        if (this.inSky || !this.home.tapCat(cat)) this.session.boop(cat, w.x, w.y);
       }
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    // a mouse wheel or a trackpad scrolls the house
+    // a mouse wheel or a trackpad scrolls the house (and up in the clouds zooms, or looks about)
     c.addEventListener(
       'wheel',
       (e) => {
         if (this.away) return;
         e.preventDefault();
-        this.home.wheel(e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY);
+        const k = e.deltaMode === 1 ? 30 : 1;
+        if (this.inSky) {
+          const p = pos(e);
+          this.playground.wheel(e.deltaX * k, e.deltaY * k, p.x, p.y, e.ctrlKey);
+        } else this.home.wheel(e.deltaY * k);
       },
       { passive: false },
     );

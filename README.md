@@ -2,8 +2,8 @@
 
 A cozy house of squishy cats. Make a cat of your own, as firm as a loaf or as
 runny as a puddle, pick the cats up by the scruff and pour them into the
-vase, and play two games with them: **Cat Jar** and **Cat Drop**. More cats
-move in as you play.
+vase, build them the ultimate **Playground** up in the clouds, and play two
+games with them: **Cat Jar** and **Cat Drop**. More cats move in as you play.
 
 > Cats are liquid. Make one and prove it.
 
@@ -18,7 +18,8 @@ up the living room's tall wall) and on opening up the rest of the house: a
 **basement** right under the living room, an **attic** over it and a **roof
 garden** up top, joined to it by glass tubes that are there from the start,
 capped and padlocked until you open the floor they go to. Scroll up and down
-to look round.
+to look round. Up in the clouds there's **the Playground**: as much sky as you
+like, to build your cats the best playground ever.
 
 Mobile-web first (portrait), plays fine on desktop. No accounts, no network,
 no ads: a static site you can host anywhere, upload to itch.io, or hand to a
@@ -124,6 +125,29 @@ The house:
   **hurt**, with a plaster on and a sad face, and needs fish to feel better:
   tap it to feed it one, a treat each, until it's well (5 to 9).
 
+The Playground (the cloud tin on the bar along the bottom):
+
+- **Who's coming**: tap the faces of the cats you'd like to bring (yours
+  first); they start on the **respawn cloud** in the middle of the sky.
+- **Build** with every perch there is and with **tubes**, free, as many as you
+  like. Shelves, ledges and clouds dragged up to the end of another join on,
+  end to end at its height: one long platform. A cushion, a bed or a cat tree
+  dragged just over something's top stands on it; anywhere else it floats on
+  a little cloud of its own. A tube has a hood at each end, facing away from
+  the other: drag either end anywhere (or the middle to move it). A cat that
+  goes in at one end is shot out of the other, the way it points. Press and
+  hold anything to move it or take it away.
+- **Look about**: drag the sky, pinch (or a mouse wheel) to zoom in and out,
+  and tap a cat's face in the top bar for the view to follow it wherever it
+  goes (tap it again to stop).
+- **The cats** hop from piece to piece on their own, bounce on the cushions,
+  nap in the beds and go up the tubes. One that falls off everything drops
+  into the sea of cloud far below and comes back on the respawn cloud;
+  **Respawn** brings everyone back there.
+- **The sky tube**: once the roof garden's open, a cat let go under the hood
+  hanging over the middle of it goes up and away, out of the top of the house
+  and down out of the clouds onto the respawn cloud.
+
 Handy URL while developing: `?game=jar|drop` (home, then straight into a
 game).
 
@@ -138,6 +162,7 @@ game).
 | If it fits, I sits: a cat poured into something settles in and purrs | `src/game/session.ts`, `src/game/fit.ts` |
 | The house: four floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
 | Perches that move: a hammock that's a simulated sling, a bouncy cushion that squashes and throws a cat back up | `src/house/springs.ts`, art in `src/house/perchArt.ts` |
+| The Playground: your own corner of the sky, built of perches and tubes, with a free camera (pan, pinch, follow) | `src/playground/`, the camera in `src/render/renderer.ts` (`Stage.camera`) |
 | Cats with ways of their own at home: temperaments and moods, stalk, wiggle and pounce, a ball of yarn, scraps in a dust cloud, a hurt cat nursed back with fish | `src/house/antics.ts`, art in `src/house/anticsArt.ts` |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |
