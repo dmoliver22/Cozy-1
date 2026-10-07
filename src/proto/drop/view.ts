@@ -685,7 +685,7 @@ export class DropView {
     return Math.max(0, Math.min(1, 1 - (game.bathGap - 60) / 700));
   }
 
-  private pose(game: DropGame): { expression: Expression; look: number; resting: boolean; purr: number; grabbed: boolean } {
+  private pose(game: DropGame): { expression: Expression; look: number; resting: boolean; purr: number; grabbed: boolean; tuck?: boolean } {
     const c = game.cat;
     let expression: Expression = 'open';
     const resting = c.airborneFrames < 3 && Math.abs(c.vcx) < 60 && Math.abs(c.vcy) < 60;
@@ -695,9 +695,9 @@ export class DropView {
       expression = !game.soaked ? 'wide' : 'squint';
       return { expression, look: 0, resting: false, purr: 0, grabbed: game.soaked };
     }
-    // down a slide: whee (wide-eyed going in and popping out)
+    // down a slide: whee (wide-eyed going in and popping out), ears folded flat inside the glass
     const ride = game.riding;
-    if (ride) return { expression: ride === 'go' ? 'happy' : 'wide', look: 0, resting: false, purr: 0, grabbed: false };
+    if (ride) return { expression: ride === 'go' ? 'happy' : 'wide', look: 0, resting: false, purr: 0, grabbed: false, tuck: true };
     if (game.phase === 'ready') expression = 'sleepy';
     else if (game.sinceNom < 45) expression = 'happy';
     else if (game.sinceBoing < 24 || game.sinceHop < 18) expression = 'squint';

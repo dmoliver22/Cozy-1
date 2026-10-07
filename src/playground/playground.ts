@@ -75,7 +75,7 @@ import {
   type SkyTube,
 } from './layout';
 import { floatPuff, paintSky, paintSpawn } from './skyArt';
-import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, GadgetWorks, aimDir, fitAim, isGadget, type Gadget } from './gadgets';
+import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, GadgetWorks, aimDir, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
 import { gadgetThumb, paintGadget } from './gadgetArt';
 
 export interface PlayHost {
@@ -373,6 +373,7 @@ export class Playground {
     liveFront: (ctx) => this.paintLive(ctx, true),
     overlay: (ctx) => this.paintOverlay(ctx),
     inTube: (cat) => this.tubeFace(cat),
+    face: (cat) => this.cannonFace(cat),
     behindFront: (cat) => this.behindFront(cat),
   };
 
@@ -404,7 +405,7 @@ export class Playground {
 
   /** A toy as it is this frame (its blades turning, its belt running, a cat in its barrel...). */
   private paintToy(ctx: Ctx, g: Gadget, layer: 'back' | 'front'): void {
-    paintGadget(ctx, g, layer, { time: this.time, flash: this.works.flash.get(g.id) ?? 0, recoil: this.works.recoil.get(g.id) ?? 0, charge: this.works.charge(g.id) });
+    paintGadget(ctx, g, layer, { time: this.time, flash: this.works.flash.get(g.id) ?? 0, recoil: this.works.recoil.get(g.id) ?? 0, charge: this.works.charge(g.id), shake: this.works.shake(g.id) });
   }
 
   private paintFront(ctx: Ctx, r: Rect): void {
@@ -725,6 +726,12 @@ export class Playground {
     const t = this.tubes.riding(cat);
     if (!t) return null;
     return t.phase === 'go' ? 'happy' : 'wide';
+  }
+
+  /** A cat stuffed in a cannon: only its back end shows, out of the muzzle (no face, no shadow). */
+  private cannonFace(cat: Cat): { expression: Expression; shadow: boolean; rump: Rump } | null {
+    const rump = this.works.rump(cat);
+    return rump ? { expression: 'wide', shadow: false, rump } : null;
   }
 
   private behindFront(cat: Cat): boolean {

@@ -151,8 +151,9 @@ The Playground (the cloud tin on the bar along the bottom):
   that goes in at one end is carried round every bend and shot out of the
   other, the way it points.
 - **Toys** that make the cats do things: a **cat cannon** (let a cat go at its
-  mouth: it's loaded, the cannon trembles, and pomf! out it flies the way it's
-  aimed), a **fan** (it blows cats along its wind: point it up and a cat floats
+  mouth: in it's stuffed head first, its back end too big to fit bulging out of
+  the muzzle, tail wagging and feet kicking; the cannon trembles, and pomf! out
+  it flies the way it's aimed), a **fan** (it blows cats along its wind: point it up and a cat floats
   on it), a **bumper** (ding! a cat that touches it is bounced off, like a
   pinball) and a **conveyor belt** (a moving platform that carries a cat
   along). Picked to change, a cannon, a fan or a belt has an arrow on a stem:

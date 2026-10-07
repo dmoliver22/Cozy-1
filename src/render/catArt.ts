@@ -55,6 +55,14 @@ export interface CatPose {
    * instant (units, signed) and which side its back end is (+1 the right).
    */
   wiggle?: { sway: number; rear: 1 | -1 } | null;
+  /** Squeezed through something snug (a glass tube): ears folded flat away, so they stay inside. */
+  tuck?: boolean;
+  /**
+   * Stuffed head first into something (a cannon): only its back end shows,
+   * its tip at (x, y) pointing (dx, dy), its bulge `len` long and `half`
+   * wide — a wagging tail and two hind feet kicking, no face, no ears.
+   */
+  rump?: { x: number; y: number; dx: number; dy: number; len: number; half: number } | null;
 }
 
 /**
@@ -69,6 +77,8 @@ interface Ear {
   y: number;
   dx: number;
   dy: number;
+  /** How big (1: up; 0: folded flat away). */
+  k: number;
 }
 
 export class CatView {
@@ -106,6 +116,8 @@ export class CatView {
   earRY = [0, 0];
   earAng = [0, 0];
   earInit = false;
+  /** 0..1 how far the ears are folded flat away (riding a tube). */
+  earFold = 0;
   /** 0..1 how much the cat breathes visibly (resting or seated). */
   breath = 0;
   /** Paw visibility: tucked under the chest / dangling, and over a rim. */
@@ -365,6 +377,11 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   v.fx = hx + pose.look * r * 0.12;
   v.fy = hy + faceDrop;
   v.lw = Math.max(1.1, 1.5 * (r / 30) ** 0.25);
+  if (pose.rump) {
+    // (its head's down the barrel: the face, and anything marked round it, out of sight in there)
+    v.fx = pose.rump.x - pose.rump.dx * r * 2.4;
+    v.fy = pose.rump.y - pose.rump.dy * r * 2.4;
+  }
 
   // Ears: where the top of the outline crosses either side of the head, eased
   // in the head's frame so they ride along smoothly instead of hopping between
@@ -377,6 +394,10 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
   const ka = snap || !v.earInit ? 1 : ease(v.dt, 12);
   const wiggle = pose.purr > 0 ? Math.sin(v.t * 2.2 + v.phase) * 0.05 * pose.purr : 0;
   const twitch = v.twitch * Math.sin(v.t * 16) * 0.12;
+  // (folding flat as it slips into a tube, back up as it comes out; gone at once down a cannon)
+  const fold = pose.tuck || pose.rump ? 1 : 0;
+  v.earFold = snap || pose.rump ? fold : v.earFold + (fold - v.earFold) * ease(v.dt, 22);
+  const ek = 1 - v.earFold;
   v.ears = [];
   for (let e = 0; e < 2; e++) {
     const s = e === 0 ? -1 : 1;
@@ -394,12 +415,15 @@ function prepare(b: SoftBody, v: CatView, pose: CatPose): void {
       dx += s * 0.5;
       dy += 0.25;
     }
+    // folding: laid back flat as they go
+    dx += s * 1.25 * v.earFold;
+    dy += 0.55 * v.earFold;
     const ang = Math.atan2(dy, dx);
     v.earRX[e] += (top.x - top.nx * 2 - v.hx - v.earRX[e]) * ke;
     v.earRY[e] += (top.y - top.ny * 2 - v.hy - v.earRY[e]) * ke;
     v.earAng[e] += angleDiff(ang, v.earAng[e]) * ka;
     const a = v.earAng[e] + s * wiggle + (s > 0 ? twitch : 0);
-    v.ears.push({ x: v.hx + v.earRX[e], y: v.hy + v.earRY[e], dx: Math.cos(a), dy: Math.sin(a) });
+    if (ek > 0.04) v.ears.push({ x: v.hx + v.earRX[e], y: v.hy + v.earRY[e], dx: Math.cos(a), dy: Math.sin(a), k: ek });
   }
   v.earInit = true;
 
@@ -545,7 +569,7 @@ export function drawCat(ctx: Ctx, b: SoftBody, v: CatView, pose: CatPose, scaleH
 
   if (pose.silhouette) {
     ctx.fillStyle = look.shade;
-    for (const e of v.ears) ctx.fill(earPath(e, r * 0.46 * look.earSize));
+    for (const e of v.ears) ctx.fill(earPath(e, r * 0.46 * look.earSize * e.k));
     ctx.fill(smoothPath2D(v.sx, v.sy, v.sm));
     return;
   }
@@ -556,6 +580,14 @@ export function drawCat(ctx: Ctx, b: SoftBody, v: CatView, pose: CatPose, scaleH
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
+  if (pose.rump) {
+    // only its back end: a tail, the pudge, two hind feet
+    drawTail(ctx, v, pose.rump, r, look, ink);
+    drawBody(ctx, v, pose, r, look, ink);
+    drawHindFeet(ctx, v, pose.rump, r, ink);
+    ctx.restore();
+    return;
+  }
   for (const e of v.ears) drawEar(ctx, v, e, r, look, ink);
   drawBody(ctx, v, pose, r, look, ink);
   drawFace(ctx, look, ink, v.fx, v.fy, v.fs, r, pose, v);
@@ -924,7 +956,7 @@ function earPath(e: Ear, size: number): Path2D {
 }
 
 function drawEar(ctx: Ctx, v: CatView, e: Ear, r: number, look: BreedLook, ink: Ink): void {
-  const size = r * 0.46 * look.earSize;
+  const size = r * 0.46 * look.earSize * e.k;
   const { x: bx, y: by, dx, dy } = e;
   const px = -dy;
   const py = dx;
@@ -1003,6 +1035,80 @@ function drawEar(ctx: Ctx, v: CatView, e: Ear, r: number, look: BreedLook, ink: 
   ctx.lineWidth = v.lw * 0.8;
   ctx.strokeStyle = rgba(ink.line, ink.lineAlpha);
   ctx.stroke(P);
+}
+
+// ---------------------------------------------------------------------------
+// A back end (stuffed head first into something)
+
+/** The tail, out of the tip of the back end: up and curling, wagging. */
+function drawTail(ctx: Ctx, v: CatView, rump: NonNullable<CatPose['rump']>, r: number, look: BreedLook, ink: Ink): void {
+  const { dx, dy } = rump;
+  const px = -dy;
+  const py = dx;
+  const wag = Math.sin(v.t * 5.5 + v.phase) * 0.45;
+  const len = r * (0.95 + look.fluff * 0.25);
+  const at = (u: number, w: number): [number, number] => [rump.x - dx * r * 0.3 + dx * u + px * w, rump.y - dy * r * 0.3 + dy * u + py * w];
+  const [x0, y0] = at(0, 0);
+  const [cx, cy] = at(len * 0.75, len * wag * 0.5);
+  const [x1, y1] = at(len * 0.95, len * (wag + 0.35 * Math.sign(wag || 1)));
+  const path = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.quadraticCurveTo(cx, cy, x1, y1);
+  };
+  const w = r * (0.24 + look.fluff * 0.1);
+  ctx.strokeStyle = rgba(ink.line, ink.lineAlpha);
+  ctx.lineWidth = w + v.lw * 1.6;
+  path();
+  ctx.stroke();
+  ctx.strokeStyle = ink.base;
+  ctx.lineWidth = w;
+  path();
+  ctx.stroke();
+  // its tip in the markings' colour (a light one on a coat with white in it)
+  const tip = look.pattern === 'points' || look.pattern === 'tabby' || look.pattern === 'mane' ? ink.accent : look.pattern === 'tuxedo' || look.pattern === 'patchy' ? ink.light : null;
+  if (tip) {
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.arc(x1, y1, w * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Two hind feet sticking out of the bulge's sides, kicking, toe beans showing. */
+function drawHindFeet(ctx: Ctx, v: CatView, rump: NonNullable<CatPose['rump']>, r: number, ink: Ink): void {
+  const { dx, dy } = rump;
+  for (const s of [-1, 1]) {
+    const kick = Math.sin(v.t * 9 + v.phase + (s > 0 ? Math.PI : 0));
+    const back = rump.len * (0.62 - kick * 0.08);
+    const out = rump.half * 0.9;
+    const x = rump.x - dx * back - dy * s * out;
+    const y = rump.y - dy * back + dx * s * out;
+    const a = Math.atan2(dy, dx) + s * (1.05 + kick * 0.18);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    const rx = r * 0.2;
+    const ry = r * 0.17;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = ink.paw;
+    ctx.fill();
+    ctx.strokeStyle = rgba(ink.line, ink.lineAlpha * 0.85);
+    ctx.lineWidth = v.lw * 0.7;
+    ctx.stroke();
+    // the beans: a big pad, three toes at the far end
+    ctx.fillStyle = ink.innerEar;
+    ctx.beginPath();
+    ctx.ellipse(-rx * 0.18, 0, rx * 0.38, ry * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    for (const t of [-0.55, 0, 0.55]) {
+      ctx.beginPath();
+      ctx.ellipse(rx * 0.5 - Math.abs(t) * rx * 0.12, t * ry, rx * 0.17, ry * 0.19, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 // ---------------------------------------------------------------------------

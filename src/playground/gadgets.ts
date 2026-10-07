@@ -142,18 +142,33 @@ export type GadgetEvent =
   | { t: 'fire'; cat: Cat; id: number; x: number; y: number }
   | { t: 'bump'; cat: Cat; id: number; speed: number };
 
-/** A cat in a cannon: how long it's been in, and its shape as it went in (to come out round again). */
+/** A cat in a cannon: how long it's been in, its shape as it went in (to come out round again), and where its back end sticks out. */
 interface Loaded {
   cat: Cat;
   id: number;
   t: number;
   shape: Float64Array;
+  rump: Rump | null;
 }
+
+/** The back end of a cat stuffed in a cannon: the tip of it (world), the way it points (out of the muzzle), and how long and wide its bulge is. */
+export interface Rump {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  len: number;
+  half: number;
+}
+
+/** A loaded cannon's tremble (units across its barrel), from how long the cat's been in. */
+const tremble = (t: number): number => Math.sin(t * 70) * 1.6 * Math.min(1, t / CANNON.wait);
 
 /**
  * The toys at work: each frame the fans blow, the belts carry, the bumpers
  * bounce, and the cannons load and fire. A loaded cat is out of the physics
- * (squeezed into the barrel, drawn behind it) till it's fired.
+ * till it's fired: stuffed head first into the barrel (drawn behind it), its
+ * back end too big to go in, bulging out of the muzzle.
  */
 export class GadgetWorks {
   private loaded: Loaded[] = [];
@@ -175,6 +190,17 @@ export class GadgetWorks {
   charge(id: number): number {
     const l = this.loaded.find((q) => q.id === id);
     return l ? Math.min(1, l.t / CANNON.wait) : 0;
+  }
+
+  /** How far a cannon's barrel is shaken across this frame (a cat in it, about to go). */
+  shake(id: number): number {
+    const l = this.loaded.find((q) => q.id === id);
+    return l ? tremble(l.t) : 0;
+  }
+
+  /** The back end of a cat in a cannon, sticking out of it (null: not in one). */
+  rump(cat: Cat): Rump | null {
+    return this.loaded.find((l) => l.cat === cat)?.rump ?? null;
   }
 
   /** The cannon (if any) whose mouth (x, y) is at (`more`: how forgiving: a cat let go by a hand, a good way round it). */
@@ -205,7 +231,9 @@ export class GadgetWorks {
       shape[i * 2 + 1] = b.y[i] - b.cy;
     }
     this.world().removeBody(b);
-    this.loaded.push({ cat, id: g.id, t: 0, shape });
+    const l: Loaded = { cat, id: g.id, t: 0, shape, rump: null };
+    this.loaded.push(l);
+    this.stuff(l, g);
     return true;
   }
 
@@ -235,18 +263,7 @@ export class GadgetWorks {
         out.push({ t: 'fire', cat: l.cat, id: g.id, x: m.x, y: m.y });
         continue;
       }
-      // (in the barrel, small, a little back from the muzzle)
-      const d = aimDir(g);
-      const b = l.cat.body;
-      const cx = g.x + d.x * (CANNON.fore * 0.45);
-      const cy = g.y + d.y * (CANNON.fore * 0.45);
-      const r = Math.sqrt(Math.max(1, b.p.radius * b.p.radius));
-      const k = (CANNON.r - 5) / r;
-      for (let i = 0; i < b.n; i++) {
-        b.x[i] = b.px[i] = cx + l.shape[i * 2] * k;
-        b.y[i] = b.py[i] = cy + l.shape[i * 2 + 1] * k;
-      }
-      b.computeCentroid();
+      this.stuff(l, g);
     }
     for (const cat of cats) {
       if (this.inCannon(cat) !== null || !free(cat)) continue;
@@ -266,6 +283,53 @@ export class GadgetWorks {
       }
     }
     return out;
+  }
+
+  /**
+   * A cat in a cannon, stuffed in head first: down the bore it goes as a
+   * sausage, but its back end's too big to follow, so it bulges out of the
+   * muzzle, squashed against it (wider than the barrel, jiggling as the
+   * cannon trembles). Each node goes where its own way round the cat points
+   * (the outline of the bore plus the bulge, seen from the bulge's middle),
+   * eased there so it squishes in over a moment.
+   */
+  private stuff(l: Loaded, g: Gadget): void {
+    const d = aimDir(g);
+    const b = l.cat.body;
+    const R = b.p.radius;
+    const jiggle = 1 + Math.sin(l.t * 31) * 0.05 * Math.min(1, l.t / CANNON.wait);
+    const along = Math.max(R * 0.72, 14);
+    const across = Math.max(R * 0.98, CANNON.r * 1.3) * jiggle;
+    const w = CANNON.r * 0.72;
+    const deep = CANNON.fore + along * 0.3;
+    // (how far back of the bulge's middle the muzzle is)
+    const lip = along * 0.3 + 3;
+    const sh = tremble(l.t);
+    const ox = g.x + d.x * deep - d.y * sh;
+    const oy = g.y + d.y * deep + d.x * sh;
+    const k = 1 - Math.exp(-FRAME_DT * 28);
+    for (let i = 0; i < b.n; i++) {
+      const sx = l.shape[i * 2];
+      const sy = l.shape[i * 2 + 1];
+      const u = sx * d.x + sy * d.y;
+      const v = -sx * d.y + sy * d.x;
+      const m = Math.hypot(u, v) || 1;
+      const cu = u / m;
+      const cv = v / m;
+      // out to the bulge (an ellipse, squashed along the barrel, pressed flat
+      // against the muzzle), or down the bore
+      let r = 1 / Math.hypot(cu / along, cv / across);
+      if (cu < 0) {
+        r = Math.min(r, lip / -cu);
+        r = Math.max(r, Math.min(deep / -cu, Math.abs(cv) > 1e-6 ? w / Math.abs(cv) : Infinity));
+      }
+      const tx = ox + (d.x * cu - d.y * cv) * r;
+      const ty = oy + (d.y * cu + d.x * cv) * r;
+      b.x[i] = b.px[i] = b.x[i] + (tx - b.x[i]) * k;
+      b.y[i] = b.py[i] = b.y[i] + (ty - b.y[i]) * k;
+    }
+    b.computeCentroid();
+    l.rump = { x: ox + d.x * along, y: oy + d.y * along, dx: d.x, dy: d.y, len: along, half: across };
   }
 
   /** Out of its cannon: round again just out of the muzzle, flying the way it's aimed (or, its cannon gone, put back still). */

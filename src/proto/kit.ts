@@ -263,6 +263,8 @@ export interface CatLook {
   purr?: number;
   /** 0..1 golden glow. */
   glow?: number;
+  /** Squeezed through a glass tube: ears folded flat away. */
+  tuck?: boolean;
 }
 
 /** Keeps a CatView per body (ears, blinks, breathing are stateful) and paints it. */
@@ -294,6 +296,7 @@ export class CatPainter {
       purr: look.purr ?? 0,
       grabbed: look.grabbed ?? false,
       glow: look.glow ?? 0,
+      tuck: look.tuck ?? false,
     };
     drawCat(ctx, b, this.view(b), pose, 1, layer);
   }

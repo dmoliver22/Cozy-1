@@ -36,7 +36,7 @@ import {
   type PlayPiece,
   type SkyTube,
 } from '../src/playground/layout';
-import { FAN, GadgetWorks, cannonMouth, fitAim, type GadgetEvent } from '../src/playground/gadgets';
+import { CANNON, FAN, GadgetWorks, cannonMouth, fitAim, type GadgetEvent } from '../src/playground/gadgets';
 
 type Pt = [number, number];
 
@@ -627,6 +627,42 @@ describe('toys', () => {
     expect(vy).toBeLessThan(-600);
     // (not straight back in)
     expect(works.load(cat, g)).toBe(false);
+  });
+
+  it('a cat in a cannon is stuffed in head first, its back end too big to go in bulging out of the muzzle', () => {
+    for (const [breed, aim] of [['kitten', -90], ['chonk', -45], ['tabby', 0]] as const) {
+      const cannon: PlayPiece = { id: 7, kind: 'cannon', x: 300, y: -200, aim };
+      const s = sky([cannon]);
+      const cat = s.addCat(breed, 0, -40, 'Pip');
+      const works = new GadgetWorks(() => s.world);
+      const g = gadgetOf(cannon)!;
+      const m = cannonMouth(g);
+      cat.body.placeAt(m.zx, m.zy);
+      expect(works.load(cat, g)).toBe(true);
+      for (let f = 0; f < 20; f++) works.step([g], s.cats, (c) => !c.grabbed);
+      const d = { x: Math.cos((aim * Math.PI) / 180), y: Math.sin((aim * Math.PI) / 180) };
+      const b = cat.body;
+      let wide = 0;
+      for (let i = 0; i < b.n; i++) {
+        const u = (b.x[i] - g.x) * d.x + (b.y[i] - g.y) * d.y;
+        const v = Math.abs(-(b.x[i] - g.x) * d.y + (b.y[i] - g.y) * d.x);
+        // (never out of the back of the barrel; down the bore, no wider than it)
+        expect(u).toBeGreaterThan(-2);
+        if (u < CANNON.fore - 4) expect(v).toBeLessThan(CANNON.r + 4);
+        else wide = Math.max(wide, v);
+      }
+      // its back end won't fit: out of the muzzle, wider than the barrel
+      expect(wide).toBeGreaterThan(CANNON.r * 1.2);
+      const r = works.rump(cat)!;
+      expect(r).not.toBeNull();
+      expect((r.x - m.x) * d.x + (r.y - m.y) * d.y).toBeGreaterThan(8);
+      expect(r.dx).toBeCloseTo(d.x);
+      expect(r.dy).toBeCloseTo(d.y);
+      // and fired, it's a whole cat again
+      for (let f = 0; f < 60 && works.inCannon(cat) !== null; f++) works.step([g], s.cats, (c) => !c.grabbed);
+      expect(works.rump(cat)).toBeNull();
+      expect(works.shake(7)).toBe(0);
+    }
   });
 
   it('saved with its aim; an aim that makes no sense is put right', () => {

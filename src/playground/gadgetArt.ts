@@ -10,12 +10,13 @@ import { BELT, BUMPER, CANNON, FAN, aimDir, gadgetBox, type Gadget } from './gad
 
 const TAU = Math.PI * 2;
 
-/** How a toy's moving this frame: the time (for the fan and the belt), the bumper's flash, the cannon's kick back and how long a cat's been in it (0..1). */
+/** How a toy's moving this frame: the time (for the fan and the belt), the bumper's flash, the cannon's kick back, how long a cat's been in it (0..1, 0: empty) and its tremble. */
 export interface GadgetLook {
   time: number;
   flash: number;
   recoil: number;
   charge: number;
+  shake: number;
 }
 
 /** A toy, its far part (under the cats) or its near part (over them: the cannon's barrel, with a cat in it). */
@@ -89,7 +90,7 @@ function wheel(ctx: Ctx, x: number, y: number, r: number): void {
 function cannonBarrel(ctx: Ctx, g: Gadget, look: GadgetLook): void {
   const d = aimDir(g);
   const back = look.recoil * 9;
-  const shake = look.charge > 0 ? Math.sin(look.time * 70) * 1.6 * look.charge : 0;
+  const shake = look.shake;
   ctx.save();
   ctx.translate(g.x - d.x * back - d.y * shake, g.y - d.y * back + d.x * shake);
   ctx.rotate(Math.atan2(d.y, d.x));
@@ -119,11 +120,13 @@ function cannonBarrel(ctx: Ctx, g: Gadget, look: GadgetLook): void {
   // gold bands, and the muzzle's lip
   for (const bx of [x0 + 10, 14]) band(ctx, bx, r * 0.98, 5);
   band(ctx, x1 - 6, r * 1.12, 8);
-  // its mouth, dark inside
-  ctx.fillStyle = '#4A3B52';
-  ctx.beginPath();
-  ctx.ellipse(x1 - 1, 0, 4.5, r * 0.78, 0, 0, TAU);
-  ctx.fill();
+  // its mouth, dark inside (or full of cat)
+  if (look.charge <= 0) {
+    ctx.fillStyle = '#4A3B52';
+    ctx.beginPath();
+    ctx.ellipse(x1 - 1, 0, 4.5, r * 0.78, 0, 0, TAU);
+    ctx.fill();
+  }
   // a star on its side
   star(ctx, -1, 0, 6.5, '#FFF3D6');
   inkLine(ctx, barrel, CORAL, 1, 0.5);
@@ -351,7 +354,7 @@ export function gadgetThumb(kind: Gadget['kind'], w: number, h: number): HTMLCan
   const box = gadgetBox(g);
   const scale = Math.min((w - 6) / (box.x1 - box.x0), (h - 6) / (box.y1 - box.y0));
   ctx.setTransform(k * scale, 0, 0, k * scale, (k * w) / 2 - k * scale * ((box.x0 + box.x1) / 2), (k * h) / 2 - k * scale * ((box.y0 + box.y1) / 2));
-  const look: GadgetLook = { time: 0.3, flash: 0, recoil: 0, charge: 0 };
+  const look: GadgetLook = { time: 0.3, flash: 0, recoil: 0, charge: 0, shake: 0 };
   // (the fan's wind left out: there's no room for it)
   if (kind === 'fan') {
     ctx.save();

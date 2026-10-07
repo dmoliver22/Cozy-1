@@ -57,9 +57,10 @@ export interface Stage {
   inTube?(cat: Cat): Expression | null;
   /**
    * What a cat is up to says how it looks (null: the usual): its face, where
-   * it's looking (-1..1), and whether it casts its shadow (not in a scuffle).
+   * it's looking (-1..1), whether it casts its shadow (not in a scuffle), and
+   * whether only its back end shows (stuffed head first into something).
    */
-  face?(cat: Cat): { expression: Expression; look?: number; shadow?: boolean; wiggle?: { sway: number; rear: 1 | -1 } } | null;
+  face?(cat: Cat): { expression: Expression; look?: number; shadow?: boolean; wiggle?: { sway: number; rear: 1 | -1 }; rump?: CatPose['rump'] } | null;
   /** Cats drawn under the front layer (in a tube, or curled in something with a front). */
   behindFront?(cat: Cat): boolean;
   /**
@@ -831,6 +832,8 @@ export class Renderer {
     let expression: Expression = 'open';
     let look = 0;
     let wiggle: CatPose['wiggle'] = null;
+    let rump: CatPose['rump'] = null;
+    let tuck = false;
     const seat = cat.seat;
     if (cat.grabbed) {
       // startled when scooped up; held still by the scruff, it goes calm
@@ -844,14 +847,17 @@ export class Renderer {
     else look = Math.sin(v.t * 0.5 + cat.index) > 0.85 ? 0.8 : Math.sin(v.t * 0.5 + cat.index) < -0.9 ? -0.8 : 0;
     const tubeFace = this.stage?.inTube?.(cat);
     if (tubeFace) {
+      // (ears folded flat, so they stay in the glass)
       expression = tubeFace;
       look = 0;
+      tuck = true;
     } else {
       const f = this.stage?.face?.(cat);
       if (f) {
         expression = f.expression;
         if (f.look !== undefined) look = f.look;
         wiggle = f.wiggle ?? null;
+        rump = f.rump ?? null;
       }
     }
     const k = this.containerFor(cat);
@@ -877,6 +883,8 @@ export class Renderer {
       expression,
       look,
       wiggle,
+      tuck,
+      rump,
       rim,
       seated: !!seat,
       resting,

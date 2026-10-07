@@ -532,7 +532,9 @@ Notes on the choices:
   area, its nodes matched to the nearest outline points so nothing crosses),
   slides through the glass along the tube's path (bending round the curves),
   and pops out round at the far mouth, where it goes back into the physics
-  moving the way the mouth points. It's out of the world while it rides, is
+  moving the way the mouth points. A rider's ears fold flat away as it goes
+  in (`CatPose.tuck`), so they never poke out through the glass, and come
+  back up as it pops out. It's out of the world while it rides, is
   drawn under the glass's front (a cached front layer) and the camera rides
   along with it. The ride doesn't know about houses (it's generic over who
   rides and what tube, with a tube's own speed and an optional whoosh that
@@ -765,8 +767,14 @@ the choices:
   sends a cat that touches it straight off, at 760, keeping a little of
   what went along it (not again for a moment), and lights up. A **cannon**
   takes a cat that's let go at its mouth (generously) or falls into it: the
-  cat's out of the physics, squeezed small into the barrel (drawn behind
-  it), the cannon trembles for 0.55 s, and the cat comes out round just
+  cat's out of the physics, stuffed in head first (drawn behind the
+  barrel): its outline eases into a sausage as wide as the bore with its
+  back end too big to follow, a bulge wider than the barrel pressed flat
+  against the muzzle (each node going where its own way round the cat
+  points, from the bulge's middle). Only that shows (`CatPose.rump`): no
+  face or ears, a wagging tail out of its tip and two hind feet kicking out
+  of its sides, toe beans up. The cannon trembles for 0.55 s (the bulge
+  jiggling and shaking with it), and the cat comes out round just
   past the muzzle at 1250 the way it's aimed (anywhere up, in 15° steps),
   with a pomf, and can't go straight back in. Its barrel is solid (a cat
   can sit on it) and its cart stands on things like a cushion does. A
