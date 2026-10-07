@@ -36,11 +36,14 @@ type Pt = [number, number];
 /**
  * A tube: its middle line, from one mouth (a: its first point) to the other
  * (b: its last), as drawn: as long and as bendy as you like, its points
- * evenly spaced along it (see evenTube).
+ * evenly spaced along it (see evenTube). Or a pipe, like a real one: straight
+ * runs between its `bends` (its mouths at the first and the last), each
+ * bend a neat elbow (its middle line, `pts`, made from them: pipePath).
  */
 export interface PlayTube {
   id: number;
   pts: Pt[];
+  bends?: Pt[];
 }
 
 export interface PlaySave {
@@ -87,7 +90,17 @@ export function readPlay(raw: string | null): PlaySave {
     for (const t of o.tubes as Record<string, unknown>[]) {
       if (!t) continue;
       let pts: Pt[] | null = null;
-      if (Array.isArray(t.pts)) {
+      let bends: Pt[] | undefined;
+      const points = (v: unknown, min: number): Pt[] | null => {
+        if (!Array.isArray(v) || v.length < min || v.length > MAX_PTS || !v.every((q) => Array.isArray(q) && q.length === 2 && near(q[0]) && near(q[1]))) return null;
+        return (v as Pt[]).map(([x, y]) => [x, y]);
+      };
+      const b = points(t.bends, 2);
+      if (b) {
+        // (a pipe: its line made from its bends)
+        bends = b;
+        pts = pipePath(b);
+      } else if (Array.isArray(t.pts)) {
         const raw = t.pts as unknown[];
         if (raw.length >= 2 && raw.length <= MAX_PTS && raw.every((q) => Array.isArray(q) && q.length === 2 && near(q[0]) && near(q[1]))) pts = (raw as Pt[]).map(([x, y]) => [x, y]);
       } else if ([t.ax, t.ay, t.bx, t.by].every(near)) {
@@ -98,7 +111,7 @@ export function readPlay(raw: string | null): PlaySave {
         ]);
       }
       if (!pts || pathLength(pts) < 1 || !fresh(t.id)) continue;
-      out.tubes.push({ id: t.id as number, pts });
+      out.tubes.push(bends ? { id: t.id as number, pts, bends } : { id: t.id as number, pts });
     }
   }
   out.nextId = Math.max(1, ...[...ids].map((i) => i + 1), finite(o.nextId) ? Math.floor(o.nextId) : 1);
@@ -393,6 +406,315 @@ export function moveTube(pts: readonly Pt[], dx: number, dy: number): Pt[] {
   return pts.map(([x, y]) => [round1(x + dx), round1(y + dy)]);
 }
 
+// ---------------------------------------------------------------------------
+// Pipes: tubes in straight runs, like real ones
+
+/**
+ * A pipe's bends sit on a grid this fine; it turns round an elbow this big
+ * (the radius of its middle line round it, a little more than the tightest
+ * a tube bends); and drawing one, a finger this far off the way it's going
+ * turns it.
+ */
+export const PIPE = { grid: 20, elbow: 48, turn: 32 };
+
+/** The eight ways a pipe can run: along, down, across and the diagonals between (clockwise from east: y is down). */
+const WAYS: Pt[] = Array.from({ length: 8 }, (_, k): Pt => [Math.round(Math.cos((k * Math.PI) / 4) * 1e9) / 1e9, Math.round(Math.sin((k * Math.PI) / 4) * 1e9) / 1e9]);
+/** The nearest of the eight ways to (dx, dy). */
+const wayOf = (dx: number, dy: number): number => (((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8);
+/** Eighths of a turn from way a to way b (-3..4: 0 straight on, 2 a right angle clockwise, 4 straight back). */
+const turnOf = (a: number, b: number): number => {
+  const t = (((b - a) % 8) + 8) % 8;
+  return t > 4 ? t - 8 : t;
+};
+/** How much of the runs either side of it an elbow turning t eighths takes up (a right angle: its radius). */
+const elbowLen = (t: number): number => PIPE.elbow * Math.tan((Math.abs(t) * Math.PI) / 8);
+/** The straight a mouth needs before its pipe can bend (its bell, and a little). */
+const MOUTH_RUN = TUBE.throat + 8;
+/** A step along a run that keeps its bends on the grid (along the diagonals, a grid square's diagonal). */
+const unitOf = (way: number): number => (way % 2 ? PIPE.grid * Math.SQRT2 : PIPE.grid);
+const snapGrid = (v: number): number => Math.round(v / PIPE.grid) * PIPE.grid;
+
+/** The way each run of a pipe goes. */
+function waysOf(b: readonly Pt[]): number[] {
+  return b.slice(1).map((p, i) => wayOf(p[0] - b[i][0], p[1] - b[i][1]));
+}
+
+/** How long run i of a pipe has to be: room for what's at either end of it (an elbow's share, or a mouth). */
+function runNeed(ways: readonly number[], i: number): number {
+  const at0 = i === 0 ? MOUTH_RUN : elbowLen(turnOf(ways[i - 1], ways[i]));
+  const at1 = i === ways.length - 1 ? MOUTH_RUN : elbowLen(turnOf(ways[i], ways[i + 1]));
+  return at0 + at1;
+}
+
+/**
+ * A pipe's middle line: straight between its bends, round an elbow at each
+ * one (a quarter of a circle for a right angle, an eighth for 45°), with a
+ * point every TUBE.step along it, like a drawn tube's.
+ */
+export function pipePath(bends: readonly Pt[]): Pt[] {
+  const m = bends.length;
+  if (m < 2) return bends.map(([x, y]) => [x, y]);
+  const fine: Pt[] = [[bends[0][0], bends[0][1]]];
+  for (let j = 1; j < m - 1; j++) {
+    const [px, py] = bends[j - 1];
+    const [bx, by] = bends[j];
+    const [nx, ny] = bends[j + 1];
+    const la = Math.hypot(bx - px, by - py);
+    const lb = Math.hypot(nx - bx, ny - by);
+    if (la < 1e-6 || lb < 1e-6) continue;
+    const ux = (bx - px) / la;
+    const uy = (by - py) / la;
+    const vx = (nx - bx) / lb;
+    const vy = (ny - by) / lb;
+    const turn = Math.atan2(Math.abs(ux * vy - uy * vx), ux * vx + uy * vy);
+    if (turn < 1e-3) continue;
+    // (an elbow takes no more than half of either run: room for the one at its other end)
+    const f = Math.min(PIPE.elbow * Math.tan(turn / 2), la / 2, lb / 2);
+    const r = f / Math.tan(turn / 2);
+    const t1: Pt = [bx - ux * f, by - uy * f];
+    const t2: Pt = [bx + vx * f, by + vy * f];
+    // its middle: square to the run in, on the side it turns to
+    let cx = -uy;
+    let cy = ux;
+    if (cx * vx + cy * vy < 0) {
+      cx = -cx;
+      cy = -cy;
+    }
+    const ox = t1[0] + cx * r;
+    const oy = t1[1] + cy * r;
+    const a1 = Math.atan2(t1[1] - oy, t1[0] - ox);
+    let da = Math.atan2(t2[1] - oy, t2[0] - ox) - a1;
+    if (da > Math.PI) da -= Math.PI * 2;
+    if (da < -Math.PI) da += Math.PI * 2;
+    fine.push(t1);
+    const n = Math.max(2, Math.ceil((Math.abs(da) * r) / 3));
+    for (let k = 1; k < n; k++) fine.push([ox + Math.cos(a1 + (da * k) / n) * r, oy + Math.sin(a1 + (da * k) / n) * r]);
+    fine.push(t2);
+  }
+  fine.push([bends[m - 1][0], bends[m - 1][1]]);
+  return resample(fine, TUBE.step).map(([x, y]) => [round1(x), round1(y)]);
+}
+
+/** How much of the runs either side of each bend its elbow takes up (as pipePath makes them; 0 at the mouths). */
+function elbowShares(bends: readonly Pt[]): number[] {
+  const out = bends.map(() => 0);
+  for (let j = 1; j < bends.length - 1; j++) {
+    const [px, py] = bends[j - 1];
+    const [bx, by] = bends[j];
+    const [nx, ny] = bends[j + 1];
+    const la = Math.hypot(bx - px, by - py);
+    const lb = Math.hypot(nx - bx, ny - by);
+    if (la < 1e-6 || lb < 1e-6) continue;
+    const ux = (bx - px) / la;
+    const uy = (by - py) / la;
+    const vx = (nx - bx) / lb;
+    const vy = (ny - by) / lb;
+    const turn = Math.atan2(Math.abs(ux * vy - uy * vx), ux * vx + uy * vy);
+    if (turn >= 1e-3) out[j] = Math.min(PIPE.elbow * Math.tan(turn / 2), la / 2, lb / 2);
+  }
+  return out;
+}
+
+/**
+ * Where a pipe has brass joints: where each straight run meets an elbow
+ * (one in the middle of a run too short for two; none by a mouth, its bell
+ * has its own), each with the way its run goes there.
+ */
+export function pipeJoints(bends: readonly Pt[]): { x: number; y: number; ux: number; uy: number }[] {
+  const out: { x: number; y: number; ux: number; uy: number }[] = [];
+  const share = elbowShares(bends);
+  const m = bends.length - 1;
+  for (let i = 0; i < m; i++) {
+    const [ax, ay] = bends[i];
+    const len = Math.hypot(bends[i + 1][0] - ax, bends[i + 1][1] - ay);
+    if (len < 1e-6) continue;
+    const ux = (bends[i + 1][0] - ax) / len;
+    const uy = (bends[i + 1][1] - ay) / len;
+    const at = (d: number): { x: number; y: number; ux: number; uy: number } => ({ x: ax + ux * d, y: ay + uy * d, ux, uy });
+    // its straight part, between the elbows (or a mouth's throat) at its ends
+    const e0 = i > 0 && share[i] > 0;
+    const e1 = i < m - 1 && share[i + 1] > 0;
+    const lo = e0 ? share[i] : TUBE.throat;
+    const hi = e1 ? len - share[i + 1] : len - TUBE.throat;
+    if (hi - lo < 36) {
+      if (e0 && e1) out.push(at((lo + hi) / 2));
+      continue;
+    }
+    if (e0) out.push(at(lo));
+    if (e1) out.push(at(hi));
+  }
+  return out;
+}
+
+/** A pipe made from its bends. */
+export function pipeOf(id: number, bends: readonly Pt[]): PlayTube {
+  const b = bends.map(([x, y]): Pt => [round1(x), round1(y)]);
+  return { id, pts: pipePath(b), bends: b };
+}
+
+/** Where the line through p going way u meets the line through q going way v. */
+function meet(p: Pt, u: Pt, q: Pt, v: Pt): Pt {
+  const den = u[0] * v[1] - u[1] * v[0];
+  const t = Math.abs(den) < 1e-9 ? 0 : ((q[0] - p[0]) * v[1] - (q[1] - p[1]) * v[0]) / den;
+  return [p[0] + u[0] * t, p[1] + u[1] * t];
+}
+
+/**
+ * Lay pipe on from the last bend of b toward a finger at (x, y): along the
+ * way it's going, its end following the finger; when the finger's gone off
+ * that way (PIPE.turn off it), an elbow where it left, on the grid (45° or a
+ * right angle, never sharper: which, from the way it's gone since), and a
+ * new run the way it's gone; back over the elbow it set off from, that
+ * run's taken in.
+ */
+function layPipe(b: Pt[], x: number, y: number, turnAt: number = PIPE.turn): void {
+  const G = PIPE.grid;
+  for (let guard = 0; guard < 6; guard++) {
+    const n = b.length;
+    if (n === 1) {
+      // setting off: once the finger's gone a little way, the way it's going
+      const [sx, sy] = b[0];
+      if (Math.hypot(x - sx, y - sy) < G) return;
+      const k = wayOf(x - sx, y - sy);
+      const len = Math.max(MOUTH_RUN * 2, (x - sx) * WAYS[k][0] + (y - sy) * WAYS[k][1]);
+      b.push([sx + WAYS[k][0] * len, sy + WAYS[k][1] * len]);
+      return;
+    }
+    const A = b[n - 2];
+    const tip = b[n - 1];
+    const ways = waysOf(b);
+    const k = ways[n - 2];
+    const [wx, wy] = WAYS[k];
+    const u = unitOf(k);
+    const vx = x - A[0];
+    const vy = y - A[1];
+    const along = vx * wx + vy * wy;
+    const side = vx * wy - vy * wx;
+    const need = runNeed(ways, n - 2);
+    const follow = (): void => {
+      const len = Math.max(need, along);
+      b[n - 1] = [A[0] + wx * len, A[1] + wy * len];
+    };
+    // back over where this run set off from: taken in (the first, it sets off afresh from the mouth)
+    if (along < (n === 2 ? G : (need - MOUTH_RUN) * 0.5)) {
+      b.pop();
+      if (n === 2) continue;
+      // (the run before carries on, its end where the finger is along it: no turning this time)
+      const m = b.length;
+      const ways2 = waysOf(b);
+      const k2 = ways2[m - 2];
+      const P = b[m - 2];
+      const along2 = (x - P[0]) * WAYS[k2][0] + (y - P[1]) * WAYS[k2][1];
+      const len = Math.max(runNeed(ways2, m - 2), along2);
+      b[m - 1] = [P[0] + WAYS[k2][0] * len, P[1] + WAYS[k2][1] * len];
+      return;
+    }
+    // on its way (or a little off it, the end waiting where the finger left)
+    if (Math.abs(side) <= 12) return follow();
+    if (Math.abs(side) <= turnAt) return;
+    // off it: which way, from where the finger left (straight on after all: it follows)
+    let t = turnOf(k, wayOf(x - tip[0], y - tip[1]));
+    if (t === 0) return follow();
+    if (Math.abs(t) === 4) t = side < 0 ? 2 : -2;
+    else if (Math.abs(t) === 3) t = Math.sign(t) * 2;
+    const nk = (k + t + 8) % 8;
+    // the elbow: where the finger left, moved along the run to the grid (the run's line goes through it), with room for it on this run
+    const startShare = n === 2 ? MOUTH_RUN : elbowLen(turnOf(ways[n - 3], k));
+    const left = Math.hypot(tip[0] - A[0], tip[1] - A[1]);
+    let at = Math.abs(wx) > 0.5 ? (snapGrid(A[0] + wx * left) - A[0]) / wx : (snapGrid(A[1] + wy * left) - A[1]) / wy;
+    while (at < startShare + elbowLen(t) - 1e-6) at += u;
+    const corner: Pt = [A[0] + wx * at, A[1] + wy * at];
+    const [nx, ny] = WAYS[nk];
+    const along2 = (x - corner[0]) * nx + (y - corner[1]) * ny;
+    const len2 = Math.max(elbowLen(t) + MOUTH_RUN, along2);
+    b[n - 1] = corner;
+    b.push([corner[0] + nx * len2, corner[1] + ny * len2]);
+    return;
+  }
+}
+
+/**
+ * A pipe drawn on from one end (`end`) toward a finger at (x, y) (see
+ * layPipe); nothing yet, it starts there (on the grid). Not past the longest
+ * a tube can be.
+ */
+export function drawPipe(bends: readonly Pt[], end: 'a' | 'b', x: number, y: number): Pt[] {
+  if (!bends.length) return [[snapGrid(x), snapGrid(y)]];
+  const b: Pt[] = (end === 'a' ? [...bends].reverse() : [...bends]).map(([px, py]): Pt => [px, py]);
+  layPipe(b, x, y);
+  if (b.length >= 2 && pathLength(pipePath(b)) > TUBE_LEN.max) return bends.map(([px, py]): Pt => [px, py]);
+  const out = b.map(([px, py]): Pt => [round1(px), round1(py)]);
+  return end === 'a' ? out.reverse() : out;
+}
+
+/**
+ * A pipe with its straight run i slid sideways by as much of (dx, dy) as is
+ * square to it (in grid steps): the runs either side stretch or shrink to
+ * meet it, going the way they went (a mouth at the end of it goes along
+ * with it); only as far as they all keep room for their elbows.
+ */
+export function slidePipeRun(bends: readonly Pt[], i: number, dx: number, dy: number): Pt[] {
+  const ways = waysOf(bends);
+  const m = ways.length;
+  if (i < 0 || i >= m) return bends.map(([x, y]): Pt => [x, y]);
+  const [wx, wy] = WAYS[ways[i]];
+  const nx = -wy;
+  const ny = wx;
+  const unit = ways[i] % 2 ? PIPE.grid / Math.SQRT2 : PIPE.grid;
+  const want = Math.round((dx * nx + dy * ny) / unit);
+  const tryAt = (o: number): Pt[] | null => {
+    const b = bends.map(([x, y]): Pt => [x, y]);
+    const p0: Pt = [bends[i][0] + nx * o, bends[i][1] + ny * o];
+    const p1: Pt = [bends[i + 1][0] + nx * o, bends[i + 1][1] + ny * o];
+    b[i] = i === 0 ? p0 : meet(bends[i - 1], WAYS[ways[i - 1]], p0, WAYS[ways[i]]);
+    b[i + 1] = i + 1 === m ? p1 : meet(bends[i + 2], WAYS[ways[i + 1]], p1, WAYS[ways[i]]);
+    const w2 = waysOf(b);
+    for (let r = Math.max(0, i - 1); r <= Math.min(m - 1, i + 1); r++) {
+      if (w2[r] !== ways[r] || Math.hypot(b[r + 1][0] - b[r][0], b[r + 1][1] - b[r][1]) < runNeed(ways, r) - 0.5) return null;
+    }
+    return b.map(([x, y]): Pt => [round1(x), round1(y)]);
+  };
+  // (as far as it'll go, a step at a time)
+  let best = bends.map(([x, y]): Pt => [x, y]);
+  for (let s = 1; s <= Math.abs(want); s++) {
+    const b = tryAt(Math.sign(want) * s * unit);
+    if (!b) break;
+    best = b;
+  }
+  return best;
+}
+
+/** A pipe moved, the whole of it, by grid steps (so its bends stay on the grid). */
+export function movePipe(bends: readonly Pt[], dx: number, dy: number): Pt[] {
+  const sx = snapGrid(dx);
+  const sy = snapGrid(dy);
+  return bends.map(([x, y]): Pt => [round1(x + sx), round1(y + sy)]);
+}
+
+/** A drawn tube made into a pipe: laid along it as if a finger had drawn it, in straight runs. */
+export function straighten(pts: readonly Pt[]): Pt[] {
+  if (pts.length < 2) return [];
+  const b: Pt[] = [[snapGrid(pts[0][0]), snapGrid(pts[0][1])]];
+  // (turning only where it really goes another way: a long gentle curve in a few runs, not many)
+  for (const [x, y] of pts.slice(1)) layPipe(b, x, y, PIPE.turn * 1.7);
+  return b.length >= 2 ? b.map(([x, y]): Pt => [round1(x), round1(y)]) : [];
+}
+
+/** Which straight run of a pipe (x, y) is nearest, and how far from it. */
+export function nearestRun(bends: readonly Pt[], x: number, y: number): { i: number; d: number } {
+  let best = { i: -1, d: Infinity };
+  for (let i = 1; i < bends.length; i++) {
+    const [ax, ay] = bends[i - 1];
+    const ex = bends[i][0] - ax;
+    const ey = bends[i][1] - ay;
+    const l2 = ex * ex + ey * ey;
+    const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * ex + (y - ay) * ey) / l2)) : 0;
+    const d = Math.hypot(x - (ax + ex * u), y - (ay + ey * u));
+    if (d < best.d) best = { i: i - 1, d };
+  }
+  return best;
+}
+
 /** A tube's mouth: where it is, and the way it faces (out of the tube). */
 export interface TubeEnd {
   x: number;
@@ -569,10 +891,22 @@ export function distToTube(t: PlayTube, x: number, y: number): number {
   return nearestOnTube(t, x, y).d;
 }
 
-/** The point halfway along a tube (where its grip is, to move it by). */
-export function tubeMiddle(t: PlayTube): { x: number; y: number } {
+/**
+ * Where a tube's knob is (to move the whole of it by): beside it halfway
+ * along, on a little stem out from its glass (`at`: the point on it), so
+ * the glass itself is left free to bend (or a pipe's run, to slide).
+ */
+export function tubeMiddle(t: PlayTube): { x: number; y: number; at: { x: number; y: number } } {
   const p = pointAt(t.pts, pathLength(t.pts) / 2);
-  return { x: p.x, y: p.y };
+  // (square to it, out to the side that's up, or to the left of an upright stretch)
+  let nx = -p.ty;
+  let ny = p.tx;
+  if (ny > 0.2 || (Math.abs(ny) <= 0.2 && nx > 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const out = TUBE.bell + 22;
+  return { x: p.x + nx * out, y: p.y + ny * out, at: { x: p.x, y: p.y } };
 }
 
 /** The lowest anything in the sky reaches (what a cat falls past before it's back on the respawn cloud). */

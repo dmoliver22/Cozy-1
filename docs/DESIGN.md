@@ -724,9 +724,42 @@ the choices:
   finger's come, it's cut back: shorter), pull it anywhere along it to bend
   it (`bendTube`: that point goes with the finger, the tube round it less
   and less further off, a long tube's pull reaching further), or drag the
-  knob halfway along it to move the whole of it. Redraw rubs it out. Saves
-  from when tubes were straight (`ax, ay, bx, by`) come back as a line of
-  points.
+  knob beside it halfway along (on a little stem, so the glass itself is
+  free to bend) to move the whole of it. Redraw rubs it out. Saves from when
+  tubes were straight (`ax, ay, bx, by`) come back as a line of points.
+- **Pipes** are tubes laid like real ones: straight runs, each one of eight
+  ways (along, up and down, the diagonals), with an elbow at each bend (a
+  radius of 48, a quarter or an eighth of a circle: never sharper than a
+  right angle) and a brass joint where a run meets an elbow (one in the
+  middle of a run too short for two, none by a mouth, whose bell has its
+  own). A pipe is saved as its `bends` (its mouths first and last) and its
+  middle line is made from them (`pipePath`: straight, round each elbow, a
+  point every 16, so it's ridden, collided with and painted like any tube).
+  Drawing one (`layPipe`): the first stretch the finger goes sets its way;
+  its end follows the finger along that way; when the finger's gone 32 off
+  it, an elbow goes in where the finger left, moved along the run to the
+  grid (20; the run's line goes through a grid point, so it lands on one),
+  and a new run sets off; back over the elbow a run set off from, it's
+  taken in. Which way the new run goes (45° or a right angle, never
+  sharper) is read from where the finger is against where the end stopped
+  following it (12 off the run): the end isn't snapped while it follows,
+  or a 45° turn could read as a right angle (tested for every offset along
+  a grid square). Every run keeps room for what's at its ends (an elbow's
+  share, or a mouth's straight). Dragging a straight run slides it square to itself, in
+  grid steps (`slidePipeRun`): the runs either side stretch or shrink to
+  meet it, going the way they went, only as far as they all keep their
+  room. The Twisty | Pipe switch lays a pipe along a twisty tube as if a
+  finger drew it (`straighten`, turning only where it really changes way),
+  or frees a pipe to bend anywhere.
+- **Changing what's built.** A tap on any piece or tube picks it: the bar
+  shows Done and Remove (and for a tube, the switch and Redraw). It stays
+  in the sky, cats on it and all, until it's actually changed; the first
+  change lifts it out (cats on it drop) to be put back as it's left. A tap
+  on something else picks that (what was being changed is done with, put
+  back as it was if it can't go where it is); a tap on the sky is Done.
+  Remove takes it away with a moment to Undo (the pill over the bar; the
+  next thing picked forgets it). A long press still picks a thing straight
+  up and carries it on the finger.
 - **Riding one.** Each mouth faces out along the glass from its throat, a
   bell's height in; a cat whose middle comes into the reach just in front
   of a mouth, let go there, rides round every bend (the ride follows the

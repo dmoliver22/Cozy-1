@@ -136,15 +136,25 @@ The Playground (the cloud tin on the bar along the bottom):
   like. Shelves, ledges and clouds dragged up to the end of another join on,
   end to end at its height: one long platform. A cushion, a bed or a cat tree
   dragged just over something's top stands on it; anywhere else it floats on
-  a little cloud of its own. A **tube** you draw with your finger, as long as
-  you like and with any twists and turns: the glass follows the finger (hold
-  it by the edge of the screen and the view goes along, the tube with it),
-  and sharp corners ease into bends a cat can go round. Then drag either end
-  to draw on from there (or back along it, to make it shorter), pull it
-  anywhere along it to bend it there, or drag the knob in its middle to move
-  the whole of it; **Redraw** starts it again. A cat that goes in at one end
-  is carried round every bend and shot out of the other, the way it points.
-  Press and hold anything to move it or take it away.
+  a little cloud of its own. A **twisty tube** you draw with your finger, as
+  long as you like and with any twists and turns: the glass follows the
+  finger (hold it by the edge of the screen and the view goes along, the tube
+  with it), and sharp corners ease into bends a cat can go round. Then drag
+  either end to draw on from there (or back along it, to make it shorter),
+  pull it anywhere along it to bend it there, or drag the knob beside it to
+  move the whole of it; **Redraw** starts it again. A **pipe** is drawn the
+  same way but goes like a real one: straight runs (along, up and down, or
+  at 45°) with neat elbows and brass joints, its bends lined up on a grid;
+  drag an end to lay more, a straight run to slide it sideways (the runs
+  either side stretch to meet it), or its knob to move it. The **Twisty |
+  Pipe** switch turns one into the other (a twisty tube laid straight). A cat
+  that goes in at one end is carried round every bend and shot out of the
+  other, the way it points.
+- **Change anything you've built**: tap it. A piece, drag it somewhere else;
+  a tube or a pipe, reshape it as above; **Remove** takes it away (with a
+  moment to **Undo**), **Done** (or a tap on the sky) when you're happy. It
+  stays where it is, cats on it and all, until you actually change it. Press
+  and hold something to pick it straight up and carry it.
 - **Look about**: drag the sky, pinch (or a mouse wheel) to zoom in and out,
   and tap a cat's face in the top bar for the view to follow it wherever it
   goes (tap it again to stop).

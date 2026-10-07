@@ -9,10 +9,17 @@ import {
   SPAWN,
   TUBE,
   TUBE_LEN,
+  PIPE,
   bendTube,
   buildPiece,
+  drawPipe,
   evenTube,
   extendTube,
+  pipeJoints,
+  pipeOf,
+  pipePath,
+  slidePipeRun,
+  straighten,
   lowest,
   mouthOf,
   readPlay,
@@ -238,6 +245,160 @@ describe('drawing a tube', () => {
     expect(p[0][1]).toBeCloseTo(0, 0);
     expect(p[p.length - 1][0]).toBeCloseTo(600, -1);
     expect(p[p.length - 1][1]).toBeGreaterThan(-12);
+  });
+});
+
+describe('pipes: straight runs and neat elbows, like real ones', () => {
+  /** A finger drawing a pipe through these points, a little way at a time. */
+  const draw = (path: Pt[]): Pt[] => {
+    let b: Pt[] = drawPipe([], 'b', path[0][0], path[0][1]);
+    for (let i = 1; i < path.length; i++) {
+      const [ax, ay] = path[i - 1];
+      const [bx, by] = path[i];
+      const n = Math.ceil(Math.hypot(bx - ax, by - ay) / 6);
+      for (let k = 1; k <= n; k++) b = drawPipe(b, 'b', ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n);
+    }
+    return b;
+  };
+  const way = (a: Pt, b: Pt): number => (Math.round((Math.atan2(b[1] - a[1], b[0] - a[0]) * 4) / Math.PI) + 8) % 8;
+  const onGrid = (p: Pt): boolean => Math.abs(p[0] / PIPE.grid - Math.round(p[0] / PIPE.grid)) < 0.01 && Math.abs(p[1] / PIPE.grid - Math.round(p[1] / PIPE.grid)) < 0.01;
+
+  it('drawn along and round a corner: two straight runs, square, with an elbow on the grid', () => {
+    const b = draw([
+      [3, 2],
+      [240, 8],
+      [244, 250],
+    ]);
+    expect(b).toHaveLength(3);
+    expect(b[0]).toEqual([0, 0]);
+    expect(way(b[0], b[1])).toBe(0);
+    expect(way(b[1], b[2])).toBe(2);
+    expect(onGrid(b[1])).toBe(true);
+    expect(b[1][0]).toBeGreaterThan(200);
+    expect(b[1][0]).toBeLessThan(270);
+    expect(b[2][1]).toBeGreaterThan(200);
+    // its line: straight, then round the elbow (no tighter than a tube bends), then straight
+    const p = pipePath(b);
+    for (const q of p) {
+      const onFirst = Math.abs(q[1]) < 0.2;
+      const onSecond = Math.abs(q[0] - b[1][0]) < 0.2;
+      const round = Math.hypot(q[0] - (b[1][0] - PIPE.elbow), q[1] - PIPE.elbow);
+      expect(onFirst || onSecond || Math.abs(round - PIPE.elbow) < 0.6).toBe(true);
+    }
+    expect(pipeJoints(b)).toHaveLength(2);
+  });
+
+  it('turns 45° when the finger goes off at a slant, and never sharper than a right angle', () => {
+    const b = draw([
+      [0, 0],
+      [200, 0],
+      [400, 200],
+    ]);
+    expect(way(b[0], b[1])).toBe(0);
+    expect(way(b[1], b[2])).toBe(1);
+    for (const p of b.slice(0, -1)) expect(onGrid(p)).toBe(true);
+    // a finger doubling back: a right angle, not straight back
+    const c = draw([
+      [0, 0],
+      [200, 0],
+      [200, 60],
+      [0, 60],
+    ]);
+    for (let i = 2; i < c.length; i++) {
+      const t = (way(c[i - 1], c[i]) - way(c[i - 2], c[i - 1]) + 8) % 8;
+      expect([1, 2, 6, 7]).toContain(t);
+    }
+  });
+
+  it('wherever along the grid the finger turns, a slant turns 45° and a square turn a right angle', () => {
+    for (let at = 160; at < 200; at += 3) {
+      const slant = draw([
+        [0, 0],
+        [at, 0],
+        [at + 200, 200],
+      ]);
+      expect(slant.length).toBe(3);
+      expect(way(slant[1], slant[2])).toBe(1);
+      expect(onGrid(slant[1])).toBe(true);
+      const square = draw([
+        [0, 0],
+        [at, 0],
+        [at, 220],
+      ]);
+      expect(square.length).toBe(3);
+      expect(way(square[1], square[2])).toBe(2);
+      expect(Math.abs(square[1][0] - at)).toBeLessThanOrEqual(PIPE.grid / 2);
+    }
+  });
+
+  it('back over its last elbow, that run is taken in', () => {
+    const b = draw([
+      [0, 0],
+      [240, 0],
+      [240, 200],
+    ]);
+    expect(b).toHaveLength(3);
+    let c = b;
+    for (let y = 200; y >= -4; y -= 6) c = drawPipe(c, 'b', 240, y);
+    for (let x = 240; x >= 150; x -= 6) c = drawPipe(c, 'b', x, 0);
+    expect(c).toHaveLength(2);
+    expect(c[1][0]).toBeLessThan(180);
+    // and on from its other end too
+    const d = drawPipe(b, 'a', -100, 0);
+    expect(d[d.length - 1]).toEqual(b[b.length - 1]);
+    expect(d[0][0]).toBeLessThan(-80);
+  });
+
+  it('a straight run slid sideways: the runs either side stretch to meet it, the way they went', () => {
+    const b: Pt[] = [
+      [0, 0],
+      [200, 0],
+      [200, 200],
+      [400, 200],
+    ];
+    // the middle one, 40 along
+    const c = slidePipeRun(b, 1, 47, 3);
+    expect(c).toEqual([
+      [0, 0],
+      [240, 0],
+      [240, 200],
+      [400, 200],
+    ]);
+    // the first: its mouth goes with it
+    expect(slidePipeRun(b, 0, 0, -40)).toEqual([
+      [0, -40],
+      [200, -40],
+      [200, 200],
+      [400, 200],
+    ]);
+    // not so far that a run's too short for its elbows: as far as it'll go
+    const d = slidePipeRun(b, 1, 400, 0);
+    expect(d[1][0]).toBeLessThan(400 - PIPE.elbow);
+    expect(d[1][0]).toBeGreaterThan(300);
+  });
+
+  it('a drawn tube straightened: runs of the eight ways, bends on the grid, end to end where it was', () => {
+    const arc: Pt[] = [];
+    for (let k = 0; k <= 40; k++) arc.push([Math.sin((k / 40) * Math.PI) * 300, -k * 12]);
+    const b = straighten(evenTube(arc));
+    expect(b.length).toBeGreaterThan(2);
+    for (let i = 1; i < b.length; i++) {
+      const a = Math.atan2(b[i][1] - b[i - 1][1], b[i][0] - b[i - 1][0]) / (Math.PI / 4);
+      expect(Math.abs(a - Math.round(a))).toBeLessThan(0.01);
+    }
+    for (const p of b.slice(0, -1)) expect(onGrid(p)).toBe(true);
+    expect(Math.hypot(b[b.length - 1][0] - 0, b[b.length - 1][1] + 480)).toBeLessThan(60);
+  });
+
+  it('saved and read back: its line made again from its bends', () => {
+    const t = pipeOf(4, [
+      [0, 0],
+      [200, 0],
+      [200, -200],
+    ]);
+    const s = readPlay(JSON.stringify({ v: 1, pieces: [], tubes: [{ ...t, pts: [[0, 0], [1, 1]] }], nextId: 5, cats: [] }));
+    expect(s.tubes[0].bends).toEqual(t.bends);
+    expect(s.tubes[0].pts).toEqual(t.pts);
   });
 });
 

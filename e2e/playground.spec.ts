@@ -10,9 +10,9 @@ interface SkyHandle {
   renderer: { cam: { x: number; y: number; zoom: number }; worldToScreen(x: number, y: number): { x: number; y: number } };
   session: { cats: { breed: string; body: { cx: number; cy: number; computeCentroid(): void; placeAt(x: number, y: number): void } }[]; world: { statics: unknown[] } };
   playground: {
-    placing: { k: string; piece?: { x: number; y: number }; tube?: { pts: [number, number][] } } | null;
+    placing: { k: string; lifted: boolean; piece?: { x: number; y: number }; tube?: { pts: [number, number][]; bends?: [number, number][] } } | null;
     follow: { breed: string } | null;
-    save: { pieces: { kind: string; x: number; y: number }[]; tubes: { pts: [number, number][] }[] };
+    save: { pieces: { id: number; kind: string; x: number; y: number }[]; tubes: { id: number; pts: [number, number][]; bends?: [number, number][] }[] };
     tubes: { transits: { cat: { breed: string } }[] };
   };
 }
@@ -138,6 +138,84 @@ test('pick who comes up to the Playground, build a shelf and another joined on t
   await page.locator('[data-pg=home]').click();
   await page.waitForFunction(() => (window as unknown as { __app: SkyHandle }).__app.kind === 'home');
   await expect(page.locator('#roomName')).toHaveText('Home');
+});
+
+test('tap anything built to change it: a tube drawn on, a shelf taken away and put back; a pipe goes in straight runs, and a run slides', async ({ page }) => {
+  // a tube (saved straight, from before tubes bent) and a shelf, built before
+  await upToTheSky(page, ['kitten'], { v: 1, pieces: [{ id: 3, kind: 'shelf', x: -90, y: -230 }], tubes: [{ id: 1, ax: 10, ay: -150, bx: 90, by: -230 }], nextId: 4, cats: ['kitten'] });
+  await page.getByRole('button', { name: 'Up we go!' }).click();
+  await page.waitForFunction(() => (window as unknown as { __app: SkyHandle }).__app.kind === 'playground');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const p = (window as unknown as { __app: { playground: { cam: { x: number; y: number; zoom: number } } } }).__app.playground;
+    p.cam = { x: 0, y: -180, zoom: 1 };
+  });
+  await page.waitForTimeout(200);
+  const tap = async (x: number, y: number): Promise<void> => {
+    const q = await screen(page, x, y);
+    await page.mouse.click(q.x, q.y);
+  };
+  const bar = page.locator('.play-place');
+  // a tap on the tube: it's picked, to change (still where it was)
+  await tap(50, -190);
+  await expect(bar.getByRole('button', { name: 'Done' })).toBeVisible();
+  await expect(bar.getByRole('button', { name: 'Remove' })).toBeVisible();
+  await expect(bar.locator('[data-style=twisty]')).toHaveAttribute('aria-pressed', 'true');
+  expect(await sky(page, (a) => [a.playground.placing!.lifted, a.playground.save.tubes.length])).toEqual([false, 1]);
+  // drawn on from its end, and done
+  const before = await sky(page, (a) => a.playground.placing!.tube!.pts);
+  await drawPath(page, [
+    { x: 90, y: -230 },
+    { x: 80, y: -280 },
+    { x: 40, y: -320 },
+  ]);
+  await bar.getByRole('button', { name: 'Done' }).click();
+  const after = await sky(page, (a) => a.playground.save.tubes);
+  expect(after).toHaveLength(1);
+  expect(lengthOf(after[0].pts)).toBeGreaterThan(lengthOf(before) + 60);
+  // a tap on the shelf, Remove: it's gone; Undo, it's back
+  await tap(-90, -226);
+  await bar.getByRole('button', { name: 'Remove' }).click();
+  expect(await sky(page, (a) => a.playground.save.pieces.length)).toBe(0);
+  await page.locator('.pg-undo').getByRole('button', { name: 'Undo' }).click();
+  expect(await sky(page, (a) => a.playground.save.pieces.map((q) => [q.id, q.x, q.y]))).toEqual([[3, -90, -230]]);
+  // a pipe, somewhere clear: drawn along and up, it goes in two straight runs with an elbow
+  await page.evaluate(() => {
+    const p = (window as unknown as { __app: { playground: { cam: { x: number; y: number; zoom: number } } } }).__app.playground;
+    p.cam = { x: 0, y: -700, zoom: 1 };
+  });
+  await page.waitForTimeout(200);
+  await page.locator('[data-pg=build]').click();
+  await page.locator('[data-piece=pipe]').click();
+  await expect(bar.locator('.place-hint')).toHaveText('Draw your pipe: drag a finger through the sky, and it goes straight');
+  await drawPath(page, [
+    { x: -100, y: -640 },
+    { x: 43, y: -637 },
+    { x: 46, y: -770 },
+  ]);
+  const bends = (await sky(page, (a) => a.playground.placing!.tube!.bends))!;
+  expect(bends).toHaveLength(3);
+  expect(bends[0][1]).toBe(bends[1][1]);
+  expect(bends[1][0]).toBe(bends[2][0]);
+  expect(bends[2][1]).toBeLessThan(bends[1][1] - 60);
+  await bar.getByRole('button', { name: 'Put it here' }).click();
+  // tapped and its upright run slid along: the run before it stretches to meet it
+  const x0 = bends[1][0];
+  await tap(x0, -730);
+  await expect(bar.locator('[data-style=pipe]')).toHaveAttribute('aria-pressed', 'true');
+  await drawPath(page, [
+    { x: x0, y: -735 },
+    { x: x0 + 42, y: -735 },
+  ]);
+  await bar.getByRole('button', { name: 'Done' }).click();
+  const pipe = (await sky(page, (a) => a.playground.save.tubes.find((t) => t.bends)))!;
+  expect(pipe.bends![1][0]).toBe(x0 + 40);
+  expect(pipe.bends![2][0]).toBe(x0 + 40);
+  expect(pipe.bends![0]).toEqual(bends[0]);
+  // next time, still a pipe
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cozy-playground:v1')!).tubes.filter((t: { bends?: unknown }) => t.bends).length)).toBe(1);
 });
 
 test('a cat carried to a tube and let go goes in, whoosh, and out of the other end', async ({ page }) => {

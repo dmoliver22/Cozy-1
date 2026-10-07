@@ -1054,6 +1054,15 @@ export function paintSkyBell(ctx: Ctx, layer: 'back' | 'front'): void {
   else bellFront(ctx, 0, 0);
 }
 
+/** A brass joint round a pipe at (x, y), its run going (ux, uy) there (the Playground's pipes: where a straight run meets an elbow). */
+export function paintPipeJoint(ctx: Ctx, x: number, y: number, ux: number, uy: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.atan2(-ux, uy));
+  collar(ctx, 0, 0, HALF + 3);
+  ctx.restore();
+}
+
 /**
  * A run of glass pipe along any line, however long and bendy (the
  * Playground's tubes): its far half and its shadow (back), or its near walls

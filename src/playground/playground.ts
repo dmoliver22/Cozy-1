@@ -23,7 +23,7 @@ import type { Renderer, Stage } from '../render/renderer';
 import { faceSVG } from '../ui/faces';
 import { clamp } from '../util/math';
 import { NAMES } from '../house/house';
-import { paintPipeRun, paintSkyBell } from '../house/houseArt';
+import { paintPipeJoint, paintPipeRun, paintSkyBell } from '../house/houseArt';
 import { inRingOf } from '../house/leap';
 import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack, paintPerchFront, perchThumb } from '../house/perchArt';
 import { PERCHES, PERCH_ORDER, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
@@ -39,11 +39,18 @@ import {
   bendTube,
   buildPiece,
   distToTube,
+  drawPipe,
   extendTube,
   lowest,
   mouthOf,
+  movePipe,
   moveTube,
   nearestOnTube,
+  nearestRun,
+  pipeJoints,
+  pipeOf,
+  slidePipeRun,
+  straighten,
   pieceBox,
   readPlay,
   skyTube,
@@ -84,23 +91,41 @@ const SLOP = 9;
 /** How near the screen's edge a carried cat (or a piece being placed) takes the view along (px). */
 const EDGE = 70;
 
-/** Something being put somewhere: a piece (new, or picked up: `prev`), or a tube. */
-type Placing = { k: 'piece'; piece: PlayPiece; prev: PlayPiece | null } | { k: 'tube'; tube: PlayTube; prev: PlayTube | null };
+/**
+ * Something being put somewhere, or changed: a piece, or a tube (new; or one
+ * that's built, `prev` as it was). One that's built stays where it is, in the
+ * sky with cats on it, till it's changed: then it's `lifted` out to be put
+ * back changed (something new is out of the sky from the start).
+ */
+type Placing = ({ k: 'piece'; piece: PlayPiece; prev: PlayPiece | null } | { k: 'tube'; tube: PlayTube; prev: PlayTube | null }) & { lifted: boolean };
 
 type Pt = [number, number];
 
+/** Something built: a piece or a tube. */
+type Built = PlayPiece | PlayTube;
+
+/** A tube as it's painted: its pipe between the bells, how far along each point is, its mouths, its joints. */
+type Geom = { run: Pt[]; along: number[]; ends: ReturnType<typeof tubeEnds>; joints: { x: number; y: number; ux: number; uy: number }[] };
+
 type Drag =
   | { k: 'pan'; id: number; sx: number; sy: number; cx: number; cy: number; moved: boolean; lastX: number; lastY: number; lastT: number; vx: number; vy: number }
-  | { k: 'hold'; id: number; sx: number; sy: number; timer: number }
+  /** A finger down on something built: a tap picks it to change, held still it comes up on the finger. */
+  | { k: 'hold'; id: number; sx: number; sy: number; timer: number; hit: Built }
   /** Dragging a piece that's being placed. */
   | { k: 'ghost'; id: number; dx: number; dy: number; sx: number; sy: number }
   /**
    * Working on a tube that's being placed: drawing it on from an end (the
-   * finger `dx, dy` off the end), moving the whole of it by its grip, or
-   * bending it, pulled by the point `at` along it (as it was, `from`, when
-   * the finger came down at x0, y0).
+   * finger `dx, dy` off the end), moving the whole of it by its knob, bending
+   * it, pulled by the point `at` along it, or (a pipe) sliding its straight
+   * run `run` sideways (each as it was, `from`, when the finger came down at
+   * x0, y0).
    */
-  | ({ k: 'tube'; id: number; sx: number; sy: number } & ({ how: 'end'; end: 'a' | 'b'; dx: number; dy: number } | { how: 'move'; lx: number; ly: number } | { how: 'bend'; at: number; from: Pt[]; x0: number; y0: number }));
+  | ({ k: 'tube'; id: number; sx: number; sy: number } & (
+      | { how: 'end'; end: 'a' | 'b'; dx: number; dy: number }
+      | { how: 'move'; from: PlayTube; x0: number; y0: number }
+      | { how: 'bend'; at: number; from: Pt[]; x0: number; y0: number }
+      | { how: 'slide'; run: number; from: Pt[]; x0: number; y0: number }
+    ));
 
 /** What each piece is, up here (there are no walls or floors in the sky). */
 const SKY_BLURBS: Record<PerchKind, string> = {
@@ -143,9 +168,12 @@ export class Playground {
   /** Painted pieces, kept (a piece's kind and look, how sharp: pixels per unit). */
   private sprites = new Map<string, { c: HTMLCanvasElement; ppu: number; x0: number; y0: number; w: number; h: number }>();
   /** Each tube's pipe and mouths, worked out once. */
-  private geoms = new WeakMap<PlayTube, { run: Pt[]; along: number[]; ends: ReturnType<typeof tubeEnds> }>();
+  private geoms = new WeakMap<PlayTube, Geom>();
   private readonly bar: HTMLElement;
   private readonly placeBar: HTMLElement;
+  /** What was taken away last, for a moment (Undo puts it back). */
+  private readonly undoBar: HTMLElement;
+  private undo: { item: Built; timer: number } | null = null;
   private lastHud = '';
 
   constructor(private readonly host: PlayHost) {
@@ -170,15 +198,27 @@ export class Playground {
     // the bar shown while putting something somewhere
     this.placeBar = document.createElement('div');
     this.placeBar.className = 'play-place hidden';
-    this.placeBar.innerHTML = `<p class="place-hint"></p><div class="place-btns"><button class="btn" data-place="redraw" hidden>Redraw</button><button class="btn" data-place="away">Remove</button><button class="btn primary" data-place="ok">Put it here</button></div>`;
+    this.placeBar.innerHTML = `<div class="pg-style" role="group" aria-label="What kind of tube" hidden><button data-style="twisty" aria-pressed="true">Twisty</button><button data-style="pipe" aria-pressed="false">Pipe</button></div><p class="place-hint"></p><div class="place-btns"><button class="btn" data-place="redraw" hidden>Redraw</button><button class="btn" data-place="away">Remove</button><button class="btn primary" data-place="ok">Put it here</button></div>`;
     this.placeBar.querySelector('[data-place=away]')!.addEventListener('click', () => this.endPlacing(false));
     this.placeBar.querySelector('[data-place=redraw]')!.addEventListener('click', () => this.redraw());
     this.placeBar.querySelector('[data-place=ok]')!.addEventListener('click', () => this.endPlacing(true));
+    this.placeBar.querySelectorAll<HTMLElement>('[data-style]').forEach((el) => el.addEventListener('click', () => this.setStyle(el.dataset.style === 'pipe')));
     document.getElementById('app')!.appendChild(this.placeBar);
+    // a moment after something's taken away: Undo
+    this.undoBar = document.createElement('div');
+    this.undoBar.className = 'pg-undo hidden';
+    this.undoBar.innerHTML = `<span>Taken away</span><button class="btn" data-undo>Undo</button>`;
+    this.undoBar.querySelector('[data-undo]')!.addEventListener('click', () => this.undoRemove());
+    document.getElementById('app')!.appendChild(this.undoBar);
   }
 
   get isActive(): boolean {
     return this.active;
+  }
+
+  /** Something's being drawn or moved (a finger on a cat then is for it, not the cat); something only picked to change, the cats can still be picked up. */
+  get busy(): boolean {
+    return !!this.placing?.lifted;
   }
 
   // ---------------------------------------------------------------------------
@@ -242,6 +282,7 @@ export class Playground {
     this.fingers.clear();
     this.bar.classList.add('hidden');
     this.placeBar.classList.add('hidden');
+    this.forgetUndo();
     this.host.renderer.stage = null;
   }
 
@@ -269,7 +310,7 @@ export class Playground {
         <h2>The Playground</h2>
         <p class="sub">Up in the clouds, as much sky as you like: build them the best playground ever. Who's coming?</p>
         <div class="pg-picks">${chips}</div>
-        <p class="hc-games">Build with perches and tubes (they're free up there): put shelves end to end and they join into longer platforms, and draw tubes with your finger, as long and twisty as you like. Pinch to zoom, drag the sky to look about, and tap a cat's face up top to follow it.</p>
+        <p class="hc-games">Build with perches and tubes (they're free up there): put shelves end to end and they join into longer platforms, and draw tubes with your finger, as long and twisty as you like (or pipes, all straight runs and neat elbows). Tap anything you've built to change it. Pinch to zoom, drag the sky to look about, and tap a cat's face up top to follow it.</p>
         <div class="btns"><button class="btn primary" data-go>Up we go!</button><button class="btn" data-close>Not now</button></div>
       </div>`,
       (root) => {
@@ -390,16 +431,18 @@ export class Playground {
       }
     }
     for (const e of g.ends) if (inView(e.x, e.y)) this.stampBell(ctx, e.x, e.y, e.fx, e.fy, layer);
+    // a pipe's brass joints, where its straight runs meet its elbows
+    if (layer === 'front') for (const j of g.joints) if (inView(j.x, j.y)) paintPipeJoint(ctx, j.x, j.y, j.ux, j.uy);
   }
 
-  /** A tube's pipe between its bells, how far along it each of its points is, and its mouths (kept while it's as it is). */
-  private tubeGeom(t: PlayTube): { run: Pt[]; along: number[]; ends: ReturnType<typeof tubeEnds> } {
+  /** A tube's pipe between its bells, how far along it each of its points is, its mouths, and (a pipe) its joints (kept while it's as it is). */
+  private tubeGeom(t: PlayTube): Geom {
     let g = this.geoms.get(t);
     if (!g) {
       const run = tubeRun(t);
       const along = [0];
       for (let i = 1; i < run.length; i++) along.push(along[i - 1] + Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]));
-      g = { run, along, ends: tubeEnds(t) };
+      g = { run, along, ends: tubeEnds(t), joints: t.bends ? pipeJoints(t.bends) : [] };
       this.geoms.set(t, g);
     }
     return g;
@@ -507,10 +550,13 @@ export class Playground {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.globalAlpha = ok ? 1 : 0.7;
+    // (one that's built and not moved yet is where it always was, cats on it and all)
     const p = pl.piece;
-    if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + PERCHES[p.kind].height, (b.x1 - b.x0) * 1.2);
-    paintPerchBack(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
-    if (hasFront(p.kind)) paintPerchFront(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+    if (pl.lifted) {
+      if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + PERCHES[p.kind].height, (b.x1 - b.x0) * 1.2);
+      paintPerchBack(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+      if (hasFront(p.kind)) paintPerchFront(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+    }
     ctx.restore();
   }
 
@@ -525,6 +571,7 @@ export class Playground {
     const pl = this.placing;
     const ok = pl !== null && this.problem(pl) === null;
     const k = 1 / Math.max(0.6, this.cam.zoom);
+    const ink = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -536,33 +583,68 @@ export class Playground {
     if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.1, pts[0][1]);
     ctx.stroke();
     if (pts.length >= 2) {
-      const r = this.host.renderer.onScreen();
-      this.paintTube(ctx, t, 'back', r);
-      this.paintTube(ctx, t, 'front', r);
+      // (one that's built and not changed yet is still up in the sky, painted there)
+      if (pl?.lifted) {
+        const r = this.host.renderer.onScreen();
+        this.paintTube(ctx, t, 'back', r);
+        this.paintTube(ctx, t, 'front', r);
+      }
       const handle = (x: number, y: number, rad: number): void => {
         ctx.fillStyle = 'rgba(255,253,248,0.92)';
-        ctx.strokeStyle = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
+        ctx.strokeStyle = ink;
         ctx.lineWidth = 2.4 * k;
         ctx.beginPath();
         ctx.arc(x, y, rad * k, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       };
-      for (const e of tubeEnds(t)) handle(e.x, e.y, 11);
-      // the grip: four little arrows (move it)
-      const m = tubeMiddle(t);
-      handle(m.x, m.y, 13);
-      ctx.fillStyle = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
-      for (let q = 0; q < 4; q++) {
-        const a = (q * Math.PI) / 2;
-        const cx = Math.cos(a);
-        const cy = Math.sin(a);
+      /** A little arrowhead at (x, y), pointing (ux, uy). */
+      const arrow = (x: number, y: number, ux: number, uy: number): void => {
         ctx.beginPath();
-        ctx.moveTo(m.x + cx * 9 * k, m.y + cy * 9 * k);
-        ctx.lineTo(m.x + (cx * 4.5 - cy * 3.6) * k, m.y + (cy * 4.5 + cx * 3.6) * k);
-        ctx.lineTo(m.x + (cx * 4.5 + cy * 3.6) * k, m.y + (cy * 4.5 - cx * 3.6) * k);
+        ctx.moveTo(x + ux * 4.5 * k, y + uy * 4.5 * k);
+        ctx.lineTo(x - ux * 1 * k - uy * 3.6 * k, y - uy * 1 * k + ux * 3.6 * k);
+        ctx.lineTo(x - ux * 1 * k + uy * 3.6 * k, y - uy * 1 * k - ux * 3.6 * k);
         ctx.closePath();
         ctx.fill();
+      };
+      for (const e of tubeEnds(t)) handle(e.x, e.y, 11);
+      // the knob, on its stem: four little arrows (move it all)
+      const m = tubeMiddle(t);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2.4 * k;
+      ctx.setLineDash([4 * k, 3 * k]);
+      ctx.beginPath();
+      ctx.moveTo(m.at.x, m.at.y);
+      ctx.lineTo(m.x, m.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      handle(m.x, m.y, 13);
+      ctx.fillStyle = ink;
+      for (let q = 0; q < 4; q++) {
+        const a = (q * Math.PI) / 2;
+        arrow(m.x + Math.cos(a) * 4.5 * k, m.y + Math.sin(a) * 4.5 * k, Math.cos(a), Math.sin(a));
+      }
+      // a pipe's straight runs: a grip on each, two arrows square to it (slide it sideways)
+      const b = t.bends;
+      if (b) {
+        for (let i = 1; i < b.length; i++) {
+          const len = Math.hypot(b[i][0] - b[i - 1][0], b[i][1] - b[i - 1][1]);
+          const gx = (b[i][0] + b[i - 1][0]) / 2;
+          const gy = (b[i][1] + b[i - 1][1]) / 2;
+          if (len < 90) continue;
+          const nx = -(b[i][1] - b[i - 1][1]) / len;
+          const ny = (b[i][0] - b[i - 1][0]) / len;
+          ctx.fillStyle = 'rgba(255,253,248,0.92)';
+          ctx.strokeStyle = ink;
+          ctx.lineWidth = 2 * k;
+          ctx.beginPath();
+          ctx.ellipse(gx, gy, 7 * k, 13 * k, Math.atan2(ny, nx) - Math.PI / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = ink;
+          arrow(gx + nx * 6 * k, gy + ny * 6 * k, nx, ny);
+          arrow(gx - nx * 6 * k, gy - ny * 6 * k, -nx, -ny);
+        }
       }
     }
     ctx.restore();
@@ -735,55 +817,72 @@ export class Playground {
     }
     if (this.fingers.size > 2) return true;
     const pl = this.placing;
-    if (pl) {
-      // a finger on what's being placed drags it
-      const zoomSlop = 26 / (this.host.renderer.scale * this.cam.zoom);
-      if (pl.k === 'tube') {
-        const t = pl.tube;
-        if (t.pts.length < 2) {
-          // nothing drawn yet: the finger draws it, from here
-          pl.tube = { ...t, pts: [[Math.round(wx), Math.round(wy)]] };
-          this.drag = { k: 'tube', id, sx, sy, how: 'end', end: 'b', dx: 0, dy: 0 };
-          this.refreshPlaceBar();
-          return true;
-        }
-        // by an end: drawn on from there; by its grip: moved; anywhere along it: bent
-        const [a, b] = tubeEnds(t);
-        const da = Math.hypot(wx - a.x, wy - a.y);
-        const db = Math.hypot(wx - b.x, wy - b.y);
-        const m = tubeMiddle(t);
-        if (Math.min(da, db) < zoomSlop + 8) {
-          const e = da <= db ? a : b;
-          this.drag = { k: 'tube', id, sx, sy, how: 'end', end: da <= db ? 'a' : 'b', dx: e.x - wx, dy: e.y - wy };
-          return true;
-        }
-        if (Math.hypot(wx - m.x, wy - m.y) < zoomSlop + 6) {
-          this.drag = { k: 'tube', id, sx, sy, how: 'move', lx: wx, ly: wy };
-          return true;
-        }
-        const near = nearestOnTube(t, wx, wy);
-        if (near.d < zoomSlop + TUBE.bell) {
-          this.drag = { k: 'tube', id, sx, sy, how: 'bend', at: near.s, from: t.pts, x0: wx, y0: wy };
-          return true;
-        }
-      } else {
-        const b = this.placeBox(pl);
-        if (wx > b.x0 - zoomSlop && wx < b.x1 + zoomSlop && wy > b.y0 - zoomSlop && wy < b.y1 + zoomSlop) {
-          this.drag = { k: 'ghost', id, dx: pl.piece.x - wx, dy: pl.piece.y - wy, sx, sy };
-          return true;
-        }
-      }
-    } else {
-      // held still a moment on a piece or a tube, it comes up
-      const hit = this.pieceAt(wx, wy) ?? this.tubeAt(wx, wy);
-      if (hit) {
-        const timer = window.setTimeout(() => this.pickUp(hit), HOLD_MS);
-        this.drag = { k: 'hold', id, sx, sy, timer };
-        return true;
-      }
+    if (pl && this.grab(pl, id, sx, sy, wx, wy)) return true;
+    // on something built (not what's being changed): a tap picks it to change (whatever's being changed done with), held still it comes up on the finger
+    const hit = this.builtAt(wx, wy);
+    if (hit && !(pl && hit.id === (pl.k === 'piece' ? pl.piece.id : pl.tube.id))) {
+      const timer = window.setTimeout(() => this.pickUp(hit), HOLD_MS);
+      this.drag = { k: 'hold', id, sx, sy, timer, hit };
+      return true;
     }
     this.startPan(id, sx, sy);
     return true;
+  }
+
+  /**
+   * A finger down on what's being placed: a piece is dragged; a tube not
+   * drawn yet is drawn from there; a tube by an end is drawn on from there,
+   * by its knob moved, anywhere along it bent (a pipe: its straight run
+   * there slid sideways). False if it's not on it.
+   */
+  private grab(pl: Placing, id: number, sx: number, sy: number, wx: number, wy: number): boolean {
+    const zoomSlop = 26 / (this.host.renderer.scale * this.cam.zoom);
+    if (pl.k === 'piece') {
+      const b = this.placeBox(pl);
+      if (wx > b.x0 - zoomSlop && wx < b.x1 + zoomSlop && wy > b.y0 - zoomSlop && wy < b.y1 + zoomSlop) {
+        this.drag = { k: 'ghost', id, dx: pl.piece.x - wx, dy: pl.piece.y - wy, sx, sy };
+        return true;
+      }
+      return false;
+    }
+    const t = pl.tube;
+    if (t.pts.length < 2) {
+      // nothing drawn yet: the finger draws it, from here
+      if (t.bends) {
+        const bends = drawPipe([], 'b', wx, wy);
+        pl.tube = { ...t, bends, pts: bends.map(([x, y]): Pt => [x, y]) };
+      } else pl.tube = { ...t, pts: [[Math.round(wx), Math.round(wy)]] };
+      this.drag = { k: 'tube', id, sx, sy, how: 'end', end: 'b', dx: 0, dy: 0 };
+      this.refreshPlaceBar();
+      return true;
+    }
+    const [a, b] = tubeEnds(t);
+    const da = Math.hypot(wx - a.x, wy - a.y);
+    const db = Math.hypot(wx - b.x, wy - b.y);
+    const m = tubeMiddle(t);
+    if (Math.min(da, db) < zoomSlop + 8) {
+      const e = da <= db ? a : b;
+      this.drag = { k: 'tube', id, sx, sy, how: 'end', end: da <= db ? 'a' : 'b', dx: e.x - wx, dy: e.y - wy };
+      return true;
+    }
+    if (Math.hypot(wx - m.x, wy - m.y) < zoomSlop + 6) {
+      this.drag = { k: 'tube', id, sx, sy, how: 'move', from: t, x0: wx, y0: wy };
+      return true;
+    }
+    if (t.bends) {
+      const run = nearestRun(t.bends, wx, wy);
+      if (run.d < zoomSlop + TUBE.bell) {
+        this.drag = { k: 'tube', id, sx, sy, how: 'slide', run: run.i, from: t.bends, x0: wx, y0: wy };
+        return true;
+      }
+      return false;
+    }
+    const near = nearestOnTube(t, wx, wy);
+    if (near.d < zoomSlop + TUBE.bell) {
+      this.drag = { k: 'tube', id, sx, sy, how: 'bend', at: near.s, from: t.pts, x0: wx, y0: wy };
+      return true;
+    }
+    return false;
   }
 
   private startPan(id: number, sx: number, sy: number): void {
@@ -842,7 +941,8 @@ export class Playground {
     this.dragGhostTo(wx, wy);
   }
 
-  pointerUp(id: number): boolean {
+  /** A finger up (`tap`: lifted, not cancelled). */
+  pointerUp(id: number, tap = true): boolean {
     this.fingers.delete(id);
     if (this.pinch) {
       if (this.fingers.size < 2) this.pinch = null;
@@ -854,9 +954,16 @@ export class Playground {
     const d = this.drag;
     if (!d || d.id !== id) return false;
     this.drag = null;
-    if (d.k === 'hold') clearTimeout(d.timer);
+    if (d.k === 'hold') {
+      clearTimeout(d.timer);
+      // a tap on something built: it's picked, to change
+      if (tap) this.select(d.hit);
+    }
     if (d.k === 'tube') this.refreshPlaceBar();
     if (d.k === 'pan' && d.moved && performance.now() - d.lastT < 80) this.camV = { x: clamp(d.vx, -3000, 3000), y: clamp(d.vy, -3000, 3000) };
+    // a tap on the sky, something built being changed: done with it (if it can go there; something new waits for Put it here)
+    const pl = this.placing;
+    if (d.k === 'pan' && !d.moved && tap && pl?.prev && this.problem(pl) === null) this.endPlacing(true);
     return true;
   }
 
@@ -866,30 +973,53 @@ export class Playground {
     this.drag = null;
   }
 
-  /** What's being placed follows the finger: a piece, or the tube (drawn on, moved or bent). */
+  /** What's being placed follows the finger: a piece, or the tube (drawn on, moved, bent or, a pipe, a run slid). */
   private dragGhostTo(wx: number, wy: number): void {
     const d = this.drag;
     const pl = this.placing;
     if (!pl || !d) return;
     if (d.k === 'ghost' && pl.k === 'piece') {
       const p = snapPiece(pl.piece.kind, wx + d.dx, wy + d.dy, this.save.pieces.filter((q) => q.id !== pl.piece.id));
+      if (p.x === pl.piece.x && p.y === pl.piece.y) return;
+      this.lift(pl);
       pl.piece = { ...pl.piece, x: p.x, y: p.y };
     } else if (d.k === 'tube' && pl.k === 'tube') {
       const t = pl.tube;
+      let next: PlayTube;
       if (d.how === 'end') {
         const x = wx + d.dx;
         const y = wy + d.dy;
-        const tip = d.end === 'a' ? t.pts[0] : t.pts[t.pts.length - 1];
-        // (a little way at a time)
-        if (Math.hypot(x - tip[0], y - tip[1]) < 1.5) return;
-        pl.tube = { ...t, pts: extendTube(t.pts, d.end, x, y) };
+        if (t.bends) next = pipeOf(t.id, drawPipe(t.bends, d.end, x, y));
+        else {
+          const tip = d.end === 'a' ? t.pts[0] : t.pts[t.pts.length - 1];
+          // (a little way at a time)
+          if (Math.hypot(x - tip[0], y - tip[1]) < 1.5) return;
+          next = { ...t, pts: extendTube(t.pts, d.end, x, y) };
+        }
       } else if (d.how === 'move') {
-        pl.tube = { ...t, pts: moveTube(t.pts, wx - d.lx, wy - d.ly) };
-        d.lx = wx;
-        d.ly = wy;
-      } else pl.tube = { ...t, pts: bendTube(d.from, d.at, wx - d.x0, wy - d.y0) };
+        const f = d.from;
+        next = f.bends ? pipeOf(t.id, movePipe(f.bends, wx - d.x0, wy - d.y0)) : { ...t, pts: moveTube(f.pts, wx - d.x0, wy - d.y0) };
+      } else if (d.how === 'slide') next = pipeOf(t.id, slidePipeRun(d.from, d.run, wx - d.x0, wy - d.y0));
+      else next = { ...t, pts: bendTube(d.from, d.at, wx - d.x0, wy - d.y0) };
+      if (samePoints(next.pts, t.pts) && samePoints(next.bends ?? [], t.bends ?? [])) return;
+      this.lift(pl);
+      pl.tube = next;
     } else return;
     this.refreshPlaceBar();
+  }
+
+  /** Something built that's being changed: out of the sky it comes (cats on it drop), to go back as it's left. */
+  private lift(pl: Placing): void {
+    if (pl.lifted) return;
+    pl.lifted = true;
+    if (pl.k === 'piece') this.removePiece(pl.piece.id);
+    else this.removeTube(pl.tube.id);
+    this.host.session.world.wakeAll();
+  }
+
+  /** What's built under a finger, if anything: a piece, or a tube. */
+  private builtAt(wx: number, wy: number): Built | null {
+    return this.pieceAt(wx, wy) ?? this.tubeAt(wx, wy);
   }
 
   /** The piece under a finger, if any. */
@@ -924,20 +1054,21 @@ export class Playground {
         <h2>Build</h2>
         <p class="sub">As many as you like, free. Shelves, ledges and clouds put end to end join into one long platform.</p>
         <div class="shop-rows">
-          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M10 38 L54 8" stroke="#BFD9E4" stroke-width="13" stroke-linecap="round"/><path d="M10 38 L54 8" stroke="#E8F4F8" stroke-width="6" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Tube</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
+          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#BFD9E4" stroke-width="12" stroke-linecap="round"/><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#E8F4F8" stroke-width="5" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Twisty tube</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
+          <button class="pg-piece" data-piece="pipe"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#BFD9E4" stroke-width="12"/><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#E8F4F8" stroke-width="5"/><path d="M30 29 V 43 M46 20 H 39 M46 20 H 53" stroke="#CDA86C" stroke-width="3.5"/></svg></span><span class="shop-what"><b>Pipe</b><small>Like a real one: straight runs and neat elbows, all lined up. Draw it, and it goes straight</small></span></button>
           ${rows}
         </div>
-        <p class="shop-tip">Press and hold anything you've built to move it, or to take it away.</p>
+        <p class="shop-tip">Tap anything you've built to change it: move it, reshape it, or take it away.</p>
         <div class="btns"><button class="btn" data-close>Close</button></div>
       </div>`,
       (root) => {
         root.querySelectorAll<HTMLElement>('[data-piece]').forEach((el) => {
           const k = el.dataset.piece!;
-          if (k !== 'tube') el.querySelector('.shop-pic')!.appendChild(perchThumb(k as PerchKind, 64, 46));
+          if (k !== 'tube' && k !== 'pipe') el.querySelector('.shop-pic')!.appendChild(perchThumb(k as PerchKind, 64, 46));
           el.addEventListener('click', () => {
             this.host.closeOverlay();
             this.host.audio.seat(70);
-            if (k === 'tube') this.startTube();
+            if (k === 'tube' || k === 'pipe') this.startTube(k === 'pipe');
             else this.startPiece(k as PerchKind);
           });
         });
@@ -950,15 +1081,15 @@ export class Playground {
     const id = this.save.nextId++;
     const at = this.freeSpot((x, y) => {
       const p = snapPiece(kind, x, y, this.save.pieces);
-      return { k: 'piece', piece: { id, kind, x: p.x, y: p.y }, prev: null };
+      return { k: 'piece', piece: { id, kind, x: p.x, y: p.y }, prev: null, lifted: true };
     });
     this.beginPlacing(at);
   }
 
-  /** A new tube: nothing yet, till a finger draws it. */
-  private startTube(): void {
+  /** A new tube (or pipe): nothing yet, till a finger draws it. */
+  private startTube(pipe: boolean): void {
     const id = this.save.nextId++;
-    this.beginPlacing({ k: 'tube', tube: { id, pts: [] }, prev: null });
+    this.beginPlacing({ k: 'tube', tube: pipe ? { id, pts: [], bends: [] } : { id, pts: [] }, prev: null, lifted: true });
   }
 
   /** Something new to put somewhere, in the middle of the view if it can go there, or the nearest place it can (rings out from there). */
@@ -975,22 +1106,35 @@ export class Playground {
     return at(mid.x, mid.y);
   }
 
-  /** Long-pressed: up it comes (out of the sky till it's put down). */
-  private pickUp(hit: PlayPiece | PlayTube): void {
+  /** Long-pressed: up it comes on the finger (out of the sky till it's put down). Whatever was being changed is done with first. */
+  private pickUp(hit: Built): void {
     const d = this.drag;
     if (d?.k === 'hold') this.drag = null;
-    if (this.placing) return;
+    if (!this.letGo()) return;
     this.host.audio.grab(1.2, false);
-    if ('kind' in hit) {
-      this.removePiece(hit.id);
-      this.beginPlacing({ k: 'piece', piece: { ...hit }, prev: hit }, d);
-    } else {
-      this.removeTube(hit.id);
-      this.beginPlacing({ k: 'tube', tube: { ...hit }, prev: hit }, d);
-    }
+    const pl: Placing = 'kind' in hit ? { k: 'piece', piece: { ...hit }, prev: hit, lifted: false } : { k: 'tube', tube: { ...hit }, prev: hit, lifted: false };
+    this.lift(pl);
+    this.beginPlacing(pl, d);
+  }
+
+  /** Tapped: picked, to change (it stays where it is till it's changed). Whatever was being changed is done with first. */
+  private select(hit: Built): void {
+    if (!this.letGo()) return;
+    this.host.audio.click();
+    this.beginPlacing('kind' in hit ? { k: 'piece', piece: { ...hit }, prev: hit, lifted: false } : { k: 'tube', tube: { ...hit }, prev: hit, lifted: false });
+  }
+
+  /** Done with what's being changed, to pick something else: put there if it can go there, else back as it was (something new: not built). */
+  private letGo(): boolean {
+    const pl = this.placing;
+    if (!pl) return true;
+    if (this.problem(pl) === null) this.endPlacing(true);
+    else this.endPlacing(false, true);
+    return this.placing === null;
   }
 
   private beginPlacing(pl: Placing, d: Drag | null = null): void {
+    this.forgetUndo();
     this.placing = pl;
     this.follow = null;
     this.bar.classList.add('hidden');
@@ -1000,7 +1144,7 @@ export class Playground {
     if (d?.k === 'hold') {
       const w = this.host.renderer.screenToWorld(d.sx, d.sy);
       if (pl.k === 'piece') this.drag = { k: 'ghost', id: d.id, dx: pl.piece.x - w.x, dy: pl.piece.y - w.y, sx: d.sx, sy: d.sy };
-      else this.drag = { k: 'tube', id: d.id, sx: d.sx, sy: d.sy, how: 'move', lx: w.x, ly: w.y };
+      else this.drag = { k: 'tube', id: d.id, sx: d.sx, sy: d.sy, how: 'move', from: pl.tube, x0: w.x, y0: w.y };
     }
   }
 
@@ -1016,6 +1160,8 @@ export class Playground {
       if (len < TUBE_LEN.min) return 'short';
       if (len > TUBE_LEN.max + 1) return 'long';
     }
+    // (one that's built and not changed is where it was: cats on it are fine)
+    if (!pl.lifted) return null;
     const b = this.placeBox(pl);
     for (const c of this.host.session.cats) {
       if (this.tubes.riding(c)) continue;
@@ -1036,21 +1182,38 @@ export class Playground {
     if (!pl) return;
     const pr = this.problem(pl);
     const what = pl.k === 'piece' ? PERCHES[pl.piece.kind].name.toLowerCase() : 'tube';
+    const pipe = pl.k === 'tube' && !!pl.tube.bends;
     const why = {
       cat: 'A cat’s in the way',
-      empty: 'Draw your tube: drag a finger through the sky',
+      empty: pipe ? 'Draw your pipe: drag a finger through the sky, and it goes straight' : 'Draw your tube: drag a finger through the sky',
       short: 'Keep going: draw it a little longer',
       long: 'That’s as long as a tube can be',
     };
-    const hint = pl.k === 'tube' ? 'Drag an end to draw on (or back, shorter), the tube to bend it, its knob to move it' : `Drag the ${what} where you’d like it`;
+    const hint =
+      pl.k === 'piece'
+        ? `Drag the ${what} where you’d like it`
+        : pipe
+          ? 'Drag an end to lay more pipe (or back, less), a straight bit to slide it, its knob to move it'
+          : 'Drag an end to draw on (or back, shorter), the tube to bend it, its knob to move it';
     (this.placeBar.querySelector('.place-hint') as HTMLElement).textContent = pr ? why[pr] : hint;
-    (this.placeBar.querySelector('[data-place=ok]') as HTMLButtonElement).disabled = pr !== null;
+    const ok = this.placeBar.querySelector('[data-place=ok]') as HTMLButtonElement;
+    ok.disabled = pr !== null;
+    ok.textContent = pl.prev ? 'Done' : 'Put it here';
     (this.placeBar.querySelector('[data-place=away]') as HTMLElement).textContent = pl.prev ? 'Remove' : 'Cancel';
     const redraw = this.placeBar.querySelector('[data-place=redraw]') as HTMLElement;
     redraw.hidden = pl.k !== 'tube' || pl.tube.pts.length === 0;
+    // a tube: twisty, or a pipe (switch it either way)
+    const style = this.placeBar.querySelector('.pg-style') as HTMLElement;
+    style.hidden = pl.k !== 'tube';
+    for (const el of style.querySelectorAll<HTMLElement>('[data-style]')) el.setAttribute('aria-pressed', String((el.dataset.style === 'pipe') === pipe));
   }
 
-  /** Done placing: put it there (or, cancelled, away: a new one's never built, one picked up is taken away; leaving, it goes back). */
+  /**
+   * Done placing: put it there (or, cancelled, away: something new is never
+   * built, something built is taken away, for a moment to undo; leaving, it
+   * goes back as it was). Something built that was never changed is where it
+   * always was.
+   */
   endPlacing(ok: boolean, back = false): void {
     const pl = this.placing;
     if (!pl) return;
@@ -1059,17 +1222,79 @@ export class Playground {
     this.drag = null;
     this.placeBar.classList.add('hidden');
     if (this.active) this.bar.classList.remove('hidden');
-    const keep = ok ? (pl.k === 'piece' ? pl.piece : pl.tube) : back ? pl.prev : null;
-    if (keep) {
-      if (pl.k === 'piece') this.addPiece(keep as PlayPiece);
-      else this.addTube(keep as PlayTube);
-      if (ok) {
-        this.host.audio.seat(80);
-        const b = this.placeBox(pl);
-        this.host.renderer.puff((b.x0 + b.x1) / 2, b.y1 - 6, 6);
+    const now = pl.k === 'piece' ? pl.piece : pl.tube;
+    const box = (): Box => (pl.k === 'piece' ? pieceBox(pl.prev ?? pl.piece) : tubeBox(pl.prev ?? pl.tube));
+    if (!ok && !back && pl.prev) {
+      // taken away
+      const b = box();
+      if (!pl.lifted) {
+        if (pl.k === 'piece') this.removePiece(pl.prev.id);
+        else this.removeTube(pl.prev.id);
+        this.host.session.world.wakeAll();
       }
-    } else if (!ok && pl.prev) this.host.renderer.puff((this.placeBox(pl).x0 + this.placeBox(pl).x1) / 2, this.placeBox(pl).y1, 8);
+      this.host.renderer.puff((b.x0 + b.x1) / 2, b.y1, 8);
+      this.offerUndo(pl.prev);
+    } else if (pl.lifted) {
+      const keep = ok ? now : back ? pl.prev : null;
+      if (keep) {
+        if (pl.k === 'piece') this.addPiece(keep as PlayPiece);
+        else this.addTube(keep as PlayTube);
+        if (ok) {
+          this.host.audio.seat(80);
+          const b = pl.k === 'piece' ? pieceBox(keep as PlayPiece) : tubeBox(keep as PlayTube);
+          this.host.renderer.puff((b.x0 + b.x1) / 2, b.y1 - 6, 6);
+          // (the first time: how to change it again)
+          if (!pl.prev) this.host.renderer.label((b.x0 + b.x1) / 2, b.y0 - 10, 'Tap it to change it', '#4F9A6B');
+        }
+      }
+    }
     this.write();
+  }
+
+  /** Something just taken away: a moment to put it back. */
+  private offerUndo(item: Built): void {
+    this.forgetUndo();
+    const timer = window.setTimeout(() => this.forgetUndo(), 6000);
+    this.undo = { item, timer };
+    this.undoBar.classList.remove('hidden');
+  }
+
+  private forgetUndo(): void {
+    if (this.undo) clearTimeout(this.undo.timer);
+    this.undo = null;
+    this.undoBar.classList.add('hidden');
+  }
+
+  /** Put back what was just taken away. */
+  private undoRemove(): void {
+    const u = this.undo;
+    this.forgetUndo();
+    if (!u || !this.active) return;
+    this.host.audio.seat(80);
+    if ('kind' in u.item) this.addPiece(u.item);
+    else this.addTube(u.item);
+    const b = 'kind' in u.item ? pieceBox(u.item) : tubeBox(u.item);
+    this.host.renderer.puff((b.x0 + b.x1) / 2, b.y1 - 6, 6);
+    this.write();
+  }
+
+  /** The tube being changed made twisty (free to bend anywhere) or a pipe (laid straight along it). */
+  private setStyle(pipe: boolean): void {
+    const pl = this.placing;
+    if (pl?.k !== 'tube' || !!pl.tube.bends === pipe) return;
+    this.host.audio.click();
+    if (this.drag?.k === 'tube') this.drag = null;
+    const t = pl.tube;
+    if (t.pts.length < 2) pl.tube = pipe ? { id: t.id, pts: [], bends: [] } : { id: t.id, pts: [] };
+    else {
+      this.lift(pl);
+      if (pipe) {
+        const bends = straighten(t.pts);
+        if (bends.length < 2) return;
+        pl.tube = pipeOf(t.id, bends);
+      } else pl.tube = { id: t.id, pts: t.pts };
+    }
+    this.refreshPlaceBar();
   }
 
   /** The tube being drawn, rubbed out: draw it again. */
@@ -1078,7 +1303,8 @@ export class Playground {
     if (pl?.k !== 'tube') return;
     this.host.audio.click();
     if (this.drag?.k === 'tube') this.drag = null;
-    pl.tube = { ...pl.tube, pts: [] };
+    this.lift(pl);
+    pl.tube = pl.tube.bends ? { id: pl.tube.id, pts: [], bends: [] } : { id: pl.tube.id, pts: [] };
     this.refreshPlaceBar();
   }
 
@@ -1117,7 +1343,8 @@ export class Playground {
 
   /** Everything built taken away (the menu's Clear the sky): just the respawn cloud left. */
   clearSky(): void {
-    if (this.placing) this.endPlacing(false);
+    if (this.placing) this.endPlacing(false, true);
+    this.forgetUndo();
     for (const p of [...this.save.pieces]) this.removePiece(p.id);
     for (const t of [...this.save.tubes]) this.removeTube(t.id);
     this.tubes.finishAll();
@@ -1301,6 +1528,11 @@ function edgePush(x: number, y: number, W: number, H: number, top: number, botto
   const b0 = H - bottom - EDGE * 0.8;
   const ey = y < t0 ? -(t0 - y) / EDGE : y > b0 ? (y - b0) / EDGE : 0;
   return { x: clamp(ex, -1, 1), y: clamp(ey, -1, 1) };
+}
+
+/** Two lines of points the same? */
+function samePoints(a: readonly Pt[], b: readonly Pt[]): boolean {
+  return a.length === b.length && a.every((p, i) => p[0] === b[i][0] && p[1] === b[i][1]);
 }
 
 function safeGet(k: string): string | null {

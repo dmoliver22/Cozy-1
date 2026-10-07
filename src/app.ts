@@ -564,8 +564,8 @@ export class App {
       const w = this.renderer.screenToWorld(p.x, p.y);
       let cat = this.session.catAt(w.x, w.y, 18 * this.renderer.unitsPerPx + 6);
       if (this.inSky) {
-        // (a cat in a tube or mid-leap can't be picked up, nor any while something's being placed; and a second finger is a pinch)
-        if (cat && (!this.playground.canTouch(cat) || this.playground.placing || this.placeFingers.size)) cat = null;
+        // (a cat in a tube can't be picked up, nor any while something's being drawn or moved; and a second finger is a pinch)
+        if (cat && (!this.playground.canTouch(cat) || this.playground.busy || this.placeFingers.size)) cat = null;
         if (!cat) {
           if (this.playground.pointerDown(e.pointerId, p.x, p.y, w.x, w.y)) {
             this.placeFingers.add(e.pointerId);
@@ -645,7 +645,7 @@ export class App {
     const end = (e: PointerEvent): void => {
       if (this.placeFingers.has(e.pointerId)) {
         this.placeFingers.delete(e.pointerId);
-        if (this.inSky) this.playground.pointerUp(e.pointerId);
+        if (this.inSky) this.playground.pointerUp(e.pointerId, e.type === 'pointerup');
         else this.home.pointerUp(e.pointerId);
       }
       const tap = this.lockTap;
