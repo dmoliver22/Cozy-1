@@ -8,6 +8,9 @@ import { BREEDS, hasMyCat, lookKey } from '../src/physics/breeds';
 import { COATS, DEFAULT_DESIGN, NAME_MAX, cleanDesign, cleanName, designBreed, designLook, designPhysics, randomDesign, squishWords, type CatDesign } from '../src/physics/mycat';
 import { DropGame, tangled } from '../src/proto/drop/game';
 import { breedChoices } from '../src/proto/drop/ui';
+import { CUSHION_W, pokeHop, stageShapes } from '../src/house/catMaker';
+import { SoftBody } from '../src/physics/softbody';
+import { World } from '../src/physics/world';
 
 const design = (over: Partial<CatDesign> = {}): CatDesign => ({ ...DEFAULT_DESIGN, ...over });
 
@@ -144,6 +147,39 @@ describe('your own cat', () => {
     }
   });
 
+  it('poked in the cat maker, it hops about on its cushion and never off it, however fast you tap', () => {
+    let seed = 5;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let trial = 0; trial < 12; trial++) {
+      const br = designBreed(design({ size: trial % 2 ? 1 : rnd(), squish: rnd() }));
+      const w = new World();
+      for (const sh of stageShapes()) w.addStatic(sh);
+      const b = w.addBody(new SoftBody('mine', 0, -br.physics.radius - 10, br.physics, br.look));
+      for (let f = 0; f < 90; f++) w.step();
+      let furthest = 0;
+      // forty taps, some a moment apart and some in a flurry (a tap in mid-air does nothing)
+      for (let k = 0; k < 40; k++) {
+        if (b.airborneFrames <= 2) {
+          b.computeCentroid();
+          const v = pokeHop(b.cx, b.p.hop, rnd());
+          b.kick(v.vx, v.vy);
+        }
+        const gap = k % 5 === 4 ? 70 : 8;
+        for (let f = 0; f < gap; f++) {
+          w.step();
+          b.computeCentroid();
+          furthest = Math.max(furthest, Math.abs(b.cx));
+          expect(b.cy).toBeLessThan(0);
+        }
+      }
+      expect(furthest).toBeLessThan(CUSHION_W / 2 - 10);
+    }
+    // (straight up from the middle, and back toward it from either side)
+    expect(Math.abs(pokeHop(0, 300, 0.5).vx)).toBe(0);
+    expect(pokeHop(60, 300, 0.5).vx).toBeLessThan(0);
+    expect(pokeHop(-60, 300, 0.5).vx).toBeGreaterThan(0);
+  });
+
   it('is painted in its coat and pattern: patches on white, a pale Siamese, a black cat with gold eyes', () => {
     const patches = designLook(design({ coat: 'black', pattern: 'patches' }));
     expect(patches.body).toBe(COATS.white.body);
@@ -173,7 +209,6 @@ describe('your own cat', () => {
     expect(lookKey('mine')).not.toBe(before);
     expect(NAMES.mine).toBe('Pebble');
     expect(whoIs('mine')).toBe('Pebble');
-    expect(whoIs('kitten')).toBe('Pip the Kitten');
     expect(BREEDS.mine.look.persona).toBe('sleepy');
     expect(BREEDS.mine.flow).toBe(designBreed(d).flow);
     expect(TEMPERS.mine.lazy).toBeGreaterThan(TEMPERS.tabby.lazy);

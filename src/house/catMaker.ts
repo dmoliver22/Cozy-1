@@ -5,7 +5,7 @@
 // fur, size, squish (from a firm loaf to a puddle) and personality.
 
 import type { AudioEngine } from '../audio/audio';
-import { roundedBox } from '../physics/shapes';
+import { roundedBox, type StaticShape } from '../physics/shapes';
 import { SoftBody } from '../physics/softbody';
 import { FRAME_DT, World } from '../physics/world';
 import {
@@ -46,10 +46,26 @@ export interface MakerOptions {
 }
 
 /** The preview's cushion: its top is y = 0, and it's this wide. */
-const CUSHION_W = 190;
+export const CUSHION_W = 190;
 /** The preview's ceiling (its underside), just above the top of the view. */
 const CEILING = -122;
 const CUSHION_COLOR = '#7FA0C8';
+
+/** The preview's colliders: the cushion, and walls and a ceiling at the edges of the view (a big hop stays on screen). */
+export function stageShapes(): StaticShape[] {
+  return [roundedBox(-CUSHION_W / 2, 0, CUSHION_W, 40, 14), roundedBox(-170, -400, 20, 460, 4), roundedBox(150, -400, 20, 460, 4), roundedBox(-170, CEILING - 20, 340, 20, 4)];
+}
+
+/**
+ * A poke's hop for a cat (its middle at cx, hop its breed's hop speed): up,
+ * and back toward the middle of the cushion, with a touch to one side or the
+ * other (`rnd`, 0..1). A random kick alone wandered off: a few pokes and the
+ * cat had hopped off the end of the cushion.
+ */
+export function pokeHop(cx: number, hop: number, rnd: number): { vx: number; vy: number } {
+  const back = Math.max(-1, Math.min(1, -cx / 60));
+  return { vx: hop * (back * 0.2 + (rnd - 0.5) * 0.1), vy: -hop };
+}
 
 export class CatMaker {
   private d: CatDesign;
@@ -72,11 +88,7 @@ export class CatMaker {
     private readonly opts: MakerOptions,
   ) {
     this.d = { ...start };
-    this.world.addStatic(roundedBox(-CUSHION_W / 2, 0, CUSHION_W, 40, 14));
-    // (walls and a ceiling at the edges of the view: a big hop stays on screen)
-    this.world.addStatic(roundedBox(-170, -400, 20, 460, 4));
-    this.world.addStatic(roundedBox(150, -400, 20, 460, 4));
-    this.world.addStatic(roundedBox(-170, CEILING - 20, 340, 20, 4));
+    for (const s of stageShapes()) this.world.addStatic(s);
   }
 
   get design(): CatDesign {
@@ -257,15 +269,17 @@ export class CatMaker {
     if (!first) this.host.audio.boop(br.voice.pitch);
   }
 
-  /** A poke: a little hop. */
+  /** A poke: a little hop (not another one in mid-air: it'd go up and up). */
   private poke(): void {
     const b = this.body;
     if (!b) return;
-    b.wake();
-    b.computeCentroid();
-    b.kick((Math.random() - 0.5) * b.p.hop * 0.3, -b.p.hop);
     this.poked = 0;
     this.host.audio.boop(designBreed(this.d).voice.pitch);
+    if (b.airborneFrames > 2) return;
+    b.wake();
+    b.computeCentroid();
+    const v = pokeHop(b.cx, b.p.hop, Math.random());
+    b.kick(v.vx, v.vy);
   }
 
   private frame = (t: number): void => {
@@ -289,6 +303,9 @@ export class CatMaker {
     if (!b) return;
     this.world.step();
     this.poked++;
+    // (off the cushion somehow, and out of sight: dropped back on)
+    b.computeCentroid();
+    if (b.cy > 30 || Math.abs(b.cx) > CUSHION_W / 2 + b.p.radius) return this.drop(false);
     // loaf at rest, round on the move (as in the house)
     const still = b.emaVx * b.emaVx + b.emaVy * b.emaVy < 14 * 14 && b.emaEnergy < 400 && b.airborneFrames < 3;
     this.settled = still ? this.settled + 1 : 0;

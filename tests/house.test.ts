@@ -13,12 +13,15 @@ import {
   START_TREATS,
   WELCOME_BACK,
   MOVE_INS,
+  aCat,
+  applyNames,
   arrive,
   buyFloor,
   buyPerch,
   emptyHouse,
   giftDue,
   isOpen,
+  kindOf,
   loadHouse,
   moveInFor,
   nextMoveIn,
@@ -27,11 +30,17 @@ import {
   placedPerches,
   priceOf,
   recordRun,
+  renameCat,
   settle,
   storePerch,
   takeGift,
+  whoIs,
   writeHouse,
+  NAMES,
+  nameOf,
 } from '../src/house/house';
+import { catName } from '../src/physics/breeds';
+import { DEFAULT_DESIGN } from '../src/physics/mycat';
 import { ATTIC_FUNNEL, BASEMENT_DY, FLOORS, FUNNEL, HOOD, LIVING_CEIL, LOFT_HOOD, TUBES, VIEWS, floorAt, houseShell, tubeShapes, type FloorId } from '../src/house/layout';
 import { PERCHES, buildPerch, floorTop, perchBox, placeProblem, snapPerch } from '../src/house/perches';
 import { Tubes } from '../src/house/tubes';
@@ -105,8 +114,10 @@ describe('the house', () => {
       const stats = { ...emptyHouse().stats, fitsRooms: 2, fitsDone: ['sunny-kitchen'], dropDeepest: 900, jarBiggest: 1 };
       store.set('cozy-house:v1', JSON.stringify({ ...emptyHouse(), v: 5, welcomed: true, residents: ['kitten', 'tabby', 'persian'], stats }));
       const h = loadHouse();
-      expect(h.v).toBe(6);
+      expect(h.v).toBe(7);
       expect(h.residents).toEqual(['kitten', 'tabby', 'persian']);
+      // (they keep the names they came with, from before you could name them)
+      expect(h.names).toEqual({ kitten: 'Pip', tabby: 'Mochi', persian: 'Duchess' });
       expect(h.arriving).toEqual(['void']);
       expect(h.stats).not.toHaveProperty('fitsRooms');
       expect(h.stats).not.toHaveProperty('fitsDone');
@@ -127,7 +138,7 @@ describe('the house', () => {
       const old = { v: 1, residents: ['kitten', 'tabby', 'sphynx'], arriving: ['persian'], welcomed: true, stats: { ...emptyHouse().stats, jarBiggest: 4 } };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(6);
+      expect(h.v).toBe(7);
       expect(h.stats.jarBiggest).toBe(3);
       expect(h.treats).toBe(START_TREATS + WELCOME_BACK);
       expect(h.residents).toEqual(['kitten', 'tabby']);
@@ -162,7 +173,7 @@ describe('the house', () => {
       };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(6);
+      expect(h.v).toBe(7);
       // (up with the living room, and up again over the attic; and a bouncy cushion came for the living room)
       expect(h.perches.map((p) => [p.kind, p.y, floorAt(p.y)])).toEqual([
         ['cloud', FLOORS.roof.floorY - 200, 'roof'],
@@ -200,7 +211,7 @@ describe('the house', () => {
       };
       store.set('cozy-house:v1', JSON.stringify(old));
       const h = loadHouse();
-      expect(h.v).toBe(6);
+      expect(h.v).toBe(7);
       expect(h.perches.filter((p) => p.kind !== 'bounce').map((p) => [p.y, floorAt(p.y)])).toEqual([
         [FLOORS.roof.floorY - 200, 'roof'],
         [-400, 'living'],
@@ -220,6 +231,59 @@ describe('the house', () => {
     while (arrive(h));
     expect([...h.residents].sort()).toEqual([...ALL_CATS].sort());
     expect(nextMoveIn(h)).toBeNull();
+  });
+});
+
+describe('names', () => {
+  it('your cats go by the names you give them (and keep them), the rest by what kind of cat they are', () => {
+    const store = new Map<string, string>();
+    (globalThis as { localStorage?: unknown }).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    try {
+      const h = emptyHouse();
+      applyNames(h);
+      // a new house: the two who live here go by their kinds till you name them, as do the cats still to come
+      expect(nameOf(h, 'kitten')).toBe('Kitten');
+      expect(whoIs('tabby')).toBe('Tabby');
+      expect(NAMES.persian).toBe('Persian');
+      expect(aCat('mainecoon')).toBe('a Maine Coon');
+      expect(renameCat(h, 'kitten', '  Sir   Pounce ')).toBe('Sir Pounce');
+      expect(NAMES.kitten).toBe('Sir Pounce');
+      expect(whoIs('kitten')).toBe('Sir Pounce the Kitten');
+      expect(aCat('kitten')).toBe('Sir Pounce');
+      // (and in Cat Drop's picker)
+      expect(catName('kitten')).toBe('Sir Pounce');
+      expect(catName('chonk')).toBe('Chonk');
+      // a cat that isn't yours yet can't be named; it's named once it's here
+      expect(renameCat(h, 'persian', 'Duchess')).toBe('Persian');
+      expect(h.names.persian).toBeUndefined();
+      h.stats.jarBiggest = 2;
+      settle(h);
+      arrive(h);
+      renameCat(h, 'persian', 'Marmalade');
+      expect(NAMES.persian).toBe('Marmalade');
+      expect(kindOf('persian')).toBe('Persian');
+      // blank: back to its kind
+      expect(renameCat(h, 'persian', '   ')).toBe('Persian');
+      // your own cat's name is the one it was made with, and renaming it changes that
+      h.cat = { ...DEFAULT_DESIGN, name: 'Toffee' };
+      h.residents.push('mine');
+      applyNames(h);
+      expect(renameCat(h, 'mine', 'Mango')).toBe('Mango');
+      expect(h.cat.name).toBe('Mango');
+      expect(catName('mine')).toBe('Mango');
+      // kept with the house, and anything odd in it cleaned up
+      writeHouse(h);
+      const saved = JSON.parse(store.get('cozy-house:v1')!);
+      store.set('cozy-house:v1', JSON.stringify({ ...saved, names: { ...saved.names, tabby: '<b>Bean</b>', chonk: 42, bogus: 'Rex' } }));
+      const back = loadHouse();
+      expect(back.names).toEqual({ kitten: 'Sir Pounce', tabby: 'bBeanb' });
+      applyNames(back);
+      expect(NAMES.kitten).toBe('Sir Pounce');
+      expect(NAMES.mine).toBe('Mango');
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+      applyNames(emptyHouse());
+    }
   });
 });
 

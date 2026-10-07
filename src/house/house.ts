@@ -6,8 +6,8 @@
 // play, each waiting on something in one of the two games. Pure logic plus
 // localStorage, no DOM (the home screen shows it).
 
-import { setMyCat, type BreedId } from '../physics/breeds';
-import { PERSONALITIES, cleanDesign, type CatDesign } from '../physics/mycat';
+import { nameCats, setMyCat, type BreedId } from '../physics/breeds';
+import { PERSONALITIES, cleanDesign, cleanName, type CatDesign } from '../physics/mycat';
 import type { RunReport } from '../proto/shell';
 import { TEMPERS } from './antics';
 import { LIVING_CEIL, LIVING_CUSHION_X, ROOF_DY, type ExtraFloor, type FloorId } from './layout';
@@ -32,7 +32,7 @@ export interface HouseStats {
 }
 
 export interface HouseSave {
-  v: 6;
+  v: 7;
   /** Cats living here, in the order they moved in ('mine' is yours). */
   residents: BreedId[];
   /** Cats who've earned their place: they arrive the next time you're home. */
@@ -64,6 +64,10 @@ export interface HouseSave {
   cat: CatDesign | null;
   /** The cat maker's been offered (on the first visit home, or the first since it came). */
   catAsked: boolean;
+  /** The names you've given the cats who live here (yours is in `cat`): one without goes by its kind. */
+  names: Partial<Record<BreedId, string>>;
+  /** Where you've moved the house's own things to (by name): the rest are where they always were. */
+  moved: Record<string, { x: number; y: number }>;
 }
 
 export interface Hurt {
@@ -71,22 +75,62 @@ export interface Hurt {
   fed: number;
 }
 
-/** Everyone's name (yours is whatever you called it: see applyMyCat). */
-export const NAMES: Record<BreedId, string> = {
-  kitten: 'Pip',
-  tabby: 'Mochi',
-  persian: 'Duchess',
-  mainecoon: 'Juniper',
-  chonk: 'Biscuit',
-  void: 'Inkwell',
-  mine: 'Your cat',
-};
+/** What kind of cat each is: what it goes by till it's yours and you've named it. */
+const KINDS: Record<Exclude<BreedId, 'mine'>, string> = { kitten: 'Kitten', tabby: 'Tabby', persian: 'Persian', mainecoon: 'Maine Coon', chonk: 'Chonk', void: 'Void' };
 
-/** Who a cat is, in a few words: "Pip the Kitten", or just your cat's name. */
-export function whoIs(b: BreedId): string {
-  return b === 'mine' ? NAMES.mine : `${NAMES[b]} the ${BREEDS_NAME[b]}`;
+/** The names the cats came with before you could name them (a house from then keeps them). */
+const OLD_NAMES: Record<Exclude<BreedId, 'mine'>, string> = { kitten: 'Pip', tabby: 'Mochi', persian: 'Duchess', mainecoon: 'Juniper', chonk: 'Biscuit', void: 'Inkwell' };
+
+/** A cat's kind ("Maine Coon"). */
+export function kindOf(b: BreedId): string {
+  return b === 'mine' ? 'Your cat' : KINDS[b];
 }
-const BREEDS_NAME: Record<Exclude<BreedId, 'mine'>, string> = { kitten: 'Kitten', tabby: 'Tabby', persian: 'Persian', mainecoon: 'Maine Coon', chonk: 'Chonk', void: 'Void' };
+
+/** A cat's name: the one you've given it, if it's yours; its kind otherwise (your own cat: the name you made it with). */
+export function nameOf(h: Pick<HouseSave, 'residents' | 'names' | 'cat'>, b: BreedId): string {
+  if (b === 'mine') return h.cat?.name ?? 'Your cat';
+  return (h.residents.includes(b) && h.names[b]) || KINDS[b];
+}
+
+/** Everyone's name as things stand (see applyNames): your names for your cats, their kinds for the rest. */
+export const NAMES: Record<BreedId, string> = { ...KINDS, mine: 'Your cat' };
+
+/** Who a cat is, in a few words: "Pip the Kitten", "Persian" for one that goes by its kind, or just your cat's name. */
+export function whoIs(b: BreedId): string {
+  if (b === 'mine') return NAMES.mine;
+  return NAMES[b] === KINDS[b] ? KINDS[b] : `${NAMES[b]} the ${KINDS[b]}`;
+}
+
+/** A cat in a sentence: its name, or "a Persian" for one that goes by its kind. */
+export function aCat(b: BreedId): string {
+  return b !== 'mine' && NAMES[b] === KINDS[b] ? `a ${KINDS[b]}` : NAMES[b];
+}
+
+/** Make the names the house's (Cat Drop's too): see nameOf. */
+export function applyNames(h: Pick<HouseSave, 'residents' | 'names' | 'cat'>): void {
+  const given: Partial<Record<BreedId, string>> = {};
+  for (const b of Object.keys(NAMES) as BreedId[]) {
+    NAMES[b] = nameOf(h, b);
+    if (b === 'mine' || NAMES[b] !== KINDS[b]) given[b] = NAMES[b];
+  }
+  nameCats(given);
+}
+
+/**
+ * Give a cat of yours a name (yours: the one it was made with, too). Blank,
+ * or just its kind, and it goes by its kind. Returns the name it goes by now.
+ */
+export function renameCat(h: HouseSave, b: BreedId, name: string): string {
+  // (only your cats: one still to come is named once it's here)
+  if (b !== 'mine' && !h.residents.includes(b)) return NAMES[b];
+  const n = cleanName(name);
+  if (b === 'mine') {
+    if (h.cat && n) h.cat = { ...h.cat, name: n };
+  } else if (n && n !== KINDS[b]) h.names[b] = n;
+  else delete h.names[b];
+  applyNames(h);
+  return NAMES[b];
+}
 
 /** Make your cat the one in the house's save: its breed, name and temperament. */
 export function applyMyCat(h: Pick<HouseSave, 'cat'>): void {
@@ -154,7 +198,7 @@ function livingCushion(id: number): PerchSave {
 
 export function emptyHouse(): HouseSave {
   return {
-    v: 6,
+    v: 7,
     residents: [...FIRST_RESIDENTS],
     arriving: [],
     welcomed: false,
@@ -172,6 +216,8 @@ export function emptyHouse(): HouseSave {
     scraped: false,
     cat: null,
     catAsked: false,
+    names: {},
+    moved: {},
   };
 }
 
@@ -190,7 +236,7 @@ export function loadHouse(earlier?: Earlier): HouseSave {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<Omit<HouseSave, 'v'>> & { v?: number };
-      const h: HouseSave = { ...emptyHouse(), ...d, v: 6, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
+      const h: HouseSave = { ...emptyHouse(), ...d, v: 7, stats: { ...emptyStats(), ...(d.stats ?? {}) } };
       if ((d.v ?? 1) < 2) {
         // the first house's Cat Jar had a sphynx between the kitten and the
         // tabby; and there were no treats yet: a bag of them to start with
@@ -258,6 +304,17 @@ export function loadHouse(earlier?: Earlier): HouseSave {
       }
       h.hurt = hurt;
       if (!h.toy || !Number.isFinite(h.toy.x) || !Number.isFinite(h.toy.y)) h.toy = null;
+      // the cats who already lived here before you could name them keep the names they came with
+      if ((d.v ?? 1) < 7) h.names = Object.fromEntries(h.residents.filter((b) => b !== 'mine').map((b) => [b, OLD_NAMES[b as Exclude<BreedId, 'mine'>]]));
+      const names: HouseSave['names'] = {};
+      for (const b of ALL_CATS) {
+        const n = cleanName((h.names as Record<string, unknown> | null)?.[b]);
+        if (n) names[b] = n;
+      }
+      h.names = names;
+      const moved: HouseSave['moved'] = {};
+      for (const [k, p] of Object.entries(h.moved && typeof h.moved === 'object' ? h.moved : {})) if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) moved[k] = { x: p.x, y: p.y };
+      h.moved = moved;
       return h;
     }
   } catch {

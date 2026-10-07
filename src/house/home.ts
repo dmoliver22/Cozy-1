@@ -18,7 +18,7 @@ import type { DecorPlacement, RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
 import { roomFor } from '../game/spawn';
 import { BREEDS, lookKey, type BreedId } from '../physics/breeds';
-import { randomDesign, type CatDesign } from '../physics/mycat';
+import { NAME_IDEAS, NAME_MAX, randomDesign, type CatDesign } from '../physics/mycat';
 import type { StaticShape } from '../physics/shapes';
 import type { SoftBody } from '../physics/softbody';
 import { FRAME_DT, GRAVITY } from '../physics/world';
@@ -44,7 +44,9 @@ import {
   ALL_CATS,
   FLOOR_PRICES,
   NAMES,
+  aCat,
   applyMyCat,
+  applyNames,
   arrive,
   buyFloor,
   buyPerch,
@@ -53,6 +55,7 @@ import {
   HURT_FISH,
   hurtCat,
   isOpen,
+  kindOf,
   loadHouse,
   moveInFor,
   nextMoveIn,
@@ -63,6 +66,7 @@ import {
   placedPerches,
   priceOf,
   recordRun,
+  renameCat,
   storePerch,
   takeGift,
   whoIs,
@@ -245,6 +249,7 @@ export class Home {
   ) {
     this.house = loadHouse(earlier);
     applyMyCat(this.house);
+    applyNames(this.house);
     // a perch put up where a tube is now (the tubes used to come with their floor) goes back in the cupboard
     const fit = fittingBoxes(this.house, 'all');
     for (const p of this.house.perches) {
@@ -666,8 +671,8 @@ export class Home {
     writeHouse(this.house);
     if (fresh.length) {
       const b = fresh[0];
-      const more = fresh.length > 1 ? ` (and ${NAMES[fresh[1]]}!)` : '';
-      this.toast(b, `${whoIs(b)} wants to move in!${more}`);
+      const more = fresh.length > 1 ? ` (and ${aCat(fresh[1])}!)` : '';
+      this.toast(b, `${cap(aCat(b))} wants to move in!${more}`);
     }
     if (treats > 0) {
       if (this.active) this.treatsGained(treats);
@@ -728,7 +733,7 @@ export class Home {
       const badge = btn.querySelector('.face-badge') as HTMLElement;
       badge.innerHTML = next ? faceSVG(next.breed, { size: 22 }) : '';
       badge.classList.toggle('hidden', !next);
-      btn.setAttribute('aria-label', `Play ${GAME_NAMES[game]}${next ? `. ${next.how} and ${NAMES[next.breed]} moves in` : ''}`);
+      btn.setAttribute('aria-label', `Play ${GAME_NAMES[game]}${next ? `. ${next.how} and ${aCat(next.breed)} moves in` : ''}`);
     }
     if (this.shownTreats > this.house.treats) this.shownTreats = this.house.treats;
     this.refreshTreats();
@@ -1248,6 +1253,7 @@ export class Home {
     const b = arrive(this.house);
     writeHouse(this.house);
     if (!b) return;
+    applyNames(this.house);
     const s = this.host.session;
     // in at the window, and a leap from there to the nearest free place in
     // the room (it's out of the world until it lands: whoever's on the sill
@@ -1663,17 +1669,21 @@ export class Home {
   // Cards
 
   private welcome(): void {
-    const faces = this.house.residents.map((b) => `<span class="hc-face">${faceSVG(b, { mood: 'happy', size: 44 })}</span>`).join('');
+    const namers = this.house.residents.map((b) => `<div class="hc-namer"><span class="hc-face">${faceSVG(b, { mood: 'happy', size: 44 })}</span>${this.nameField(b, `hcName-${b}`)}</div>`).join('');
     this.host.openOverlay(
       `<div class="card" role="dialog" aria-label="Welcome home">
         <h2>Welcome home!</h2>
-        <div class="hc-faces">${faces}</div>
-        <p class="sub">${this.names(this.house.residents)} live here. Pick them up, carry them about, boop them, pour them into the vase.</p>
+        <p class="sub">Two cats live here already. What are they called?</p>
+        <div class="hc-namers">${namers}</div>
+        <p class="hc-games">Pick them up, carry them about, boop them, pour them into the vase. Rename any cat any time, in <b>Your cats</b> (the faces up top).</p>
         <p class="hc-games"><b>Make your own cat</b> to live here too: its coat, its fur, how big, and how squishy, from a firm loaf to a puddle.</p>
         <p class="hc-games">Play <b>Cat Jar</b> and <b>Cat Drop</b> (the big buttons along the bottom) to earn treats for the <b>shop</b>, and more cats will move in. Swipe up and down to look round the house.</p>
         <div class="btns"><button class="btn primary" data-act="make">Make my cat</button><button class="btn" data-close>Later</button></div>
       </div>`,
-      (root) => root.querySelector('[data-act=make]')!.addEventListener('click', () => this.showMaker()),
+      (root) => {
+        this.bindNames(root);
+        root.querySelector('[data-act=make]')!.addEventListener('click', () => this.showMaker());
+      },
     );
     this.house.welcomed = true;
     this.house.catAsked = true;
@@ -1719,6 +1729,7 @@ export class Home {
     this.house.cat = d;
     this.house.catAsked = true;
     applyMyCat(this.house);
+    applyNames(this.house);
     if (fresh || !this.house.residents.includes('mine')) {
       // in at the window, first in the queue
       if (!this.house.arriving.includes('mine')) this.house.arriving.unshift('mine');
@@ -1739,9 +1750,9 @@ export class Home {
     }
   }
 
-  /** Something that changes when your cat's looks do (the top bar's faces). */
+  /** Something that changes when your cat's looks do, or anyone's name (the top bar's faces). */
   get catKey(): string {
-    return `${lookKey('mine')}:${NAMES.mine}`;
+    return `${lookKey('mine')}:${Object.values(NAMES).join('|')}`;
   }
 
   /** "2 of 6 cats live here, and Toffee". */
@@ -1760,17 +1771,27 @@ export class Home {
       const v = this.host.renderer.view(cat);
       this.host.renderer.hearts(v.hx, v.hy - 16, 3);
     }
+    const kind = kindOf(b);
+    // (one that goes by its kind is "a Persian" till you name it)
+    const title = (n: string): string => (!mine && n === kind ? `A ${kind} moved in!` : `${n} moved in!`);
+    const welcome = (n: string): string => (!mine && n === kind ? 'Welcome home' : `Welcome home, ${n}`);
     this.host.openOverlay(
-      `<div class="card" role="dialog" aria-label="${NAMES[b]} moved in">
-        <h2>${NAMES[b]} moved in!</h2>
+      `<div class="card" role="dialog" aria-label="${title(NAMES[b])}">
+        <h2 data-title>${title(NAMES[b])}</h2>
         <div class="hc-portrait"></div>
-        <p class="sub">${mine ? `Your very own cat · ${TEMPERS.mine.word} · ${BREEDS.mine.flow}` : `${whoIs(b)} · ${BREEDS[b].flow}`}</p>
+        <p class="sub">${mine ? `Your very own cat · ${TEMPERS.mine.word} · ${BREEDS.mine.flow}` : `${kind} · ${TEMPERS[b].word} · ${BREEDS[b].flow}`}</p>
         ${m ? `<p class="hc-why">${m.how}: done!</p>` : ''}
-        ${mine ? '<p class="hc-why">Restyle them any time: tap the faces up top.</p>' : ''}
+        ${mine ? '<p class="hc-why">Restyle them any time: tap the faces up top.</p>' : `<p class="hc-ask">What will you call them?</p>${this.nameField(b, 'hcName')}`}
         <p class="hc-count">${this.countLine()}</p>
-        <div class="btns"><button class="btn primary" data-close>Welcome home, ${NAMES[b]}</button></div>
+        <div class="btns"><button class="btn primary" data-close data-welcome>${welcome(NAMES[b])}</button></div>
       </div>`,
-      (root) => root.querySelector('.hc-portrait')!.appendChild(catPortrait(b, 150, 92, { happy: true })),
+      (root) => {
+        root.querySelector('.hc-portrait')!.appendChild(catPortrait(b, 150, 92, { happy: true }));
+        this.bindNames(root, (_, n) => {
+          root.querySelector('[data-title]')!.textContent = title(n);
+          root.querySelector('[data-welcome]')!.textContent = welcome(n);
+        });
+      },
     );
   }
 
@@ -1784,7 +1805,7 @@ export class Home {
       const m = moveInFor(b);
       const hurt = here ? h.hurt[b] : undefined;
       const mood = moodOf(b, localDateKey());
-      const what = b === 'mine' ? `your own cat, ${TEMPERS.mine.word}` : TEMPERS[b].word;
+      const what = b === 'mine' ? `your own cat, ${TEMPERS.mine.word}` : `${NAMES[b] === kindOf(b) ? '' : `${kindOf(b)}, `}${TEMPERS[b].word}`;
       const status = hurt
         ? `<small class="hc-hurt">hurt in a scrap · ${hurt.need - hurt.fed} more fish to feel better (tap to feed)</small>`
         : here
@@ -1798,7 +1819,10 @@ export class Home {
           : !here && !coming && m
             ? `<button class="hc-play" data-play="${m.game}" aria-label="Play ${GAME_NAMES[m.game]}">Play</button>`
             : '';
-      return `<div class="hc-row ${here || b === 'mine' ? '' : 'away'}" data-breed="${b}"><span class="hc-pic"></span><span class="hc-who"><b>${here || coming ? NAMES[b] : '???'}</b>${status}</span>${btn}</div>`;
+      const name = here
+        ? `<input class="hc-rename" type="text" maxlength="${NAME_MAX}" autocomplete="off" spellcheck="false" data-name="${b}" value="${NAMES[b] === kindOf(b) ? '' : NAMES[b]}" placeholder="${kindOf(b)}" aria-label="${whoIs(b)}: name">`
+        : `<b>${kindOf(b)}</b>`;
+      return `<div class="hc-row ${here || b === 'mine' ? '' : 'away'}" data-breed="${b}"><span class="hc-pic"></span><span class="hc-who">${name}${status}</span>${btn}</div>`;
     };
     const make = mineHere
       ? row('mine')
@@ -1817,6 +1841,7 @@ export class Home {
           el.querySelector('.hc-pic')!.appendChild(catPortrait(b, 64, 46, { silhouette: !known, happy: known }));
         });
         root.querySelectorAll<HTMLElement>('[data-act=maker]').forEach((el) => el.addEventListener('click', () => this.showMaker()));
+        this.bindNames(root);
         root.querySelectorAll<HTMLElement>('[data-play]').forEach((el) =>
           el.addEventListener('click', () => {
             this.host.closeOverlay();
@@ -1909,6 +1934,44 @@ export class Home {
     if (cat) this.toast(cat, FLOOR_HOWTO[f], 4200);
   }
 
+  /** A box to name a cat of yours in (blank: it goes by its kind), and a button for an idea for one. */
+  private nameField(b: BreedId, id: string): string {
+    const kind = kindOf(b);
+    return `<div class="mk-name hc-name"><label for="${id}">Name</label><input id="${id}" type="text" maxlength="${NAME_MAX}" autocomplete="off" spellcheck="false" data-name="${b}" placeholder="${kind}" value="${NAMES[b] === kind ? '' : NAMES[b]}"><button class="mk-chip" data-idea="${b}" aria-label="An idea for a name">↻</button></div>`;
+  }
+
+  /** Name boxes save as you type (`then` hears each new name); an idea button fills one in. */
+  private bindNames(root: HTMLElement, then?: (b: BreedId, name: string) => void): void {
+    root.querySelectorAll<HTMLInputElement>('input[data-name]').forEach((el) => {
+      const b = el.dataset.name as BreedId;
+      el.addEventListener('input', () => then?.(b, this.rename(b, el.value)));
+      // (tidied once you're done: what it's actually called, or blank if it goes by its kind)
+      el.addEventListener('change', () => {
+        const n = this.rename(b, el.value);
+        el.value = b !== 'mine' && n === kindOf(b) ? '' : n;
+      });
+    });
+    root.querySelectorAll<HTMLElement>('[data-idea]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const el = root.querySelector<HTMLInputElement>(`input[data-name="${btn.dataset.idea}"]`);
+        if (!el) return;
+        const taken = Object.values(NAMES);
+        const ideas = NAME_IDEAS.filter((n) => !taken.includes(n));
+        el.value = ideas[Math.floor(Math.random() * ideas.length)] ?? el.value;
+        this.host.audio.click();
+        el.dispatchEvent(new Event('input'));
+      }),
+    );
+  }
+
+  /** Give a cat of yours a name (see renameCat): kept with the house, and it goes by it everywhere. */
+  private rename(b: BreedId, name: string): string {
+    const n = renameCat(this.house, b, name);
+    writeHouse(this.house);
+    for (const c of this.host.session.cats) c.name = NAMES[c.breed];
+    return n;
+  }
+
   private names(list: BreedId[]): string {
     const n = list.map((b) => NAMES[b]);
     return n.length <= 1 ? (n[0] ?? '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
@@ -1993,4 +2056,9 @@ export function treatIcon(size: number): string {
 
 function perchThumbSafe(kind: PerchKind): HTMLCanvasElement {
   return perchThumb(kind, 64, 46);
+}
+
+/** A sentence's first word with a capital ("a Persian" → "A Persian"). */
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

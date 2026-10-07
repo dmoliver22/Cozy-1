@@ -2,7 +2,7 @@
 // is), a toast naming each room as the cat drops into it, and the start and
 // end cards (the end card sits up top, over the bath the cat ends up in).
 
-import { BREEDS, hasMyCat, type BreedId } from '../../physics/breeds';
+import { BREEDS, catName, hasMyCat, type BreedId } from '../../physics/breeds';
 import { faceSVG } from '../../ui/faces';
 import type { DropState } from './game';
 
@@ -147,7 +147,7 @@ export class DropUi {
 
   private showFlow(): void {
     const b = BREEDS[this.breed];
-    (this.root.querySelector('#dFlow') as HTMLElement).textContent = `${b.name}: ${b.flow}. ${BLURB[this.breed] ?? ''}`;
+    (this.root.querySelector('#dFlow') as HTMLElement).textContent = `${catName(this.breed)}: ${b.flow}. ${BLURB[this.breed] ?? ''}`;
   }
 
   showStart(best: number): void {
@@ -210,7 +210,7 @@ export class DropUi {
 }
 
 function breedButton(b: BreedId, on: boolean): string {
-  return `<button class="breed" role="radio" data-breed="${b}" aria-checked="${on}" aria-label="${BREEDS[b].name}">${faceSVG(b, { size: 40 })}<span>${BREEDS[b].name}</span></button>`;
+  return `<button class="breed" role="radio" data-breed="${b}" aria-checked="${on}" aria-label="${catName(b)}">${faceSVG(b, { size: 40 })}<span>${catName(b)}</span></button>`;
 }
 
 function soundIcon(on: boolean): string {

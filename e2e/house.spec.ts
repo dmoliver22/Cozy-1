@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openHouse } from './seed';
 
 // The house: the home room with your cats, the two games reached from it
 // (and back), and cats moving in as you play.
@@ -12,13 +13,7 @@ const app = (page: Page): Promise<AppHandle> => page.evaluate(() => (window as u
 
 /** A house that's been welcomed, with these cats (and maybe some on the way). */
 async function house(page: Page, residents: string[], arriving: string[] = []): Promise<void> {
-  await page.goto('/');
-  await page.evaluate(
-    ([r, a]) => localStorage.setItem('cozy-house:v1', JSON.stringify({ v: 1, residents: r, arriving: a, welcomed: true, catAsked: true, stats: {} })),
-    [residents, arriving],
-  );
-  await page.reload();
-  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await openHouse(page, { v: 1, residents, arriving, welcomed: true, catAsked: true, stats: {} });
 }
 
 test('home: your cats, and a way into each game', async ({ page }) => {
@@ -41,6 +36,29 @@ test('home: your cats, and a way into each game', async ({ page }) => {
   await expect(page.getByText('Fall 750 m in one Cat Drop')).toBeVisible();
 });
 
+test('name your cats, and rename them any time: your names in the house and in Cat Drop, kinds for the cats still to come', async ({ page }) => {
+  await house(page, ['kitten', 'tabby']);
+  await page.locator('.home-cats').click();
+  // yours are boxes to type a new name in; the ones still to come go by their kind
+  await expect(page.locator('.hc-rename')).toHaveCount(2);
+  await expect(page.locator('.hc-row.away b')).toHaveText(['Persian', 'Chonk', 'Maine Coon', 'Void']);
+  await page.locator('.hc-rename[data-name=tabby]').fill('Sir Pounce');
+  await page.locator('.hc-rename[data-name=tabby]').press('Enter');
+  await page.getByRole('button', { name: 'Close' }).click();
+  const names = await page.evaluate(() => (window as unknown as { __app: AppHandle }).__app.session.cats.map((c) => c.name));
+  expect(names).toEqual(['Pip', 'Sir Pounce']);
+  await expect(page.locator('#faces .face[title="Sir Pounce"]')).toHaveCount(1);
+  // kept with the house
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  expect(await page.evaluate(() => (window as unknown as { __app: AppHandle }).__app.session.cats.map((c) => c.name))).toEqual(['Pip', 'Sir Pounce']);
+  // and in Cat Drop's picker (the ones you haven't got go by their kind)
+  await page.locator('#homeBar [data-game=drop]').click();
+  await expect(page.locator('#dStart .breed[data-breed=tabby]')).toContainText('Sir Pounce');
+  await expect(page.locator('#dStart .breed[data-breed=kitten]')).toContainText('Pip');
+  await expect(page.locator('#dStart .breed[data-breed=persian]')).toContainText('Persian');
+});
+
 test('Cat Jar and Cat Drop open from home and come back', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
   await page.locator('#homeBar [data-game=jar]').click();
@@ -59,7 +77,7 @@ test('Cat Jar and Cat Drop open from home and come back', async ({ page }) => {
   expect((await app(page)).kind).toBe('home');
 });
 
-test('making a Persian in Cat Jar brings Duchess home, in at the window', async ({ page }) => {
+test('making a Persian in Cat Jar brings a Persian home, in at the window, and you name her', async ({ page }) => {
   await house(page, ['kitten', 'tabby']);
   await page.locator('#homeBar [data-game=jar]').click();
   await page.getByRole('button', { name: 'Play', exact: true }).click();
@@ -76,16 +94,20 @@ test('making a Persian in Cat Jar brings Duchess home, in at the window', async 
     const j = (window as unknown as { __jar: J }).__jar;
     j.place(1, j.state.cats[0].x + 56, 410);
   });
-  await expect(page.locator('.hh-toast')).toContainText('Duchess the Persian wants to move in!', { timeout: 15000 });
+  // (she isn't yours yet: she goes by what kind of cat she is)
+  await expect(page.locator('.hh-toast')).toContainText('A Persian wants to move in!', { timeout: 15000 });
   await page.locator('#jarHome').click();
-  await expect(page.getByRole('heading', { name: 'Duchess moved in!' })).toBeVisible({ timeout: 8000 });
+  await expect(page.getByRole('heading', { name: 'A Persian moved in!' })).toBeVisible({ timeout: 8000 });
+  await page.locator('#hcName').fill('Duchess');
+  await expect(page.getByRole('heading', { name: 'Duchess moved in!' })).toBeVisible();
   await page.getByRole('button', { name: 'Welcome home, Duchess' }).click();
   await expect(page.locator('#roomSub')).toHaveText('3 cats live here');
   const names = await page.evaluate(() => (window as unknown as { __app: AppHandle }).__app.session.cats.map((c) => c.name));
-  expect(names).toContain('Duchess');
+  expect(names).toEqual(['Pip', 'Mochi', 'Duchess']);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cozy-house:v1')!).names)).toMatchObject({ persian: 'Duchess' });
 });
 
-test('making a Maine Coon in Cat Jar says Juniper wants to move in, right away', async ({ page }) => {
+test('making a Maine Coon in Cat Jar says a Maine Coon wants to move in, right away', async ({ page }) => {
   await house(page, ['kitten', 'tabby', 'persian']);
   await page.locator('#homeBar [data-game=jar]').click();
   await page.getByRole('button', { name: 'Play', exact: true }).click();
@@ -103,7 +125,7 @@ test('making a Maine Coon in Cat Jar says Juniper wants to move in, right away',
     const j = (window as unknown as { __jar: J }).__jar;
     j.place(2, j.state.cats[0].x + 74, 410);
   });
-  await expect(page.locator('.hh-toast')).toContainText('Juniper the Maine Coon wants to move in!', { timeout: 15000 });
+  await expect(page.locator('.hh-toast')).toContainText('A Maine Coon wants to move in!', { timeout: 15000 });
 });
 
 interface HouseHandle {
@@ -119,17 +141,7 @@ interface HouseHandle {
 
 /** A house with treats to spend. */
 async function richHouse(page: Page, residents: string[], treats: number, open: string[] = []): Promise<void> {
-  await page.goto('/');
-  await page.evaluate(
-    ([r, t, o]) =>
-      localStorage.setItem(
-        'cozy-house:v1',
-        JSON.stringify({ v: 2, residents: r, arriving: [], welcomed: true, catAsked: true, stats: {}, treats: t, earned: t, open: o, perches: [], nextPerch: 1, where: {}, run: null, gift: '' }),
-      ),
-    [residents, treats, open] as const,
-  );
-  await page.reload();
-  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await openHouse(page, { v: 2, residents, arriving: [], welcomed: true, catAsked: true, stats: {}, treats, earned: treats, open, perches: [], nextPerch: 1, where: {}, run: null, gift: '' });
 }
 
 const hh = (page: Page): Promise<{ cam: number; treats: number; open: string[]; perches: { kind: string; x: number; y: number; stored?: boolean }[] }> =>
@@ -343,21 +355,10 @@ test('the cats leave a present once a day: treats', async ({ page }) => {
 
 /** A house with these cats, no present waiting, and maybe someone hurt. */
 async function livelyHouse(page: Page, residents: string[], treats: number, hurt: Record<string, { need: number; fed: number }> = {}): Promise<void> {
-  await page.goto('/');
-  await page.evaluate(
-    ([r, t, h]) => {
-      // (today's present already opened)
-      const d = new Date();
-      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      localStorage.setItem(
-        'cozy-house:v1',
-        JSON.stringify({ v: 4, residents: r, arriving: [], welcomed: true, catAsked: true, stats: {}, treats: t, earned: t, open: [], perches: [], nextPerch: 1, where: {}, run: null, gift: today, hurt: h, toy: null, scraped: true }),
-      );
-    },
-    [residents, treats, hurt] as const,
-  );
-  await page.reload();
-  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  // (today's present already opened)
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  await openHouse(page, { v: 4, residents, arriving: [], welcomed: true, catAsked: true, stats: {}, treats, earned: treats, open: [], perches: [], nextPerch: 1, where: {}, run: null, gift: today, hurt, toy: null, scraped: true });
   await page.waitForTimeout(800);
 }
 

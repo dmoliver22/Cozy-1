@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openHouse } from './seed';
 
 // The first visit, and making your own cat.
 
@@ -14,21 +15,22 @@ const saved = (page: Page): Promise<{ cat: Record<string, unknown> | null; resid
   page.evaluate(() => JSON.parse(localStorage.getItem('cozy-house:v1') ?? 'null'));
 
 async function firstVisit(page: Page): Promise<void> {
-  await page.goto('/');
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();
-  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await openHouse(page, null);
 }
 
 test('first visit: the home is where you start, with two games along the bottom and a cat of your own to make', async ({ page }) => {
   await firstVisit(page);
   await expect(page.getByRole('heading', { name: 'Welcome home!' })).toBeVisible();
+  // the two who live here: name them (they go by their kinds till you do)
+  await expect(page.locator('#hcName-kitten')).toHaveAttribute('placeholder', 'Kitten');
+  await page.locator('#hcName-kitten').fill('Pip');
   await expect(page.getByRole('button', { name: 'Make my cat' })).toBeVisible();
   await expect(page.locator('#homeBar [data-game]')).toHaveCount(2);
   for (const name of ['Cat Jar', 'Cat Drop']) await expect(page.locator('#homeBar .tin', { hasText: name })).toBeVisible();
   await expect(page.getByText('If It Fits')).toHaveCount(0);
   await page.getByRole('button', { name: 'Later' }).click();
   expect((await cats(page)).map((c) => c.breed)).toEqual(['kitten', 'tabby']);
+  expect((await cats(page)).map((c) => c.name)).toEqual(['Pip', 'Tabby']);
   // (and it's there in the cats card for later)
   await page.locator('.home-cats').click();
   await expect(page.locator('.hc-make')).toBeVisible();
@@ -89,11 +91,7 @@ test('your cat plays Cat Drop: first in the picker, and picked', async ({ page }
 });
 
 test('a house from before the cat maker is offered it, once', async ({ page }) => {
-  await page.goto('/');
-  await page.evaluate(() =>
-    localStorage.setItem('cozy-house:v1', JSON.stringify({ v: 5, residents: ['kitten', 'tabby', 'persian'], arriving: [], welcomed: true, stats: {}, gift: '2099-01-01' })),
-  );
-  await page.reload();
+  await openHouse(page, { v: 5, residents: ['kitten', 'tabby', 'persian'], arriving: [], welcomed: true, stats: {}, gift: '2099-01-01' });
   await expect(page.getByRole('heading', { name: 'Make your own cat!' })).toBeVisible({ timeout: 6000 });
   await page.getByRole('button', { name: 'Maybe later' }).click();
   await page.reload();

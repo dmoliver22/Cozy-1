@@ -362,6 +362,20 @@ export function setMyCat(d: CatDesign | null): void {
   myCatRev++;
 }
 
+/** The names you've given your cats (see the house): a cat without one goes by its kind. */
+const given: Partial<Record<BreedId, string>> = {};
+
+/** A cat's name: the one you've given it, or its kind ("Persian"; your own cat, the name you made it with). */
+export function catName(b: BreedId): string {
+  return given[b] ?? BREEDS[b].name;
+}
+
+/** The names you've given your cats (any not among them go by their kind again). */
+export function nameCats(names: Partial<Record<BreedId, string>>): void {
+  for (const k of Object.keys(given) as BreedId[]) delete given[k];
+  Object.assign(given, names);
+}
+
 /** Has your cat been made? */
 export function hasMyCat(): boolean {
   return myCatMade;

@@ -675,6 +675,55 @@ button:focus-visible {
 .hc-coming {
   color: #4f9a6b !important;
 }
+/* a cat of yours: its name, a box you can type in */
+.hc-rename {
+  min-width: 0;
+  width: 100%;
+  padding: 0 2px 1px;
+  border: none;
+  border-bottom: 2px dashed var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--panel-ink);
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 16px;
+}
+.hc-rename::placeholder,
+.hc-name input::placeholder {
+  color: var(--panel-muted);
+  opacity: 0.75;
+}
+.hc-rename:focus {
+  outline: none;
+  border-bottom-color: var(--ginger);
+}
+.hc-ask {
+  text-align: center;
+  font-weight: 800;
+  margin: 6px 0 0;
+}
+.hc-name {
+  margin: 4px 0 10px;
+}
+.hc-name input {
+  font-size: 17px;
+}
+.hc-namers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 6px;
+}
+.hc-namer {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.hc-namer .hc-name {
+  margin: 0;
+}
 .hc-hurt {
   color: #c0606e !important;
   font-weight: 700;
