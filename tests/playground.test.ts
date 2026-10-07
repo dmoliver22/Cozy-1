@@ -331,6 +331,27 @@ describe('pipes: straight runs and neat elbows, like real ones', () => {
     }
   });
 
+  it('wherever the finger comes down, between the grid lines, a run drawn straight goes straight', () => {
+    for (let ox = 1; ox < 20; ox += 3) {
+      for (let oy = 1; oy < 20; oy += 3) {
+        for (const [dx, dy, w] of [
+          [240, 0, 0],
+          [0, -240, 6],
+          [170, 170, 1],
+          [-170, -170, 5],
+        ] as const) {
+          const b = draw([
+            [ox, oy],
+            [ox + dx, oy + dy],
+          ]);
+          expect(b).toHaveLength(2);
+          expect(way(b[0], b[1])).toBe(w);
+          expect(onGrid(b[0])).toBe(true);
+        }
+      }
+    }
+  });
+
   it('back over its last elbow, that run is taken in', () => {
     const b = draw([
       [0, 0],

@@ -735,8 +735,10 @@ the choices:
   own). A pipe is saved as its `bends` (its mouths first and last) and its
   middle line is made from them (`pipePath`: straight, round each elbow, a
   point every 16, so it's ridden, collided with and painted like any tube).
-  Drawing one (`layPipe`): the first stretch the finger goes sets its way;
-  its end follows the finger along that way; when the finger's gone 32 off
+  Drawing one (`layPipe`): the first stretch the finger goes sets its way
+  (read from where the finger came down, and only then is the start put on
+  the grid: read from the grid point, up to 14 off, a run drawn straight
+  could set off at 45°); its end follows the finger along that way; when the finger's gone 32 off
   it, an elbow goes in where the finger left, moved along the run to the
   grid (20; the run's line goes through a grid point, so it lands on one),
   and a new run sets off; back over the elbow a run set off from, it's

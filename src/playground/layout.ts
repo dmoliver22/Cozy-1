@@ -572,11 +572,14 @@ function layPipe(b: Pt[], x: number, y: number, turnAt: number = PIPE.turn): voi
   for (let guard = 0; guard < 6; guard++) {
     const n = b.length;
     if (n === 1) {
-      // setting off: once the finger's gone a little way, the way it's going
-      const [sx, sy] = b[0];
-      if (Math.hypot(x - sx, y - sy) < G) return;
-      const k = wayOf(x - sx, y - sy);
+      // setting off: once the finger's gone a little way from where it came down, the way it's going; then the start goes on the grid
+      const [rx, ry] = b[0];
+      if (Math.hypot(x - rx, y - ry) < G * 1.2) return;
+      const k = wayOf(x - rx, y - ry);
+      const sx = snapGrid(rx);
+      const sy = snapGrid(ry);
       const len = Math.max(MOUTH_RUN * 2, (x - sx) * WAYS[k][0] + (y - sy) * WAYS[k][1]);
+      b[0] = [sx, sy];
       b.push([sx + WAYS[k][0] * len, sy + WAYS[k][1] * len]);
       return;
     }
@@ -609,8 +612,8 @@ function layPipe(b: Pt[], x: number, y: number, turnAt: number = PIPE.turn): voi
       b[m - 1] = [P[0] + WAYS[k2][0] * len, P[1] + WAYS[k2][1] * len];
       return;
     }
-    // on its way (or a little off it, the end waiting where the finger left)
-    if (Math.abs(side) <= 12) return follow();
+    // on its way (or a little off it, the end waiting where the finger left; a little: the start's grid step from where the finger came down, and some)
+    if (Math.abs(side) <= 16) return follow();
     if (Math.abs(side) <= turnAt) return;
     // off it: which way, from where the finger left (straight on after all: it follows)
     let t = turnOf(k, wayOf(x - tip[0], y - tip[1]));
@@ -635,11 +638,11 @@ function layPipe(b: Pt[], x: number, y: number, turnAt: number = PIPE.turn): voi
 
 /**
  * A pipe drawn on from one end (`end`) toward a finger at (x, y) (see
- * layPipe); nothing yet, it starts there (on the grid). Not past the longest
- * a tube can be.
+ * layPipe); nothing yet, it starts there (going on the grid once it sets
+ * off). Not past the longest a tube can be.
  */
 export function drawPipe(bends: readonly Pt[], end: 'a' | 'b', x: number, y: number): Pt[] {
-  if (!bends.length) return [[snapGrid(x), snapGrid(y)]];
+  if (!bends.length) return [[round1(x), round1(y)]];
   const b: Pt[] = (end === 'a' ? [...bends].reverse() : [...bends]).map(([px, py]): Pt => [px, py]);
   layPipe(b, x, y);
   if (b.length >= 2 && pathLength(pipePath(b)) > TUBE_LEN.max) return bends.map(([px, py]): Pt => [px, py]);
@@ -694,7 +697,7 @@ export function movePipe(bends: readonly Pt[], dx: number, dy: number): Pt[] {
 /** A drawn tube made into a pipe: laid along it as if a finger had drawn it, in straight runs. */
 export function straighten(pts: readonly Pt[]): Pt[] {
   if (pts.length < 2) return [];
-  const b: Pt[] = [[snapGrid(pts[0][0]), snapGrid(pts[0][1])]];
+  const b: Pt[] = [[pts[0][0], pts[0][1]]];
   // (turning only where it really goes another way: a long gentle curve in a few runs, not many)
   for (const [x, y] of pts.slice(1)) layPipe(b, x, y, PIPE.turn * 1.7);
   return b.length >= 2 ? b.map(([x, y]): Pt => [round1(x), round1(y)]) : [];
