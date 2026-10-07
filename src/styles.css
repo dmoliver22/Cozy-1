@@ -717,12 +717,14 @@ button:focus-visible {
 }
 .hc-namer {
   display: grid;
-  grid-template-columns: 48px 1fr;
+  /* (minmax: the name box shrinks to fit, its idea button still on the card) */
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
 }
 .hc-namer .hc-name {
   margin: 0;
+  min-width: 0;
 }
 .hc-hurt {
   color: #c0606e !important;

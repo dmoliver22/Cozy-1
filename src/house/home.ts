@@ -13,7 +13,7 @@
 // little present from the cats.
 
 import type { AudioEngine } from '../audio/audio';
-import { FLOOR_Y, WORLD_W, localFurniture } from '../game/props';
+import { FLOOR_Y, WORLD_W, localFurniture, type Prop } from '../game/props';
 import type { DecorPlacement, RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
 import { roomFor } from '../game/spawn';
@@ -25,7 +25,7 @@ import { FRAME_DT, GRAVITY } from '../physics/world';
 import { loadBest } from '../proto/kit';
 import { drawFurniture } from '../render/furnitureArt';
 import { lightOf, rgba, roundRect, shadowOf, type Ctx } from '../render/paint';
-import { containerShadow, drawContainerBack } from '../render/propArt';
+import { containerShadow, drawContainerBack, drawContainerFront } from '../render/propArt';
 import type { Expression } from '../render/catArt';
 import type { Renderer, Stage } from '../render/renderer';
 import { THEMES, drawDecor, drawShell, drawSunbeams } from '../render/roomArt';
@@ -37,7 +37,7 @@ import { Antics, MOOD_WORDS, TEMPERS, moodOf } from './antics';
 import { CatMaker } from './catMaker';
 import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
-import { GIFT_SPOT, fittingBoxes, houseRoom, houseSpawnOk } from './homeRoom';
+import { GIFT_SPOT, THING, fittingBoxes, houseRoom, houseSpawnOk, onWall, settleMoved, snapThing, thingBoxes, thingPos, thingProblem, thingProp, type Thing, type ThingId } from './homeRoom';
 import { inRingOf, planFlight, release, stepFlight, type Flight } from './leap';
 import { ATTIC_THEME, BASEMENT_THEME, paintAttic, paintAtticShade, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
 import {
@@ -80,7 +80,6 @@ import {
   ATTIC_DY,
   ATTIC_FLOOR_FRONT,
   ATTIC_FUNNEL,
-  ATTIC_FURNITURE,
   ATTIC_TOP,
   BASEMENT_DY,
   CHIMNEY,
@@ -173,23 +172,27 @@ function nearestView(y: number): number {
 /** The low window, where cats moving in hop in (its middle, and the bottom of a cat in it, clear of one on the sill). */
 const WINDOW = { x: 102, y: 160 };
 
-/** Long-press on a perch to pick it up (ms), and how far a finger may wander before it's a scroll (px). */
+/** Long-press on a perch (or one of the house's things) to pick it up (ms), and how far a finger may wander before it's a scroll (px). */
 const HOLD_MS = 420;
 const SLOP = 9;
 
-interface Placing {
-  id: number;
-  kind: PerchKind;
+/**
+ * Something being put somewhere: a perch (just bought, or picked up), or
+ * one of the house's own things (picked up: it's out of the room till it's
+ * put down, `prop` as it was).
+ */
+type Placing = {
   x: number;
   y: number;
   /** Where it was (moving one that's out), to put it back on cancel. */
   prev: { x: number; y: number } | null;
-}
+} & ({ k: 'perch'; id: number; kind: PerchKind } | { k: 'thing'; thing: Thing; prop: Prop });
+type PlacingThing = Placing & { k: 'thing' };
 
 type Drag =
   | { k: 'scroll'; id: number; sy: number; camY: number; t: number; lastY: number; lastT: number; v: number; moved: boolean }
-  | { k: 'ghost'; id: number; dx: number; dy: number }
-  | { k: 'hold'; id: number; sx: number; sy: number; perch: number; timer: number };
+  | { k: 'ghost'; id: number; dx: number; dy: number; sx: number; sy: number }
+  | { k: 'hold'; id: number; sx: number; sy: number; timer: number };
 
 export class Home {
   house: HouseSave;
@@ -211,8 +214,10 @@ export class Home {
   private lastLabels = '';
   /** Perches out in the house (their colliders are in the world). */
   private perchProps: PerchProp[] = [];
-  /** A perch being put somewhere. */
+  /** A perch (or one of the house's things) being put somewhere. */
   placing: Placing | null = null;
+  /** A thing being moved, as it would be where it's been dragged to. */
+  private ghostAt: { key: string; prop: Prop } | null = null;
   private drag: Drag | null = null;
   /** The camera: where it is, how fast it's going, and what it's after. */
   private camY = VIEW_Y.living;
@@ -250,12 +255,16 @@ export class Home {
     this.house = loadHouse(earlier);
     applyMyCat(this.house);
     applyNames(this.house);
-    // a perch put up where a tube is now (the tubes used to come with their floor) goes back in the cupboard
-    const fit = fittingBoxes(this.house, 'all');
-    for (const p of this.house.perches) {
+    // a thing moved somewhere it can't be goes back where it always was; a
+    // perch put up where a tube is now (the tubes used to come with their
+    // floor), or in one of the house's things, goes back in the cupboard
+    const h = this.house;
+    settleMoved(h);
+    const taken: Box[] = [...fittingBoxes(h, 'all'), ...thingBoxes(h)];
+    for (const p of h.perches) {
       if (p.stored) continue;
       const b = perchBox(p.kind, p.x, p.y);
-      if (fit.some((t) => b.x0 < t.x1 && b.x1 > t.x0 && b.y0 < t.y1 && b.y1 > t.y0)) p.stored = true;
+      if (taken.some((t) => b.x0 < t.x1 && b.x1 > t.x0 && b.y0 < t.y1 && b.y1 > t.y0)) p.stored = true;
     }
     writeHouse(this.house);
     this.shownTreats = this.house.treats;
@@ -358,8 +367,10 @@ export class Home {
   // ---------------------------------------------------------------------------
   // Painting (the renderer's stage)
 
+  /** What's painted into the house's tiles: the floors open, the perches, and the house's things as they are (one being moved isn't there). */
   private perchKey(): string {
-    return `${this.house.open.join(',')}|${this.perchProps.map((p) => `${p.save.kind}@${p.save.x},${p.save.y}`).join(';')}`;
+    const things = this.host.session.props.map((p) => `${p.uid}@${Math.round(p.x)},${Math.round(p.y)}`).join(';');
+    return `${this.house.open.join(',')}|${this.perchProps.map((p) => `${p.save.kind}@${p.save.x},${p.save.y}`).join(';')}|${things}`;
   }
 
   readonly stage: Stage = {
@@ -405,6 +416,7 @@ export class Home {
         ctx.restore();
       }
       this.paintPerches(ctx, 'attic', false);
+      this.paintContainers(ctx, 'attic');
       ctx.restore();
     }
     // the living room: its tall walls, the floor, decor, furniture, the ceiling (the roof tube's pipe goes up through it)
@@ -425,10 +437,7 @@ export class Home {
         [LOFT_HOOD.x - 21, LOFT_HOOD.x + 21],
       ]);
       this.paintPerches(ctx, 'living', false);
-      for (const p of s.containers) {
-        containerShadow(ctx, p);
-        drawContainerBack(ctx, p);
-      }
+      this.paintContainers(ctx, 'living');
       // (sun through the low window: the high one is in the shade of the eaves)
       drawSunbeams(ctx, decor.filter((d) => d.y > 0));
     }
@@ -450,6 +459,7 @@ export class Home {
       // where cats land, under the chute
       paintPerch(ctx, 'beanbag', SPOUT.x, FLOORS.basement.floorY - PERCHES.beanbag.height, 7);
       this.paintPerches(ctx, 'basement', false);
+      this.paintContainers(ctx, 'basement');
       ctx.restore();
     }
     // the roof's perches
@@ -463,6 +473,30 @@ export class Home {
     }
     for (const t of TUBES) paintTubeBack(ctx, t, !isOpen(h, t.needs));
     paintHouseFrame(ctx, r);
+  }
+
+  /** The vase and the glass tub on a floor, under the cats (the renderer paints their fronts over them). */
+  private paintContainers(ctx: Ctx, floor: FloorId): void {
+    for (const p of this.host.session.containers) {
+      if (floorAt(p.y - 1) !== floor) continue;
+      containerShadow(ctx, p);
+      drawContainerBack(ctx, p);
+    }
+  }
+
+  /** One of the house's things, whole: one being moved, where it's been dragged to. */
+  private paintThing(ctx: Ctx, p: Prop): void {
+    if (p.kind === 'container') {
+      containerShadow(ctx, p);
+      drawContainerBack(ctx, p);
+      drawContainerFront(ctx, p);
+      return;
+    }
+    const f = floorAt(p.y);
+    ctx.save();
+    ctx.translate(0, p.dy ?? 0);
+    drawFurniture(ctx, localFurniture(p), f === 'attic' ? ATTIC_THEME : f === 'basement' ? BASEMENT_THEME : THEMES.living);
+    ctx.restore();
   }
 
   private paintPerches(ctx: Ctx, floor: FloorId, front: boolean): void {
@@ -497,7 +531,7 @@ export class Home {
     const pl = this.placing;
     if (pl) {
       const problem = this.problem(pl);
-      const b = perchBox(pl.kind, pl.x, pl.y);
+      const b = this.placeBox(pl);
       const ok = problem === null;
       ctx.save();
       ctx.fillStyle = ok ? 'rgba(127,196,140,0.22)' : 'rgba(226,120,120,0.24)';
@@ -509,8 +543,11 @@ export class Home {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = ok ? 1 : 0.7;
-      paintPerch(ctx, pl.kind, pl.x, pl.y, pl.id);
-      if (hasFront(pl.kind)) paintPerchFront(ctx, pl.kind, pl.x, pl.y, pl.id);
+      if (pl.k === 'thing') this.paintThing(ctx, this.ghost(pl));
+      else {
+        paintPerch(ctx, pl.kind, pl.x, pl.y, pl.id);
+        if (hasFront(pl.kind)) paintPerchFront(ctx, pl.kind, pl.x, pl.y, pl.id);
+      }
       ctx.restore();
     }
   }
@@ -903,8 +940,19 @@ export class Home {
     const r = this.host.renderer;
     const [lo, hi] = this.stage.pan;
     const edge = this.carryEdge();
-    if (this.drag?.k === 'scroll') {
+    const ghost = this.ghostEdge();
+    const d = this.drag;
+    if (d?.k === 'scroll') {
       // (the finger moves it: see the pointer handlers)
+    } else if (ghost && d?.k === 'ghost') {
+      // (and what's being placed stays under the finger)
+      this.camGoal = null;
+      this.follow = null;
+      this.camV = ghost;
+      this.camY = clamp(this.camY + ghost * dt, lo, hi);
+      this.carried = true;
+      const w = r.screenToWorld(d.sx, d.sy);
+      this.dragGhostTo(w.x, w.y);
     } else if (edge) {
       this.camGoal = null;
       this.follow = null;
@@ -1066,16 +1114,36 @@ export class Home {
       const o = c.opening;
       if (o) out.push({ x: (o.x0 + o.x1) / 2, y: o.y, half: 4, maxR: Math.min(44, o.x1 - o.x0), floor: floorAt(o.y - 1) });
     }
-    // floors, clear of the tubes (the living room's is all taken: the funnel, the vase, the cushion and the basket)
-    if (isOpen(this.house, 'basement')) {
-      add(110, 270, FLOORS.basement.floorY, 44);
-      add(SPOUT.x - 20, SPOUT.x + 20, FLOORS.basement.floorY - PERCHES.beanbag.height, 44);
+    // the floors, where they're clear of the tubes and of what stands on them (the living room's isn't, to begin with: the funnel, the vase, the cushion and the tub)
+    for (const f of ['attic', 'living', 'basement'] as const) {
+      if (isOpen(this.house, f)) for (const [x0, x1] of this.floorSpans(f)) add(x0, x1, FLOORS[f].floorY, 44);
     }
-    if (isOpen(this.house, 'attic')) add(ATTIC_FURNITURE.crate.x1 + 4, ATTIC_FURNITURE.cabinet.x0 - 4, FLOORS.attic.floorY, 44);
+    if (isOpen(this.house, 'basement')) add(SPOUT.x - 20, SPOUT.x + 20, FLOORS.basement.floorY - PERCHES.beanbag.height, 44);
     if (isOpen(this.house, 'roof')) {
       add(110, 270, FLOORS.roof.floorY, 44);
       add(CHIMNEY.x0, CHIMNEY.x1, CHIMNEY.y, 40);
     }
+    return out;
+  }
+
+  /** The stretches of a floor clear of the tubes and of anything standing on it, wide enough for a cat to land on. */
+  private floorSpans(f: FloorId): [number, number][] {
+    const fy = FLOORS[f].floorY;
+    const cuts: [number, number][] = [];
+    const stand = (b: Box): void => {
+      if (b.y1 > fy - 8 && b.y0 < fy) cuts.push([b.x0 - 4, b.x1 + 4]);
+    };
+    for (const b of fittingBoxes(this.house)) stand(b);
+    for (const p of this.host.session.props) stand(p);
+    for (const p of this.perchProps) stand(p.box);
+    cuts.sort((a, b) => a[0] - b[0]);
+    const out: [number, number][] = [];
+    let x = 0;
+    for (const [a, b] of cuts) {
+      if (a - x >= 48) out.push([x, a]);
+      x = Math.max(x, b);
+    }
+    if (WORLD_W - x >= 48) out.push([x, WORLD_W]);
     return out;
   }
 
@@ -1390,18 +1458,20 @@ export class Home {
     if (!this.active) return false;
     const pl = this.placing;
     if (pl) {
-      const b = perchBox(pl.kind, pl.x, pl.y);
+      const b = this.placeBox(pl);
       const slop = 26 * this.host.renderer.unitsPerPx * 2;
       if (wx > b.x0 - slop && wx < b.x1 + slop && wy > b.y0 - slop && wy < b.y1 + slop) {
-        this.drag = { k: 'ghost', id, dx: pl.x - wx, dy: pl.y - wy };
+        this.drag = { k: 'ghost', id, dx: pl.x - wx, dy: pl.y - wy, sx, sy };
         return true;
       }
     }
     if (!pl) {
+      // (held still a moment, it comes up: a perch, or one of the house's own things)
       const perch = this.perchProps.find((p) => wx > p.box.x0 && wx < p.box.x1 && wy > p.box.y0 && wy < p.box.y1);
-      if (perch) {
-        const timer = window.setTimeout(() => this.pickUp(perch.save.id), HOLD_MS);
-        this.drag = { k: 'hold', id, sx, sy, perch: perch.save.id, timer };
+      const thing = perch ? null : this.thingUnder(wx, wy);
+      if (perch || thing) {
+        const timer = window.setTimeout(() => (perch ? this.pickUp(perch.save.id) : this.liftThing(thing!)), HOLD_MS);
+        this.drag = { k: 'hold', id, sx, sy, timer };
         return true;
       }
     }
@@ -1444,19 +1514,36 @@ export class Home {
       this.host.renderer.scrollTo(this.camY, true);
       return;
     }
-    // dragging a perch: it follows the finger (and the view scrolls at the screen's edges)
+    // dragging a perch (or a thing): it follows the finger (and the view scrolls along at the screen's top and bottom: see moveCamera)
+    d.sx = sx;
+    d.sy = sy;
+    this.dragGhostTo(wx, wy);
+  }
+
+  /** What's being placed follows the finger, to where it can go there. */
+  private dragGhostTo(wx: number, wy: number): void {
+    const d = this.drag;
     const pl = this.placing;
-    if (!pl) return;
-    const p = snapPerch(pl.kind, wx + d.dx, wy + d.dy);
-    pl.x = Math.round(p.x);
-    pl.y = Math.round(p.y);
-    const r = this.host.renderer;
-    const edge = sy < 110 ? -1 : sy > r.H - 150 ? 1 : 0;
-    if (edge) {
-      this.camGoal = null;
-      this.camV = edge * 320;
-    }
+    if (d?.k !== 'ghost' || !pl) return;
+    const p = pl.k === 'perch' ? snapPerch(pl.kind, wx + d.dx, wy + d.dy) : snapThing(pl.thing, wx + d.dx, wy + d.dy);
+    const x = Math.round(p.x);
+    const y = Math.round(p.y);
+    if (x === pl.x && y === pl.y) return;
+    pl.x = x;
+    pl.y = y;
     this.refreshPlaceBar();
+  }
+
+  /** How fast the view scrolls with what's being placed dragged to the top or the bottom of the screen (anywhere in the house: to another floor). */
+  private ghostEdge(): number {
+    const d = this.drag;
+    if (d?.k !== 'ghost' || !this.placing) return 0;
+    const r = this.host.renderer;
+    const band = 75;
+    const top = r.insets.top + band;
+    const bottom = r.H - r.insets.bottom - band * 0.7;
+    const u = d.sy < top ? -(top - d.sy) / band : d.sy > bottom ? (d.sy - bottom) / band : 0;
+    return Math.sign(u) * Math.min(1, Math.abs(u)) * 520;
   }
 
   pointerUp(id: number): boolean {
@@ -1506,12 +1593,14 @@ export class Home {
   private problem(pl: Placing): PlaceProblem {
     const taken: Box[] = fittingBoxes(this.house, 'all');
     const s = this.host.session;
+    // (a thing being moved is out of the room till it's put down)
     for (const p of s.props) taken.push({ x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1 });
-    for (const p of this.perchProps) if (p.save.id !== pl.id) taken.push(p.box);
-    const pr = placeProblem(pl.kind, pl.x, pl.y, openFloors(this.house), taken);
+    for (const p of this.perchProps) if (pl.k !== 'perch' || p.save.id !== pl.id) taken.push(p.box);
+    const open = openFloors(this.house);
+    const pr = pl.k === 'perch' ? placeProblem(pl.kind, pl.x, pl.y, open, taken) : thingProblem(pl.thing, pl.x, pl.y, open, taken);
     if (pr) return pr;
     // not on top of a cat
-    const b = perchBox(pl.kind, pl.x, pl.y);
+    const b = this.placeBox(pl);
     for (const c of s.cats) {
       const cb = c.body;
       cb.computeCentroid();
@@ -1528,7 +1617,7 @@ export class Home {
     if (this.floorInView !== f) this.goTo(f);
     // (in the living room, wherever up its wall you're looking)
     const mid = f === this.floorInView ? this.camY : f === 'living' ? VIEW_Y.living : viewMid(f);
-    const pl: Placing = { id, kind, x: WORLD_W / 2, y: mid, prev };
+    const pl: Placing = { k: 'perch', id, kind, x: WORLD_W / 2, y: mid, prev };
     // look for a free spot near the middle of the view
     let best: { x: number; y: number } | null = null;
     outer: for (let ring = 0; ring < 14; ring++) {
@@ -1571,12 +1660,13 @@ export class Home {
     const pl = this.placing;
     if (!pl) return;
     const pr = this.problem(pl);
-    const name = PERCHES[pl.kind].name.toLowerCase();
+    const name = pl.k === 'perch' ? PERCHES[pl.kind].name.toLowerCase() : pl.thing.name;
+    const standing = pl.k === 'perch' ? PERCHES[pl.kind].mount === 'floor' : !onWall(pl.thing);
     const why: Record<Exclude<PlaceProblem, null>, string> = {
       locked: 'That floor isn’t open yet',
-      outside: PERCHES[pl.kind].mount === 'floor' ? 'It stands on a floor' : 'Keep it inside the room, off the floor',
+      outside: standing ? 'It stands on a floor' : 'Keep it inside the room, off the floor',
       blocked: 'Something’s in the way',
-      sky: 'Out in the open only a cloud shelf floats',
+      sky: pl.k === 'perch' ? 'Out in the open only a cloud shelf floats' : 'That stays indoors',
       cat: 'A cat’s in the way',
     };
     (this.placeBar.querySelector('.place-hint') as HTMLElement).textContent = pr ? why[pr] : `Drag the ${name} where you’d like it`;
@@ -1595,20 +1685,94 @@ export class Home {
     this.bar.classList.remove('hidden');
     this.lastLabels = '';
     const h = this.house;
-    if (ok) {
-      placePerch(h, pl.id, pl.x, pl.y);
-      this.host.audio.seat(80);
-      this.host.renderer.puff(pl.x, pl.y + 4, 6);
-    } else if (pl.prev) placePerch(h, pl.id, pl.prev.x, pl.prev.y);
-    else storePerch(h, pl.id);
-    const save = h.perches.find((p) => p.id === pl.id);
-    if (save && !save.stored) {
-      this.addPerch(save);
-      this.host.session.registerShapes();
-      this.host.session.world.wakeAll();
+    if (pl.k === 'thing') this.putThing(pl, ok);
+    else {
+      if (ok) {
+        placePerch(h, pl.id, pl.x, pl.y);
+        this.host.audio.seat(80);
+        this.host.renderer.puff(pl.x, pl.y + 4, 6);
+      } else if (pl.prev) placePerch(h, pl.id, pl.prev.x, pl.prev.y);
+      else storePerch(h, pl.id);
+      const save = h.perches.find((p) => p.id === pl.id);
+      if (save && !save.stored) {
+        this.addPerch(save);
+        this.host.session.registerShapes();
+        this.host.session.world.wakeAll();
+      }
     }
     writeHouse(h);
     this.host.renderer.invalidate();
+  }
+
+  /** A thing put down where it's been dragged to (where it always was, it's not "moved" any more), or back where it was. */
+  private putThing(pl: PlacingThing, ok: boolean): void {
+    const t = pl.thing;
+    let prop = pl.prop;
+    if (ok) {
+      const home = thingPos(t);
+      if (pl.x === home.x && pl.y === home.y) delete this.house.moved[t.id];
+      else this.house.moved[t.id] = { x: pl.x, y: pl.y };
+      prop = thingProp(t, pl.x, pl.y, prop.uid);
+      this.host.audio.seat(80);
+      this.host.renderer.puff(pl.x, t.kind === 'container' ? pl.y - 6 : pl.y + 4, 6);
+    }
+    this.ghostAt = null;
+    this.host.session.addProp(prop);
+  }
+
+  /** What a perch or thing being placed takes up. */
+  private placeBox(pl: Placing): Box {
+    if (pl.k === 'perch') return perchBox(pl.kind, pl.x, pl.y);
+    const g = this.ghost(pl);
+    return { x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 };
+  }
+
+  /** A thing being moved, as it would be where it's been dragged to. */
+  private ghost(pl: PlacingThing): Prop {
+    const key = `${pl.thing.id}@${pl.x},${pl.y}`;
+    if (this.ghostAt?.key !== key) this.ghostAt = { key, prop: thingProp(pl.thing, pl.x, pl.y, pl.prop.uid) };
+    return this.ghostAt.prop;
+  }
+
+  /** The house's own thing under a finger, if any (the smallest, where they overlap). */
+  private thingUnder(wx: number, wy: number): Prop | null {
+    let best: Prop | null = null;
+    const area = (p: Prop): number => (p.x1 - p.x0) * (p.y1 - p.y0);
+    for (const p of this.host.session.props) {
+      if (!p.id || wx < p.x0 - 4 || wx > p.x1 + 4 || wy < p.y0 - 4 || wy > p.y1 + 4) continue;
+      if (!best || area(p) < area(best)) best = p;
+    }
+    return best;
+  }
+
+  /** Long-pressed one of the house's things: up it comes, to be put somewhere else (or a word on why it stays where it is). */
+  private liftThing(prop: Prop): void {
+    const d = this.drag;
+    if (d?.k === 'hold') this.drag = null;
+    const t = THING[prop.id as ThingId] as Thing | undefined;
+    if (!t || this.placing || !this.host.session.props.includes(prop)) return;
+    if (t.stays) {
+      this.toast(this.house.residents[0] ?? 'kitten', `${t.stays}.`, 2600);
+      return;
+    }
+    const prev = thingPos(t, this.house.moved);
+    this.host.session.removeProp(prop);
+    this.host.renderer.invalidate();
+    this.host.audio.grab(1.2, false);
+    this.beginMoving({ k: 'thing', thing: t, prop, x: prev.x, y: prev.y, prev }, d);
+  }
+
+  /** Moving something that was out (a perch, or one of the house's things): the bar for it, and the finger that picked it up drags it. */
+  private beginMoving(pl: Placing, d: Drag | null): void {
+    this.placing = pl;
+    this.bar.classList.add('hidden');
+    this.placeBar.classList.remove('hidden');
+    this.lastLabels = '';
+    this.refreshPlaceBar();
+    if (d?.k === 'hold') {
+      const w = this.host.renderer.screenToWorld(d.sx, d.sy);
+      this.drag = { k: 'ghost', id: d.id, dx: pl.x - w.x, dy: pl.y - w.y, sx: d.sx, sy: d.sy };
+    }
   }
 
   /** Long-pressed a perch: up it comes, to be put somewhere else. */
@@ -1622,17 +1786,7 @@ export class Home {
     this.host.session.world.wakeAll();
     this.host.renderer.invalidate();
     this.host.audio.grab(1.2, false);
-    this.placing = { id, kind: p.save.kind, x: prev.x, y: prev.y, prev };
-    this.bar.classList.add('hidden');
-    this.placeBar.classList.remove('hidden');
-    this.lastLabels = '';
-    this.refreshPlaceBar();
-    // the same finger carries on dragging it
-    if (d?.k === 'hold') {
-      const r = this.host.renderer;
-      const w = r.screenToWorld(d.sx, d.sy);
-      this.drag = { k: 'ghost', id: d.id, dx: prev.x - w.x, dy: prev.y - w.y };
-    }
+    this.beginMoving({ k: 'perch', id, kind: p.save.kind, x: prev.x, y: prev.y, prev }, d);
   }
 
   // ---------------------------------------------------------------------------

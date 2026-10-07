@@ -647,6 +647,48 @@ export class Session {
 
   // --- The house -----------------------------------------------------------
 
+  /**
+   * A prop taken out of the room (the house: picked up to be moved): its
+   * colliders go (what was on it falls), and a cat in it isn't any more.
+   */
+  removeProp(p: Prop): void {
+    const k = this.containers.indexOf(p);
+    this.props = this.props.filter((q) => q !== p);
+    this.furniture = this.furniture.filter((q) => q !== p);
+    for (const sh of p.shapes) this.world.removeStatic(sh);
+    if (k >= 0) {
+      this.containers.splice(k, 1);
+      // (the cats keep track of the containers by where they are in the list)
+      const after = (i: number): number => (i === k ? -1 : i > k ? i - 1 : i);
+      for (const cat of this.cats) {
+        cat.overlaps.splice(k, 1);
+        cat.near = after(cat.near);
+        cat.blockedBy = after(cat.blockedBy);
+        if (cat.intent) cat.intent = cat.intent.k === k ? null : { ...cat.intent, k: after(cat.intent.k) };
+        if (cat.seat) {
+          if (cat.seat.container === k) {
+            cat.seat = null;
+            this.events.push({ t: 'unseat', cat });
+          } else cat.seat.container = after(cat.seat.container);
+        }
+      }
+    }
+    this.registerShapes();
+    this.world.wakeAll();
+  }
+
+  /** A prop put (back) in the room. */
+  addProp(p: Prop): void {
+    this.props.push(p);
+    if (p.kind === 'container') {
+      this.containers.push(p);
+      for (const cat of this.cats) cat.overlaps.push({ covered: 0, fill: 0, inside: 0 });
+    } else this.furniture.push(p);
+    for (const sh of p.shapes) this.world.addStatic(sh);
+    this.registerShapes();
+    this.world.wakeAll();
+  }
+
   /** Colliders came or went (a perch, a tube): sort out again which are containers and which are furniture. */
   registerShapes(): void {
     this.shapeToContainer.clear();

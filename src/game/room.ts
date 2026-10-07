@@ -81,6 +81,9 @@ export interface BuiltRoom {
  */
 export type SpawnOk = (x: number, y: number, r: number, from: { x: number; y: number }) => boolean;
 
+/** Where containers' uids start (furniture's count up from 1). */
+const CONTAINER_UIDS = 1000;
+
 /**
  * Build physics for a room (inside `shell`, the room's walls, floor and
  * ceiling). Cats are dropped onto their surfaces and settled. With `spawnOk`,
@@ -92,8 +95,10 @@ export function buildRoom(def: RoomDef, settleFrames = 75, shell: () => StaticSh
   const world = new World();
   world.unmerge = unmerge;
   for (const s of shell()) world.addStatic(s);
-  const furniture = def.furniture.map(buildFurniture);
-  const containers = def.containers.map(buildContainer);
+  // (every prop's uid its own: its colliders carry it. A container's is the
+  // same whatever else the room has, and its glass is painted from it.)
+  const furniture = def.furniture.map((f) => buildFurniture(f));
+  const containers = def.containers.map((c, k) => buildContainer(c, CONTAINER_UIDS + k));
   const props = [...furniture, ...containers];
   for (const p of props) for (const s of p.shapes) world.addStatic(s);
   // (with spawnOk, the lowest first: a cat that was on top of another makes room, not the one under it)

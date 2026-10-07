@@ -226,6 +226,8 @@ export interface ContainerPlacement {
   scale?: number;
   /** Colour variant index for the art. */
   tint?: number;
+  /** The house: which of its things this is (they can be moved about: see homeRoom's THINGS). */
+  id?: string;
 }
 
 export interface FurniturePlacement {
@@ -242,6 +244,8 @@ export interface FurniturePlacement {
    * at FLOOR_Y) and moved down (or up) by this much.
    */
   dy?: number;
+  /** The house: which of its things this is (they can be moved about: see homeRoom's THINGS). */
+  id?: string;
 }
 
 export interface Prop {
@@ -274,6 +278,8 @@ export interface Prop {
   ramp?: { ax: number; ay: number; bx: number; by: number };
   /** Furniture on another floor of the house: how far it's moved from its room layout. */
   dy?: number;
+  /** The house: which of its things this is. */
+  id?: string;
 }
 
 let nextPropUid = 1;
@@ -354,6 +360,7 @@ export function buildContainer(c: ContainerPlacement, keepUid?: number): Prop {
     capacity: Math.abs(polygonAreaPts(interior)),
     opening: { x0: Math.min(oa.x, ob.x), x1: Math.max(oa.x, ob.x), y: oa.y },
     surfaces: [],
+    id: c.id,
   };
 }
 
@@ -378,8 +385,8 @@ function sampleInterior(poly: Vec2[]): { samples: Float64Array; cellArea: number
   return { samples: Float64Array.from(pts), cellArea: SAMPLE_STEP * SAMPLE_STEP };
 }
 
-export function buildFurniture(f: FurniturePlacement): Prop {
-  const uid = nextPropUid++;
+export function buildFurniture(f: FurniturePlacement, keepUid?: number): Prop {
+  const uid = keepUid ?? nextPropUid++;
   const shapes: StaticShape[] = [];
   const surfaces: Surface[] = [];
   const { x0, x1, y } = f;
@@ -467,6 +474,7 @@ export function buildFurniture(f: FurniturePlacement): Prop {
     surfaces,
     ramp,
     dy: dy || undefined,
+    id: f.id,
   };
 }
 

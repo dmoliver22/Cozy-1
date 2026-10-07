@@ -56,6 +56,14 @@ export class World {
     for (const b of this.bodies) b.wake();
   }
 
+  removeStatic(s: StaticShape): void {
+    const i = this.statics.indexOf(s);
+    if (i < 0) return;
+    this.statics.splice(i, 1);
+    this.shapeById.delete(s.id);
+    this.wakeAll();
+  }
+
   removeStaticsOfProp(propId: number): void {
     for (let i = this.statics.length - 1; i >= 0; i--) {
       if (this.statics[i].propId === propId) {

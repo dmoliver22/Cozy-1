@@ -448,10 +448,34 @@ Notes on the choices:
   green or red box while you drag it (floor perches stand on the floor under
   the finger, wall ones go anywhere on a wall clear of the floor, the
   furniture and the tubes, capped or not, and out on the roof only the cloud
-  shelf floats), and a long press on a perch picks it up again. A
+  shelf floats), and a long press on a perch picks it up again. Held at
+  the top or the bottom of the screen, whatever you're dragging takes the
+  view along with it (it stays under the finger), so it can go up or down
+  to another floor. A
   perch is a few colliders (a rounded box, a sling of capsules, a bowl) and a
   painted back and front: a cat curled in the hammock, the pod or the bed is
   drawn between the two (`Stage.behindFront`).
+- **The house's own things move too** (`THINGS` in `homeRoom.ts`): the long
+  shelf, the vase and the glass tub, and once their floors are open the
+  attic's crate, cabinet and shelf and the basement's bookcase and shelf. A
+  long press picks one up and it's dragged like a perch: anywhere on an open
+  floor indoors (the roof is outdoors), a shelf anywhere up a wall (and
+  flush with the wall's end when it's nearly there), everything else
+  standing on the floor of the storey under the finger, clear of the tubes,
+  the perches, the other things and the cats. While it's up it's out of the
+  room (`Session.removeProp`: its colliders go, so a cat on it falls, and a
+  cat in a jar is in nothing; the cats keep track of containers by their
+  place in the list, so those are renumbered), and it goes back in where
+  it's put (`addProp`, its uid kept, so a jar's glass looks the same) or
+  where it was. The window sill and the two cat steps under the tubes'
+  hoods stay put, and a long press on one says why. The save keeps where
+  each moved thing is (`moved`: a jar by the middle of its bottom, furniture
+  by the middle of its top); one somewhere it can't be any more goes back
+  where it always was, and then any moved to where that was (`settleMoved`).
+  A cat's favourite spot on a thing goes with it (the Void into the vase
+  wherever it is). The jars are painted on whichever floor they're on, and
+  the cats' spots on the floors are wherever a floor's clear, so a cat
+  leaps to the living room floor once you've cleared some of it.
 - **Perches that move** (`springs.ts`). The hammock is a simulated sling:
   nine points on springs between the two pegs, stepped in fourteen substeps a
   frame, its links the colliders (moved in place each frame, so a cat rides
@@ -582,7 +606,10 @@ with each restyle (`lookKey`).
   real `'mine'` isn't touched until you save). A new size or squish drops a
   fresh cat onto the cushion, so you see how it lands; a new coat repaints the
   same cat where it is (its state is snapshotted into a body in the new
-  coat). Tap it to poke it into a hop.
+  coat). Tap it to poke it into a hop: a little up, and back toward the
+  middle of the cushion (a hop with a random sideways kick went one way
+  more often than not, and on off the edge). A poke while it's in the air
+  only boops it, and one that falls off anyway is dropped back on.
 - **Where it's offered.** The welcome card's first button; once to a house
   from before there was a maker (`catAsked`), when nothing else is on screen;
   the cats card (a row of its own, Make or Restyle) and the menu. A new cat
@@ -592,8 +619,24 @@ with each restyle (`lookKey`).
 - **In Cat Drop** it's first in the picker once made, and picked if you
   haven't picked another before. A standalone `drop.html` reads it from the
   house's save on the same site.
-- **The save** is v6: `cat` (the design, made safe on load: anything out of
-  range or unknown goes back to the default) and `catAsked`. A house that
+- **The save** has `cat` (the design, made safe on load: anything out of
+  range or unknown goes back to the default) and `catAsked` (v6). A house that
   says your cat lives here but has lost its design drops it from the
   residents.
+
+## Names
+
+Every cat who lives with you is called what you call it; one you haven't
+named, and one that hasn't moved in yet, goes by its kind (Kitten, Tabby,
+Persian, Maine Coon, Chonk, Void). The welcome card asks what the first two
+are called, a new cat's card asks as it moves in (its title says "A Persian
+moved in!" until you've named her, then her name), and the cats card has a
+box on every resident's row to rename it any time; a ↻ beside a box offers
+a name nobody has. A name saves as you type and is used everywhere at once:
+the house's cards and toasts, the faces' titles up top and Cat Drop's
+picker (`catName` in `breeds.ts`, set from the house's save). Your own cat's
+name is its design's. Names keep to the same letters as your cat's. The
+save is v7: `names`, a name for each resident you've named (a name the same
+as its kind isn't kept); a house from before keeps the names its cats had
+(Pip, Mochi, Duchess and so on), and `moved` (see the house's things).
 

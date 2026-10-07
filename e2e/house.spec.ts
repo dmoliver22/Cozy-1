@@ -130,11 +130,12 @@ test('making a Maine Coon in Cat Jar says a Maine Coon wants to move in, right a
 
 interface HouseHandle {
   renderer: { cam: { y: number }; worldToScreen(x: number, y: number): { x: number; y: number } };
-  session: { cats: { name: string; breed: string; body: { cx: number; cy: number; computeCentroid(): void } }[] };
+  session: { cats: { name: string; breed: string; body: { cx: number; cy: number; computeCentroid(): void } }[]; containers: { id?: string; x: number; y: number }[] };
   home: {
-    house: { treats: number; open: string[]; perches: { kind: string; x: number; y: number; stored?: boolean }[] };
+    house: { treats: number; open: string[]; perches: { kind: string; x: number; y: number; stored?: boolean }[]; moved: Record<string, { x: number; y: number }> };
     placing: { x: number; y: number } | null;
     gift: { x: number; y: number } | null;
+    floorInView: string;
     goTo(f: string): void;
   };
 }
@@ -252,6 +253,61 @@ test('the shop: buy a wall shelf, put it on the wall, and it stays there', async
   const high = (await hh(page)).perches;
   expect(high).toHaveLength(3);
   expect(high[2].y).toBeLessThan(-100);
+});
+
+test("move the house's own things: a long press picks one up, and it goes where you put it (the vase down to the basement)", async ({ page }) => {
+  await richHouse(page, ['kitten', 'tabby'], 0, ['basement']);
+  const handle = (): Promise<{ vase: { x: number; y: number }; moved: Record<string, { x: number; y: number }>; floor: string }> =>
+    page.evaluate(() => {
+      const a = (window as unknown as { __app: HouseHandle }).__app;
+      const v = a.session.containers.find((c) => c.id === 'vase');
+      return { vase: v ? { x: v.x, y: v.y } : { x: NaN, y: NaN }, moved: a.home.house.moved, floor: a.home.floorInView };
+    });
+  const screen = (x: number, y: number): Promise<{ x: number; y: number }> =>
+    page.evaluate(([wx, wy]) => (window as unknown as { __app: HouseHandle }).__app.renderer.worldToScreen(wx, wy), [x, y] as const);
+  // the sill stays where it is, and says why (pressed at its far end: Pip sits on it)
+  const sill = await screen(158, 228);
+  await page.mouse.move(sill.x, sill.y);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.up();
+  await expect(page.locator('.hh-toast')).toContainText('The sill goes with its window');
+  await expect(page.locator('.place-bar')).toBeHidden();
+  // a long press on the vase picks it up
+  const from = await screen(144, 500);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await expect(page.locator('.place-bar')).toBeVisible();
+  await expect(page.locator('.place-hint')).toHaveText('Drag the vase where you’d like it');
+  // carried to the bottom of the screen the view goes down with it, to the basement
+  const vp = page.viewportSize()!;
+  await page.mouse.move(vp.width / 2, vp.height - 12, { steps: 10 });
+  await page.waitForFunction(() => (window as unknown as { __app: HouseHandle }).__app.home.floorInView === 'basement', null, { timeout: 8000 });
+  await page.mouse.move(vp.width / 2, vp.height * 0.45, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Put it here' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Put it here' }).click();
+  await expect(page.locator('.place-bar')).toBeHidden();
+  const after = await handle();
+  expect(after.floor).toBe('basement');
+  expect(after.moved.vase).toEqual(after.vase);
+  expect(after.vase.y).toBeGreaterThan(1000);
+  // and it's still there next time
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  expect((await handle()).vase).toEqual(after.vase);
+  // picked up and put back, it's where it was
+  await page.evaluate(() => (window as unknown as { __app: HouseHandle }).__app.home.goTo('basement'));
+  await page.waitForTimeout(1500);
+  const again = await screen(after.vase.x, after.vase.y - 50);
+  await page.mouse.move(again.x, again.y);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Put it back' })).toBeVisible();
+  await page.getByRole('button', { name: 'Put it back' }).click();
+  expect((await handle()).vase).toEqual(after.vase);
 });
 
 test('open the roof garden, and whoosh a cat up to it through the suction tube', async ({ page }) => {
