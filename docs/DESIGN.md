@@ -374,31 +374,59 @@ Notes on the choices:
   landing on, stretching a little along the way it's going, and lands with
   the speed it's falling at (a ballistic kick fell short: a soft body pushing
   off loses much of its spring). Nobody leaps straight up into the underside
-  of a ledge, or to where someone is or is on the way to.
-- **Never in one another, never in the furniture.** A cat put down in a spot
-  that isn't clear any more (saved before a vase or a cushion stood there,
-  restyled bigger beside a neighbour, two saved in the same place) would be
-  stuck there for good: the solver pushes skin out of things the nearest way,
-  so it ends up wrapped round a wall or tangled up in the other cat, jagged
-  and quivering. So the house builds its cats lowest first, and one whose
-  ring (nine tenths of its radius, all of it, so a thin wall through its
-  middle counts too) isn't clear of the colliders and of the cats already
-  placed goes to the nearest place that is, up or to either side, on the
-  same floor and clear of the tubes (`spawn.ts`, `houseSpawnOk`). Cats that
-  only touch never have a node inside one another (their skins keep them
-  apart), so two that do for six frames running are slid apart a little each
-  frame, the smaller further (`World.unmerge`; Cat Jar leaves it off, as it
-  packs its pile tight on purpose). And a cat stuck fast for a second (its
-  skin crossed over itself, a few of its nodes deep in something, or
-  something inside it: a thin rod slipped between two of its nodes, a
-  cushion it's wrapped right round), or still in another cat it couldn't be
-  slid out of after a second and a half (the smaller one), is put down again
-  in the nearest clear place as a fresh round cat, with a puff and a boop
-  (`Session.unstick`); one stuck again soon after gets more room. None of
-  it ever touches a cat being carried. `tests/stuck.test.ts` builds saves
-  with every one of those clashes, forces cats into one another and into the
-  shelf, and piles every cat up by hand to check nothing is slid or moved
-  that only touches.
+  of a ledge, or to where someone is or is on the way to, or anywhere there
+  isn't room for it (a cat too big for the vase's neck doesn't hop in: a hop
+  into the vase or the basket lands on its opening, to pour in from there).
+  And a leap never goes through anything (`leap.ts`): the moment the cat
+  would touch the furniture, a perch or another cat on the way, it's back in
+  the physics where it was, moving as it was, and comes down from there.
+  Landed blind where it was headed, a cat ended up inside the vase's glass,
+  or (pouncing on a cat that had moved, bouncing on the cushion) inside the
+  other cat.
+- **Never in one another, never in the furniture.** A cat that ends up in
+  something stays there for good: the solver pushes skin out of things the
+  nearest way, so it's left wrapped round a wall or wound round the other
+  cat, jagged and quivering. So nothing puts one there:
+  - *Putting cats down.* The house builds its cats lowest first, and one
+    whose ring (nine tenths of its radius, all of it, so a thin wall through
+    its middle counts too) isn't clear of the colliders and of the cats
+    already placed goes to the nearest place that is, up or to either side,
+    on the same floor and clear of the tubes (`spawn.ts`, `houseSpawnOk`).
+    A newcomer in at the window where a cat already is comes in beside it;
+    two out of a scrap come out clear of the furniture and of one another
+    (`Session.placeClear`); and one coming out of a tube waits at the mouth
+    while another sits in its way, which is shooed off with a hop aside.
+  - *Thin walls.* A node squeezed past the middle of a thin wall (a vase's
+    glass, a basket's side) by what's pressing on it was pushed out the
+    nearest way, which is through. Now a node that came into a collider
+    through a face this substep goes back out through that face
+    (`entryFace` in `world.ts`).
+  - *The bouncy cushion* springs up whoever's lying on the cat that landed
+    on it too, just as fast. Sprung up alone, the cat underneath was shot up
+    into the one on top and came out the other side of it.
+  - *Last resorts.* Cats that only touch never have a node inside one
+    another or their skins crossing (366,000 frames of cats piled, dropped,
+    flung and bounced, without one). Two that do are slid apart a little each
+    frame, the smaller further (`World.unmerge`; Cat Jar leaves it off, as it
+    packs its pile tight on purpose). Skins crossing counts, not just nodes
+    inside: two cats wound round one another have every node pushed out of
+    the other and still overlap. How long a pair has been in one another
+    counts up while they are and down while they aren't, so two that keep
+    coming apart and going back in are still seen to. A cat stuck fast for a
+    second (its skin crossed over itself, a few of its nodes deep in
+    something, or something inside it: a thin rod slipped between two of its
+    nodes, a cushion it's wrapped right round), or in another cat for a
+    second that it couldn't be slid out of (the smaller one), is put down
+    again in the nearest clear place as a fresh round cat, with a puff and a
+    boop (`Session.unstick`); one stuck again soon after gets more room.
+    None of it ever touches a cat being carried.
+  `tests/stuck.test.ts` builds saves with every one of those clashes, forces
+  cats into one another and into the shelf, leaps cats into the vase and
+  pounces on a cat that moves, and piles every cat up by hand to check
+  nothing is slid or moved that only touches; an end-to-end test runs three
+  minutes of the house at full tilt (the cats hopping, pouncing and playing,
+  someone dropping and flinging them onto one another and the cushion) and
+  checks nothing ever needed the last resorts.
 - **Treats.** Every game pays treats, about the same for the time it takes
   (ten or fifteen a minute): Cat Jar a treat per 150 points (~30 for a whole
   jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).

@@ -803,6 +803,8 @@ export class Antics {
       b.wake();
       b.computeCentroid();
       if (!w.bodies.includes(b)) w.addBody(b);
+      // (not into the furniture beside the scrap, or the other cat)
+      this.host.session.placeClear(c);
       c.settled = 0;
       c.sinceTouch = 0;
       this.show(c, 'cross', 2.4, -side);

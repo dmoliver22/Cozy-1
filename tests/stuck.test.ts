@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FLOOR_Y } from '../src/game/props';
 import { Session, type GameEvent } from '../src/game/session';
-import { distToShape, nearestRoom, roomFor, stuckFast } from '../src/game/spawn';
+import { distToShape, inSomething, nearestRoom, roomFor, stuckFast } from '../src/game/spawn';
+import { inRingOf, planFlight, release, stepFlight } from '../src/house/leap';
+import { Tubes } from '../src/house/tubes';
+import { FLOORS, SPOUT } from '../src/house/layout';
 import { GIFT_SPOT, SPOTS, VASE_X, homeFurniture, houseRoom, houseSpawnOk } from '../src/house/homeRoom';
 import { YARN_HOME, YARN_R } from '../src/house/antics';
 import { ALL_CATS, applyMyCat, type HouseSave } from '../src/house/house';
@@ -17,10 +20,10 @@ import { SoftBody } from '../src/physics/softbody';
 // and a cat stuck fast is put down again somewhere clear.
 
 /** The house as Home builds it: its shell, the chimney and the capped tubes, the bouncy cushion, and the house's own options. */
-function house(residents: BreedId[], where: HouseSave['where'], opts: { unmerge?: boolean } = {}) {
-  const h = { open: [] as HouseSave['open'], residents, where };
+function house(residents: BreedId[], where: HouseSave['where'], opts: { unmerge?: boolean; open?: HouseSave['open'] } = {}) {
+  const h = { open: opts.open ?? ([] as HouseSave['open']), residents, where };
   const cushion = buildPerch({ id: 1, kind: 'bounce', x: LIVING_CUSHION_X, y: floorTop('bounce', 'living') });
-  const shell = () => [...houseShell(), ...chimneyShapes(90003), ...TUBES.map((t, k) => tubeShapes(t, 90010 + k, false)).flat(), ...cushion.shapes];
+  const shell = () => [...houseShell(), ...chimneyShapes(90003), ...TUBES.map((t, k) => tubeShapes(t, 90010 + k, h.open.includes(t.needs as never))).flat(), ...cushion.shapes];
   const s = new Session(houseRoom(h), opts.unmerge === false ? { shell } : { shell, spawnOk: houseSpawnOk(h), unmerge: true });
   const fell = new WeakMap<SoftBody, number>();
   const events: GameEvent[] = [];
@@ -148,6 +151,24 @@ describe('cats in one another', () => {
     }
   });
 
+  it('two caught in a knot that keeps coming apart and going back in are still seen to, within a couple of seconds', () => {
+    const { s, step, rescued } = house(['kitten', 'tabby'], { kitten: { x: 270, y: 338 }, tabby: { x: 345, y: 338 } });
+    step(60);
+    const [kitten, tabby] = s.cats;
+    // (pushed back into it two frames in three, as a skin looped round the other would be)
+    for (let f = 0; f < 150 && !rescued().length; f++) {
+      if (f % 3 !== 2) {
+        kitten.body.computeCentroid();
+        tabby.body.computeCentroid();
+        tabby.body.shift((kitten.body.cx + 12 - tabby.body.cx) * 0.5, (kitten.body.cy - tabby.body.cy) * 0.5);
+      }
+      step();
+    }
+    expect(rescued().map((e) => e.cat.breed)).toEqual(['kitten']);
+    step(120);
+    expect(inOneAnother(kitten.body, tabby.body)).toBe(false);
+  });
+
   it('but cats piled up by hand are never slid about or moved: they only ever touch', () => {
     const shift = vi.spyOn(SoftBody.prototype, 'shift');
     let seed = 41;
@@ -235,4 +256,140 @@ it('the day\'s present stands on the window sill, clear of everything, between P
       for (const sh of s.world.statics) expect(distToShape(sh, x, y)).toBeGreaterThan(0);
     }
   }
+});
+
+describe('leaps at home', () => {
+  /** Fly a cat (out of the world, as Home does) from where it is to land on (x, y), and put it back in the world. */
+  function leap(s: Session, b: SoftBody, x: number, y: number, low = false, during?: (f: number) => void) {
+    const f = planFlight(b, x, y, low, FLOORS.living.ceilY + b.p.radius + 6);
+    s.world.removeBody(b);
+    let at: ReturnType<typeof stepFlight> = 'flying';
+    for (let k = 0; at === 'flying' && k < 600; k++) {
+      during?.(k);
+      at = stepFlight(f, b, s.world.statics, s.world.bodies);
+    }
+    release(f, b);
+    s.world.addBody(b);
+    return at;
+  }
+
+  it('land where they were going when nothing is in the way', () => {
+    const { s, step } = house(['tabby'], {});
+    step(30);
+    const b = s.cats[0].body;
+    // from the long shelf up onto the sill
+    expect(leap(s, b, 120, 212)).toBe('landed');
+    b.computeCentroid();
+    expect(Math.abs(b.cx - 120)).toBeLessThan(2);
+    step(120);
+    b.computeCentroid();
+    expect(b.cy).toBeLessThan(212);
+    expect(b.cy).toBeGreaterThan(212 - 2 * b.p.radius);
+  });
+
+  it('a cat too big for the vase that hops into it stops at the glass, and is never in it', () => {
+    for (const breed of ['tabby', 'persian', 'chonk'] as BreedId[]) {
+      const { s, step, rescued } = house([breed], {});
+      step(30);
+      const b = s.cats[0].body;
+      // (where a hop into the vase used to land it: inside, below the neck)
+      expect(leap(s, b, VASE_X, 511)).toBe('touched');
+      step(240);
+      expect(inSomething(s.world.statics, s.world.bodies, b)).toBe(false);
+      expect(stuckFast(s.world.statics, b)).toBe(false);
+      expect(rescued()).toEqual([]);
+    }
+  });
+
+  it('a pounce on a cat that\'s moved meets it on the way: they land touching, not in one another', () => {
+    const { s, step, rescued } = house(['kitten', 'tabby'], { kitten: { x: 102, y: 212 }, tabby: { x: 300, y: 338 } });
+    step(60);
+    const pouncer = s.cats[0].body;
+    const target = s.cats[1].body;
+    target.computeCentroid();
+    let top = Infinity;
+    for (let i = 0; i < target.n; i++) top = Math.min(top, target.y[i]);
+    // (the target bounces up into where the pouncer is coming down, half way through)
+    const at = leap(s, pouncer, target.cx, top + 2, true, (f) => {
+      if (f === 8) target.shift(0, -40);
+    });
+    expect(at).toBe('touched');
+    step(120);
+    expect(inOneAnother(pouncer, target)).toBe(false);
+    expect(rescued()).toEqual([]);
+  });
+
+  it('one that sets off already pressed into another can still leave it', () => {
+    const { s, step } = house(['kitten', 'tabby'], { kitten: { x: 270, y: 338 }, tabby: { x: 345, y: 338 } });
+    step(60);
+    const a = s.cats[0].body;
+    const b = s.cats[1].body;
+    // (slid along until a few of its nodes are in the other one)
+    for (let k = 0; k < 40 && !inOneAnother(a, b); k++) a.shift(2, 0);
+    expect(inOneAnother(a, b)).toBe(true);
+    const f = planFlight(a, 120, 212, false, FLOORS.living.ceilY);
+    s.world.removeBody(a);
+    expect(stepFlight(f, a, s.world.statics, s.world.bodies)).toBe('flying');
+  });
+
+  it('a newcomer in at the window where a cat already is comes in beside it', () => {
+    const { s, step } = house(['kitten'], { kitten: { x: 102, y: 212 } });
+    step(30);
+    const c = s.addCat('chonk', 102, 160, 'Biscuit');
+    expect(inOneAnother(c.body, s.cats[0].body)).toBe(false);
+    expect(inSomething(s.world.statics, s.world.bodies, c.body)).toBe(false);
+  });
+
+  it('a cat put back in the furniture or in another cat (out of a scrap) goes somewhere clear, still moving', () => {
+    const { s, step } = house(['kitten', 'tabby'], {});
+    step(30);
+    const c = s.cats[1];
+    expect(s.placeClear(c)).toBe(false);
+    c.body.placeAt(300, 344);
+    c.body.kick(120, -80);
+    expect(s.placeClear(c)).toBe(true);
+    expect(inSomething(s.world.statics, s.world.bodies, c.body)).toBe(false);
+    c.body.computeCentroid();
+    expect(c.body.vcx).toBeGreaterThan(100);
+  });
+
+  it('a cat coming out of the chute waits at the mouth while something\'s in its way, then comes out', () => {
+    const chute = TUBES.find((t) => t.id === 'chute')!;
+    const { s, step } = house(['kitten', 'tabby'], {}, { open: ['basement'] });
+    const [cat, other] = s.cats;
+    const tubes = new Tubes(() => s.world);
+    let asked = 0;
+    const rings: SoftBody[][] = [];
+    tubes.inTheWay = (rider, out) => {
+      asked++;
+      // (the other cat sits right where it comes out, till it's shooed off)
+      if (asked < 30) {
+        let mx = 0;
+        let my = 0;
+        for (let i = 0; i < rider.body.n; i++) {
+          mx += out[i * 2] / rider.body.n;
+          my += out[i * 2 + 1] / rider.body.n;
+        }
+        other.body.placeAt(mx + 10, my + 6);
+      }
+      // (shooed off after half a second)
+      else if (asked === 30) other.body.placeAt(SPOUT.x + 150, FLOORS.basement.floorY - 60);
+      rings.push(inRingOf(out, rider.body.n, s.world.bodies, rider.body));
+      return rings[rings.length - 1].length > 0;
+    };
+    tubes.start(cat, chute, false);
+    let out = -1;
+    for (let f = 0; f < 900 && out < 0; f++) {
+      tubes.step();
+      step();
+      if (!tubes.riding(cat)) out = f;
+    }
+    expect(rings[0]).toEqual([other.body]);
+    expect(asked).toBeGreaterThanOrEqual(30);
+    expect(out).toBeGreaterThan(0);
+    step(60);
+    expect(inOneAnother(cat.body, other.body)).toBe(false);
+    cat.body.computeCentroid();
+    expect(floorAt(cat.body.cy)).toBe('basement');
+  });
 });

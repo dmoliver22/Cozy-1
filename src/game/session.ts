@@ -2,7 +2,7 @@
 // pouring into containers and settling in ("if it fits, I sits"). Pure
 // logic, no rendering.
 
-import type { BreedId } from '../physics/breeds';
+import { BREEDS, type BreedId } from '../physics/breeds';
 import type { Material, StaticShape } from '../physics/shapes';
 import type { SoftBody } from '../physics/softbody';
 import type { World } from '../physics/world';
@@ -11,7 +11,7 @@ import { cozyScore, measureOverlap, type CozyResult, type Overlap } from './fit'
 import { FLOOR_Y, WORLD_W, type Prop } from './props';
 import { SoftBody as Body } from '../physics/softbody';
 import { buildRoom, type RoomDef, type SpawnOk } from './room';
-import { nearestRoom, stuckFast, type Ring } from './spawn';
+import { inSomething, nearestRoom, roomFor, stuckFast, type Ring } from './spawn';
 
 const SETTLE_ENERGY = 400;
 const SETTLE_SPEED2 = 14 * 14;
@@ -284,11 +284,12 @@ export class Session {
 
   /**
    * A cat stuck fast for a second (its skin crossed over itself, or caught
-   * in the furniture), or still in another cat that it couldn't be slid out
-   * of (see World.unmerge: the smaller one), is put down again in the nearest
-   * clear place that spawnOk allows, a fresh round cat: never left stuck for
-   * good. Not one being carried, or out of the world (in a tube, mid-leap,
-   * in a scrap). One that gets stuck again soon after is given more room.
+   * in the furniture), or in another cat for a second that it couldn't be
+   * slid out of (see World.unmerge: the smaller one), is put down again in
+   * the nearest clear place that spawnOk allows, a fresh round cat: never
+   * left stuck for good. Not one being carried, or out of the world (in a
+   * tube, mid-leap, in a scrap). One that gets stuck again soon after is
+   * given more room.
    */
   private unstick(): void {
     const w = this.world;
@@ -297,32 +298,72 @@ export class Session {
       const free = !c.grabbed && w.bodies.includes(b);
       const n = free && stuckFast(w.statics, b) ? (this.stuck.get(c) ?? 0) + 10 : 0;
       const m = free && this.unmerge ? w.mergedWith(b) : null;
-      const caught = m !== null && m.frames >= UNSTICK_FRAMES * 1.5 && (m.other.grab !== null || b.p.radius < m.other.p.radius || (b.p.radius === m.other.p.radius && b.id < m.other.id));
+      const caught = m !== null && m.frames >= UNSTICK_FRAMES && (m.other.grab !== null || b.p.radius < m.other.p.radius || (b.p.radius === m.other.p.radius && b.id < m.other.id));
       if (n < UNSTICK_FRAMES && !caught) {
         if (n) this.stuck.set(c, n);
         else this.stuck.delete(c);
         continue;
       }
       this.stuck.delete(c);
-      const others: Ring[] = [];
-      for (const o of this.cats) {
-        if (o === c || !w.bodies.includes(o.body)) continue;
-        o.body.computeCentroid();
-        others.push({ x: o.body.cx, y: o.body.cy, r: o.body.p.radius });
-      }
-      b.computeCentroid();
-      const r = b.p.radius;
-      const from = { x: b.cx, y: b.cy };
       const last = this.unstuck.get(c);
       const again = last && this.frame - last.frame < 600 ? last.n + 1 : 0;
-      const at = nearestRoom(w.statics, others, from.x, from.y, r, (x, y) => this.spawnOk!(x, y, r, from), 320, 0.9 + 0.3 * Math.min(again, 2));
-      if (!at) continue;
-      b.reset(at.x, at.y);
-      c.intent = null;
-      c.settled = 0;
+      const from = this.relocate(c, 0.9 + 0.3 * Math.min(again, 2));
+      if (!from) continue;
       this.unstuck.set(c, { frame: this.frame, n: again });
       this.events.push({ t: 'unstuck', cat: c, x: from.x, y: from.y });
     }
+  }
+
+  /**
+   * Put a cat down again in the nearest clear place spawnOk allows, a fresh
+   * round cat (`room`: see roomFor). Where it was, or null if there's
+   * nowhere (it stays as it is).
+   */
+  private relocate(c: Cat, room = 0.9): { x: number; y: number } | null {
+    const w = this.world;
+    const b = c.body;
+    const others = this.ringsBut(b);
+    b.computeCentroid();
+    const r = b.p.radius;
+    const from = { x: b.cx, y: b.cy };
+    const at = nearestRoom(w.statics, others, from.x, from.y, r, (x, y) => this.spawnOk!(x, y, r, from), 320, room);
+    if (!at) return null;
+    b.reset(at.x, at.y);
+    c.intent = null;
+    c.settled = 0;
+    return from;
+  }
+
+  /** The other cats in the world (and the yarn) as rings that take in all of each, however it's lying. */
+  private ringsBut(b: SoftBody | null): Ring[] {
+    const out: Ring[] = [];
+    for (const o of this.world.bodies) {
+      if (o === b) continue;
+      o.computeCentroid();
+      let r2 = 0;
+      for (let i = 0; i < o.n; i++) r2 = Math.max(r2, (o.x[i] - o.cx) ** 2 + (o.y[i] - o.cy) ** 2);
+      out.push({ x: o.cx, y: o.cy, r: Math.sqrt(r2) + 1 });
+    }
+    return out;
+  }
+
+  /**
+   * A cat just put back into the world (out of a scrap, say): if it's come
+   * back in the furniture or in another cat, it goes to the nearest clear
+   * place instead, moving as it was. True if it moved.
+   */
+  placeClear(cat: Cat): boolean {
+    const b = cat.body;
+    if (!this.spawnOk || !inSomething(this.world.statics, this.world.bodies, b)) return false;
+    let vx = 0;
+    let vy = 0;
+    for (let i = 0; i < b.n; i++) {
+      vx += b.vx[i] / b.n;
+      vy += b.vy[i] / b.n;
+    }
+    if (!this.relocate(cat)) return false;
+    b.kick(vx, vy);
+    return true;
   }
 
   drainEvents(): GameEvent[] {
@@ -614,8 +655,17 @@ export class Session {
     for (const sh of this.world.statics) if (!this.shapeToContainer.has(sh.id)) this.shapeIsFurniture.add(sh.id);
   }
 
-  /** A new cat in the room (one moving in, in at the window). */
+  /** A new cat in the room (one moving in, in at the window): there, or the nearest clear place if someone's there (see spawnOk). */
   addCat(breed: BreedId, x: number, y: number, name: string): Cat {
+    const r = BREEDS[breed].physics.radius;
+    if (this.spawnOk) {
+      const others = this.ringsBut(null);
+      if (!roomFor(this.world.statics, others, x, y, r)) {
+        const from = { x, y };
+        const at = nearestRoom(this.world.statics, others, x, y, r, (px, py) => this.spawnOk!(px, py, r, from));
+        if (at) ({ x, y } = at);
+      }
+    }
     const body = new Body(breed, x, y);
     this.world.addBody(body);
     const cat: Cat = {

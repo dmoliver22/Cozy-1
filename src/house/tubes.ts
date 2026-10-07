@@ -132,6 +132,14 @@ export class Tubes<R extends Rider = Cat, T extends RideTube = Tube> {
   readonly transits: Transit<R, T>[] = [];
   private events: TubeEvent<R, T>[] = [];
 
+  /**
+   * Is something in the way of a cat coming out (another cat sitting at the
+   * mouth, where its ring will be: x, y pairs)? Then it waits at the mouth
+   * until there isn't (whoever set this shoos it off): popping out into it
+   * would leave the two in one another.
+   */
+  inTheWay: ((rider: R, ring: Float64Array) => boolean) | null = null;
+
   constructor(private readonly world: () => World) {}
 
   /** Is this cat in a tube (or on its way in or out)? */
@@ -287,7 +295,7 @@ export class Tubes<R extends Rider = Cat, T extends RideTube = Tube> {
           b.x[i] = tr.from[i * 2] + (tr.out[i * 2] - tr.from[i * 2]) * e;
           b.y[i] = tr.from[i * 2 + 1] + (tr.out[i * 2 + 1] - tr.from[i * 2 + 1]) * e;
         }
-        if (u >= 1) this.finish(tr);
+        if (u >= 1 && !this.inTheWay?.(tr.cat, tr.out)) this.finish(tr);
       }
     }
   }

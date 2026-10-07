@@ -305,7 +305,14 @@ export class Bouncer {
         const b = p.body;
         b.computeCentroid();
         // straight back up, and a little toward the middle (it's a springy hump: off its edge, it'd shoot you sideways)
-        b.kick(-b.vcx + (this.x - b.cx) * 1.6, -out - b.vcy);
+        const vx = (this.x - b.cx) * 1.6;
+        const vy = -out;
+        // and whoever's lying on it goes up with it, just as fast: sprung up
+        // alone, it would be shot up into them and come out the other side
+        for (const o of [b, ...stackedOn(b, bodies, free)]) {
+          o.computeCentroid();
+          o.kick(vx - o.vcx, vy - o.vcy);
+        }
       }
     }
     // a springy squash: stiff, lightly damped
@@ -325,4 +332,39 @@ export class Bouncer {
     }
     return hit;
   }
+}
+
+/** The bodies lying on b (touching its top half), and those lying on them. */
+function stackedOn(b: SoftBody, bodies: readonly SoftBody[], free: (b: SoftBody) => boolean): SoftBody[] {
+  const out: SoftBody[] = [];
+  const queue = [b];
+  const bb = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  const ob = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  while (queue.length) {
+    const under = queue.pop()!;
+    under.bounds(bb);
+    under.computeCentroid();
+    for (const o of bodies) {
+      if (o === b || out.includes(o) || !free(o)) continue;
+      o.bounds(ob);
+      o.computeCentroid();
+      // (above its middle, and near enough to be resting on it)
+      if (o.cy >= under.cy || ob.maxX < bb.minX || ob.minX > bb.maxX || ob.maxY < bb.minY - 2 || ob.minY > bb.maxY) continue;
+      let near = false;
+      for (let i = 0; i < o.n && !near; i++) {
+        for (let j = 0; j < under.n; j++) {
+          const dx = o.x[i] - under.x[j];
+          const dy = o.y[i] - under.y[j];
+          if (dx * dx + dy * dy < 64) {
+            near = true;
+            break;
+          }
+        }
+      }
+      if (!near) continue;
+      out.push(o);
+      queue.push(o);
+    }
+  }
+  return out;
 }

@@ -42,12 +42,13 @@ export function distToShape(s: StaticShape, x: number, y: number): number {
 }
 
 /**
- * Is a ring at (x, y) clear of the colliders and of the other cats' rings?
- * (Nine tenths of it, or `room` of it: a cat squashes a little, and one put
- * down sits just into what it's on.)
+ * Is a ring at (x, y) clear of the colliders (nine tenths of it, or `room`
+ * of it: a cat squashes a little, and one put down sits just into what it's
+ * on) and of the other cats' rings (all of it, or `room` of it if that's
+ * more)?
  */
 export function roomFor(statics: readonly StaticShape[], others: readonly Ring[], x: number, y: number, r: number, room = 0.9): boolean {
-  for (const o of others) if (Math.hypot(o.x - x, o.y - y) < (o.r + r) * room) return false;
+  for (const o of others) if (Math.hypot(o.x - x, o.y - y) < (o.r + r) * Math.max(1, room)) return false;
   const clear = r * room;
   for (const s of statics) {
     if (x + clear < s.minX || x - clear > s.maxX || y + clear < s.minY || y - clear > s.maxY) continue;
@@ -141,6 +142,21 @@ function depthIn(b: SoftBody, x: number, y: number): number {
   }
   return inside ? Math.sqrt(near) : 0;
 }
+
+/** Is a cat in something: one of its nodes inside a collider, or in another cat (or one of its nodes in this one)? */
+export function inSomething(statics: readonly StaticShape[], bodies: readonly SoftBody[], b: SoftBody): boolean {
+  if (nodesInFurniture(statics, b, 0) > 0) return true;
+  b.bounds(bb);
+  for (const o of bodies) {
+    if (o === b) continue;
+    o.bounds(bb2);
+    if (bb.maxX < bb2.minX || bb2.maxX < bb.minX || bb.maxY < bb2.minY || bb2.maxY < bb.minY) continue;
+    for (let i = 0; i < b.n; i++) if (depthIn(o, b.x[i], b.y[i]) > 0) return true;
+    for (let i = 0; i < o.n; i++) if (depthIn(b, o.x[i], o.y[i]) > 0) return true;
+  }
+  return false;
+}
+const bb2 = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
 /** How many of a cat's nodes are inside the colliders, more than `depth` in. */
 export function nodesInFurniture(statics: readonly StaticShape[], b: SoftBody, depth: number): number {

@@ -16,6 +16,7 @@ import type { AudioEngine } from '../audio/audio';
 import { FLOOR_Y, WORLD_W, localFurniture } from '../game/props';
 import type { DecorPlacement, RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
+import { roomFor } from '../game/spawn';
 import { BREEDS, lookKey, type BreedId } from '../physics/breeds';
 import { randomDesign, type CatDesign } from '../physics/mycat';
 import type { StaticShape } from '../physics/shapes';
@@ -37,6 +38,7 @@ import { CatMaker } from './catMaker';
 import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
 import { GIFT_SPOT, fittingBoxes, houseRoom, houseSpawnOk } from './homeRoom';
+import { inRingOf, planFlight, release, stepFlight, type Flight } from './leap';
 import { ATTIC_THEME, BASEMENT_THEME, paintAttic, paintAtticShade, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
 import {
   ALL_CATS,
@@ -230,7 +232,7 @@ export class Home {
   /** The cat last let go of, and when: one dropped in the funnel takes the view down with it. */
   private letGo: { cat: Cat; at: number } | null = null;
   /** Cats leaping to another spot (landing at x1 on a surface at top), and what to do when they land. */
-  private leaps: { cat: Cat; t: number; T: number; x0: number; y0: number; x1: number; top: number; vUp: number; shape: Float64Array; land?: () => void }[] = [];
+  private leaps: (Flight & { cat: Cat; top: number; land?: () => void })[] = [];
   /** What the cats get up to: games, pounces, scraps. */
   readonly antics: Antics;
   /** Fish on their way into a hurt cat's mouth. */
@@ -253,6 +255,7 @@ export class Home {
     writeHouse(this.house);
     this.shownTreats = this.house.treats;
     this.tubes = new Tubes(() => host.session.world);
+    this.tubes.inTheWay = (cat, out) => this.inTheWay(cat, out);
     this.antics = new Antics({
       get session() {
         return host.session;
@@ -1053,10 +1056,12 @@ export class Home {
         add(sf.x0, sf.x1, sf.y, maxR, true, k);
       }
     }
-    // in the box and the basket
-    for (const c of s.containers) out.push({ x: c.x, y: (c.opening?.y ?? c.y) + 60, half: 6, maxR: 44, floor: 'living' });
-    // floors, clear of the tubes
-    add(110, 132, FLOOR_Y, 30);
+    // into the vase and the basket: onto its opening, to pour in from there (one that fits through it)
+    for (const c of s.containers) {
+      const o = c.opening;
+      if (o) out.push({ x: (o.x0 + o.x1) / 2, y: o.y, half: 4, maxR: Math.min(44, o.x1 - o.x0), floor: floorAt(o.y - 1) });
+    }
+    // floors, clear of the tubes (the living room's is all taken: the funnel, the vase, the cushion and the basket)
     if (isOpen(this.house, 'basement')) {
       add(110, 270, FLOORS.basement.floorY, 44);
       add(SPOUT.x - 20, SPOUT.x + 20, FLOORS.basement.floorY - PERCHES.beanbag.height, 44);
@@ -1087,6 +1092,9 @@ export class Home {
       if (Math.abs(dx) < 30 && Math.abs(rise) < 30) return false;
       if (Math.abs(dx) > reach || rise > climb) return false;
       if (rise > 10 && Math.abs(dx) < p.half + 22 + r + 4) return false;
+      // (room for it there, all along: not a spot that's too small for it, or that something stands in)
+      const ly = p.y - r * 0.92 - 2;
+      if ([p.x - p.half, p.x, p.x + p.half].some((lx) => !roomFor(s.world.statics, [], lx, ly, r))) return false;
       const there = (ox: number, oy: number, or: number): boolean => Math.abs(ox - p.x) < or + r - 4 && Math.abs(oy - p.y) < 40;
       if (this.leaps.some((l) => l.cat !== cat && there(l.x1, l.top, l.cat.body.p.radius))) return false;
       return !s.cats.some((o) => {
@@ -1179,68 +1187,55 @@ export class Home {
   private hop(cat: Cat, x: number, y: number, low = false, land?: () => void): void {
     const b = cat.body;
     b.computeCentroid();
-    const r = b.p.radius;
-    const x1 = x;
-    const y1 = y - r * 0.92 - 2;
-    const up = y1 < b.cy - 20;
-    const ceil = FLOORS[floorAt(b.cy)].ceilY + r + 6;
-    // (a pounce is quicker and flatter)
-    const lift = low ? 16 + Math.abs(x1 - b.cx) * 0.05 + (up ? 10 : 0) : 40 + Math.abs(x1 - b.cx) * 0.12 + (up ? 16 : 0);
-    const apex = Math.max(ceil, Math.min(b.cy, y1) - lift);
-    const vUp = Math.sqrt(2 * GRAVITY * Math.max(4, b.cy - apex));
-    const tUp = vUp / GRAVITY;
-    const T = tUp + Math.sqrt((2 * Math.max(4, y1 - apex)) / GRAVITY);
-    const shape = new Float64Array(b.n * 2);
-    for (let i = 0; i < b.n; i++) {
-      shape[i * 2] = b.x[i] - b.cx;
-      shape[i * 2 + 1] = b.y[i] - b.cy;
-    }
+    const f = planFlight(b, x, y, low, FLOORS[floorAt(b.cy)].ceilY + b.p.radius + 6);
     this.host.session.world.removeBody(b);
-    this.leaps.push({ cat, t: 0, T, x0: b.cx, y0: b.cy, x1, top: y, vUp, shape, land });
+    this.leaps.push({ ...f, cat, top: y, land });
     cat.intent = null;
     cat.sinceTouch = 0;
     if (!low || Math.random() < 0.5) this.host.audio.grab(BREEDS[cat.breed].voice.pitch, false);
   }
 
-  /** One step of every leap. */
+  /**
+   * One step of every leap: on along its arc, or, at its end or as it
+   * touches something on the way (see leap.ts), back into the physics.
+   */
   private stepLeaps(): void {
+    const w = this.host.session.world;
     for (const l of [...this.leaps]) {
-      l.t = Math.min(l.T, l.t + 1 / 60);
       const b = l.cat.body;
-      const u = l.t / l.T;
-      const cx = l.x0 + (l.x1 - l.x0) * u;
-      const cy = l.y0 - l.vUp * l.t + 0.5 * GRAVITY * l.t * l.t;
-      // stretched a touch along the way it's going (and as much thinner across)
-      const vx = (l.x1 - l.x0) / l.T;
-      const vy = -l.vUp + GRAVITY * l.t;
-      const sp = Math.hypot(vx, vy) || 1;
-      const k = 1 + Math.min(0.14, sp / 5000);
-      const ux = vx / sp;
-      const uy = vy / sp;
-      for (let i = 0; i < b.n; i++) {
-        const ox = l.shape[i * 2];
-        const oy = l.shape[i * 2 + 1];
-        const along = ox * ux + oy * uy;
-        const across = -ox * uy + oy * ux;
-        b.x[i] = cx + along * k * ux - (across / k) * uy;
-        b.y[i] = cy + along * k * uy + (across / k) * ux;
-      }
-      b.airborneFrames++;
-      if (l.t >= l.T) {
-        for (let i = 0; i < b.n; i++) {
-          b.px[i] = b.x[i];
-          b.py[i] = b.y[i];
-          b.vx[i] = vx * 0.5;
-          b.vy[i] = vy;
-        }
-        b.wake();
+      if (stepFlight(l, b, w.statics, w.bodies) === 'flying') continue;
+      release(l, b);
+      w.addBody(b);
+      this.leaps.splice(this.leaps.indexOf(l), 1);
+      this.antics.clearToy(l.cat);
+      l.land?.();
+    }
+  }
+
+  /**
+   * Is another cat where one's coming out of a tube (its ring, `out`)? It
+   * waits at the mouth till there isn't, and whoever's in the way (sitting on
+   * the beanbag under the spout, say) is shooed off with a little hop aside.
+   */
+  private inTheWay(cat: Cat, out: Float64Array): boolean {
+    const s = this.host.session;
+    const n = cat.body.n;
+    const by = inRingOf(out, n, s.world.bodies, cat.body);
+    if (this.frame % 20 === 0) {
+      let mx = 0;
+      for (let i = 0; i < n; i++) mx += out[i * 2] / n;
+      for (const b of by) {
+        const o = s.cats.find((c) => c.body === b);
+        if (o?.grabbed) continue;
         b.computeCentroid();
-        this.host.session.world.addBody(b);
-        this.leaps.splice(this.leaps.indexOf(l), 1);
-        this.antics.clearToy(l.cat);
-        l.land?.();
+        b.kick((Math.sign(b.cx - mx) || (Math.random() < 0.5 ? -1 : 1)) * 170, -200);
+        if (o) {
+          o.intent = null;
+          o.sinceTouch = 0;
+        }
       }
     }
+    return by.length > 0;
   }
 
   /** Is this cat in the middle of a leap? */

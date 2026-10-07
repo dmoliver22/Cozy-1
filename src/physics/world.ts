@@ -27,7 +27,13 @@ export class World {
    * its pile tight on purpose).
    */
   unmerge = false;
-  /** Frames each pair of cats has been in one another (keyed by their ids). */
+  /**
+   * How long each pair of cats has been in one another (frames, keyed by
+   * their ids): up a frame each frame they are, down one each frame they
+   * aren't. (Not back to nothing as soon as they aren't: two caught up in a
+   * knot, one's skin looped round the other, come apart and go back in
+   * over and over as they're slid, and must still be seen to.)
+   */
   private merged = new Map<number, number>();
   static iterations = 2;
   /** Substeps per frame (other games on the engine may trade accuracy for speed). */
@@ -156,17 +162,29 @@ export class World {
       for (let j = i + 1; j < bodies.length; j++) {
         const a = bodies[i];
         const b = bodies[j];
+        const key = a.id < b.id ? a.id * 65536 + b.id : b.id * 65536 + a.id;
+        const before = was.get(key) ?? 0;
         a.bounds(skinBB);
         b.bounds(skinBB2);
-        if (skinBB.maxX < skinBB2.minX || skinBB2.maxX < skinBB.minX || skinBB.maxY < skinBB2.minY || skinBB2.maxY < skinBB.minY) continue;
-        a.computeCentroid();
-        b.computeCentroid();
-        // (a few of their nodes in one another, or one swallowed whole: its middle inside the other)
-        const n = nodesIn(a, b, skinBB2) + nodesIn(b, a, skinBB);
-        const swallowed = pointInBody(b, a.cx, a.cy) || pointInBody(a, b.cx, b.cy);
-        if (n < 3 && !swallowed) continue;
-        const key = a.id < b.id ? a.id * 65536 + b.id : b.id * 65536 + a.id;
-        const frames = (was.get(key) ?? 0) + 1;
+        let n = 0;
+        let swallowed = false;
+        let crossed = false;
+        if (skinBB.maxX >= skinBB2.minX && skinBB2.maxX >= skinBB.minX && skinBB.maxY >= skinBB2.minY && skinBB2.maxY >= skinBB.minY) {
+          a.computeCentroid();
+          b.computeCentroid();
+          // (a couple of their nodes in one another, one swallowed whole (its
+          // middle inside the other), or their skins crossing: two wound round
+          // one another, every node pushed out of the other but the skins
+          // between them through it)
+          n = nodesIn(a, b, skinBB2) + nodesIn(b, a, skinBB);
+          swallowed = pointInBody(b, a.cx, a.cy) || pointInBody(a, b.cx, b.cy);
+          crossed = n < 2 && !swallowed && skinsCross(a, b);
+        }
+        if (n < 2 && !swallowed && !crossed) {
+          if (before > 1) now.set(key, before - 1);
+          continue;
+        }
+        const frames = before + 1;
         now.set(key, frames);
         // (not for a moment's squash: a cat flung hard into another)
         if (frames < 6) continue;
@@ -177,12 +195,13 @@ export class World {
         let dx = a.cx - b.cx;
         let dy = a.cy - b.cy;
         let d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 1e-6) {
+        // (all but in the same place: apart sideways, the same way each frame)
+        if (d < Math.min(a.p.radius, b.p.radius) * 0.3) {
           dx = a.id < b.id ? -1 : 1;
           dy = 0;
           d = 1;
         }
-        const step = Math.min(3, 0.6 + n * 0.12 + (swallowed ? 2.4 : 0)) / (wa + wb);
+        const step = Math.min(3, 0.6 + n * 0.12 + (swallowed ? 2.4 : 0) + (crossed ? 1.2 : 0)) / (wa + wb);
         a.shift((dx / d) * step * wa, (dy / d) * step * wa);
         b.shift((-dx / d) * step * wb, (-dy / d) * step * wb);
       }
@@ -252,7 +271,16 @@ export class World {
         let nX: number;
         let nY: number;
         let depth: number;
-        if (maxD <= 0) {
+        // Came into it through a face this substep (from outside it), and now
+        // nearer another one: squeezed past the middle of a thin wall (a
+        // vase's glass, a basket's side) by what's pressing on it. Out the
+        // way it came in, not the nearest way, or it goes through.
+        const entry = entryFace(s, px[i], py[i], nxp, nyp);
+        if (entry >= 0 && entry !== maxK) {
+          nX = s.nx[entry];
+          nY = s.ny[entry];
+          depth = reach - (nX * nxp + nY * nyp - s.d[entry]);
+        } else if (maxD <= 0) {
           nX = s.nx[maxK];
           nY = s.ny[maxK];
           depth = reach - maxD;
@@ -418,6 +446,31 @@ const RESIST_EASE = 0.5;
 /** How much pressing into another cat counts toward what a held cat feels. */
 const CAT_PUSH = 2;
 
+/**
+ * The face of a collider's core polygon that the move from (x0, y0) to
+ * (x1, y1) went in through, if it started outside the core and went into it
+ * (or right through it); -1 if not.
+ */
+function entryFace(s: StaticShape, x0: number, y0: number, x1: number, y1: number): number {
+  let t0 = 0;
+  let t1 = 1;
+  let face = -1;
+  for (let k = 0; k < s.n; k++) {
+    const f0 = s.nx[k] * x0 + s.ny[k] * y0 - s.d[k];
+    const f1 = s.nx[k] * x1 + s.ny[k] * y1 - s.d[k];
+    if (f0 > 0 && f1 > 0) return -1;
+    if (f0 > 0) {
+      const t = f0 / (f0 - f1);
+      if (t >= t0) {
+        t0 = t;
+        face = k;
+      }
+    } else if (f1 > 0) t1 = Math.min(t1, f0 / (f0 - f1));
+    if (t0 > t1) return -1;
+  }
+  return face;
+}
+
 /** How much of a node's radius the skin between nodes keeps from a corner. */
 const CORNER_SKIN = 0.5;
 
@@ -459,6 +512,32 @@ function nodesIn(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number; max
     if (pointInBody(b, px, py)) count++;
   }
   return count;
+}
+
+/** Do two cats' skins cross (an edge of one through an edge of the other)? */
+function skinsCross(a: SoftBody, b: SoftBody): boolean {
+  const ax = a.x;
+  const ay = a.y;
+  const bx = b.x;
+  const by = b.y;
+  for (let i = 0; i < a.n; i++) {
+    const i2 = i + 1 === a.n ? 0 : i + 1;
+    const x0 = ax[i] < ax[i2] ? ax[i] : ax[i2];
+    const x1 = ax[i] < ax[i2] ? ax[i2] : ax[i];
+    const y0 = ay[i] < ay[i2] ? ay[i] : ay[i2];
+    const y1 = ay[i] < ay[i2] ? ay[i2] : ay[i];
+    for (let j = 0; j < b.n; j++) {
+      const j2 = j + 1 === b.n ? 0 : j + 1;
+      if ((bx[j] < x0 && bx[j2] < x0) || (bx[j] > x1 && bx[j2] > x1) || (by[j] < y0 && by[j2] < y0) || (by[j] > y1 && by[j2] > y1)) continue;
+      const d1 = (bx[j2] - bx[j]) * (ay[i] - by[j]) - (by[j2] - by[j]) * (ax[i] - bx[j]);
+      const d2 = (bx[j2] - bx[j]) * (ay[i2] - by[j]) - (by[j2] - by[j]) * (ax[i2] - bx[j]);
+      if (d1 * d2 >= 0) continue;
+      const d3 = (ax[i2] - ax[i]) * (by[j] - ay[i]) - (ay[i2] - ay[i]) * (bx[j] - ax[i]);
+      const d4 = (ax[i2] - ax[i]) * (by[j2] - ay[i]) - (ay[i2] - ay[i]) * (bx[j2] - ax[i]);
+      if (d3 * d4 < 0) return true;
+    }
+  }
+  return false;
 }
 
 /** Is (px, py) inside b's skin? */

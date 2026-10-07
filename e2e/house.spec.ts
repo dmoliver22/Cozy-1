@@ -447,3 +447,112 @@ test('the ball of yarn: a tap bats it, and a playful cat pounces on it', async (
     )
     .toBeGreaterThan(8);
 });
+
+test('cats left to themselves, and dropped and flung onto one another and the cushion, never end up in one another or stuck', async ({ page }) => {
+  await house(page, ['kitten', 'tabby', 'persian', 'chonk']);
+  // fast-forward three minutes of the house (the cats hop, pounce and play as they like), with someone
+  // every so often carrying a cat over another (or the bouncy cushion) and letting it drop, or flinging it down
+  const r = await page.evaluate(() => {
+    type Body = { n: number; x: Float64Array; y: Float64Array; cx: number; cy: number; p: { radius: number }; computeCentroid(): void };
+    type C = { breed: string; grabbed: boolean; body: Body };
+    interface A {
+      paused: boolean;
+      session: { cats: C[]; world: { bodies: Body[] }; step(): void; rememberPositions(): void; drainEvents(): { t: string }[]; beginGrab(c: C, x: number, y: number): void; moveGrab(x: number, y: number, vx: number, vy: number): void; endGrab(): void };
+      home: { step(): void; tick(dt: number): void; hop(...a: unknown[]): void };
+      handleEvents(e: unknown[]): void;
+    }
+    const a = (window as unknown as { __app: A }).__app;
+    let seed = 20261007;
+    Math.random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    a.paused = true;
+    const s = a.session;
+    let hops = 0;
+    const hop = a.home.hop.bind(a.home);
+    a.home.hop = (...args: unknown[]) => {
+      hops++;
+      hop(...args);
+    };
+    const inside = (b: Body, x: number, y: number): boolean => {
+      let c = false;
+      for (let i = 0, j = b.n - 1; i < b.n; j = i++) if (b.y[i] > y !== b.y[j] > y && x < b.x[j] + ((y - b.y[j]) * (b.x[i] - b.x[j])) / (b.y[i] - b.y[j])) c = !c;
+      return c;
+    };
+    const crossing = (p: Body, q: Body): boolean => {
+      for (let i = 0; i < p.n; i++) {
+        const i2 = (i + 1) % p.n;
+        for (let j = 0; j < q.n; j++) {
+          const j2 = (j + 1) % q.n;
+          const d1 = (q.x[j2] - q.x[j]) * (p.y[i] - q.y[j]) - (q.y[j2] - q.y[j]) * (p.x[i] - q.x[j]);
+          const d2 = (q.x[j2] - q.x[j]) * (p.y[i2] - q.y[j]) - (q.y[j2] - q.y[j]) * (p.x[i2] - q.x[j]);
+          if (d1 * d2 >= 0) continue;
+          const d3 = (p.x[i2] - p.x[i]) * (q.y[j] - p.y[i]) - (p.y[i2] - p.y[i]) * (q.x[j] - p.x[i]);
+          const d4 = (p.x[i2] - p.x[i]) * (q.y[j2] - p.y[i]) - (p.y[i2] - p.y[i]) * (q.x[j2] - p.x[i]);
+          if (d3 * d4 < 0) return true;
+        }
+      }
+      return false;
+    };
+    const inOneAnother = (p: Body, q: Body): boolean => {
+      for (let i = 0; i < p.n; i++) if (inside(q, p.x[i], p.y[i])) return true;
+      for (let i = 0; i < q.n; i++) if (inside(p, q.x[i], q.y[i])) return true;
+      return crossing(p, q);
+    };
+    let rescues = 0;
+    let grabs = 0;
+    let worstRun = 0;
+    const runs = new Map<string, number>();
+    let carrying: { c: C; t: number; dur: number; tx: number; ty: number; fling: boolean } | null = null;
+    let next = 120;
+    for (let f = 0; f < 3 * 3600; f++) {
+      if (!carrying && f >= next) {
+        const free = s.cats.filter((c) => s.world.bodies.includes(c.body) && !c.grabbed);
+        if (free.length >= 2) {
+          const c = free[Math.floor(Math.random() * free.length)];
+          const o = free.filter((k) => k !== c)[Math.floor(Math.random() * (free.length - 1))];
+          o.body.computeCentroid();
+          c.body.computeCentroid();
+          const cushion = Math.random() < 0.4;
+          carrying = { c, t: 0, dur: 50, tx: (cushion ? 224 : o.body.cx) + (Math.random() - 0.5) * 40, ty: (cushion ? 526 : o.body.cy - o.body.p.radius) - 60 - Math.random() * 260, fling: Math.random() < 0.4 };
+          s.beginGrab(c, c.body.cx, c.body.cy - c.body.p.radius * 0.5);
+          grabs++;
+        }
+        next = f + 90 + Math.floor(Math.random() * 150);
+      }
+      if (carrying) {
+        const k = carrying;
+        k.t++;
+        k.c.body.computeCentroid();
+        const down = k.fling && k.t > k.dur ? 60 : 0;
+        s.moveGrab(k.c.body.cx + (k.tx - k.c.body.cx) * 0.25, k.c.body.cy + (k.ty + down - k.c.body.cy) * (down ? 1 : 0.25), 0, 0);
+        if (k.t >= k.dur + (k.fling ? 6 : 0) || !k.c.grabbed) {
+          if (k.c.grabbed) s.endGrab();
+          carrying = null;
+        }
+      }
+      s.rememberPositions();
+      s.step();
+      a.home.step();
+      const evs = s.drainEvents();
+      rescues += evs.filter((e) => e.t === 'unstuck').length;
+      a.handleEvents(evs);
+      a.home.tick(1 / 60);
+      const cats = s.cats.filter((c) => s.world.bodies.includes(c.body));
+      for (let i = 0; i < cats.length; i++) {
+        for (let j = i + 1; j < cats.length; j++) {
+          const key = cats[i].breed + cats[j].breed;
+          const n = inOneAnother(cats[i].body, cats[j].body) ? (runs.get(key) ?? 0) + 1 : 0;
+          runs.set(key, n);
+          worstRun = Math.max(worstRun, n);
+        }
+      }
+    }
+    a.paused = false;
+    return { rescues, grabs, hops, worstRun };
+  });
+  expect(r.grabs).toBeGreaterThan(30);
+  expect(r.hops).toBeGreaterThan(5);
+  // (never stuck: nothing for the house's last resort to put right)
+  expect(r.rescues).toBe(0);
+  // (never in one another for more than a moment: a cat flung hard into another squashes, and springs back)
+  expect(r.worstRun).toBeLessThan(6);
+});
