@@ -688,6 +688,16 @@ export function renderPiano(sr: number, midi: number, seed: number): Float32Arra
 }
 
 /** Very soft, muted kick: a felt-beater pitch drop (with an octave so phones hear a hint of it). */
+/** A cannon's pomf: a low round thump and a puff of air. */
+export function renderPomf(sr: number): Float32Array {
+  const r = rng(11);
+  const out = new Float32Array(Math.ceil(0.5 * sr));
+  addGlide(out, sr, { f1: 110, f2: 46, glide: 0.06, tau: 0.13, amp: 1, attack: 0.006, h2: 0.25 });
+  addNoise(out, sr, r, { type: 'lp', f: 900, attack: 0.004, tau: 0.09, amp: 0.45 });
+  addNoise(out, sr, r, { type: 'bp', f: 2400, attack: 0.01, tau: 0.05, amp: 0.08 });
+  return finish(out, sr);
+}
+
 export function renderKick(sr: number): Float32Array {
   const r = rng(7);
   const out = new Float32Array(Math.ceil(0.4 * sr));

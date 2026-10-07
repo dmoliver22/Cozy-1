@@ -150,6 +150,13 @@ The Playground (the cloud tin on the bar along the bottom):
   Pipe** switch turns one into the other (a twisty tube laid straight). A cat
   that goes in at one end is carried round every bend and shot out of the
   other, the way it points.
+- **Toys** that make the cats do things: a **cat cannon** (let a cat go at its
+  mouth: it's loaded, the cannon trembles, and pomf! out it flies the way it's
+  aimed), a **fan** (it blows cats along its wind: point it up and a cat floats
+  on it), a **bumper** (ding! a cat that touches it is bounced off, like a
+  pinball) and a **conveyor belt** (a moving platform that carries a cat
+  along). Picked to change, a cannon, a fan or a belt has an arrow on a stem:
+  drag it round to aim it (a belt: to turn it round).
 - **Change anything you've built**: tap it. A piece, drag it somewhere else;
   a tube or a pipe, reshape it as above; **Remove** takes it away (with a
   moment to **Undo**), **Done** (or a tap on the sky) when you're happy. It

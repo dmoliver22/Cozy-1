@@ -753,6 +753,25 @@ the choices:
   room. The Twisty | Pipe switch lays a pipe along a twisty tube as if a
   finger drew it (`straighten`, turning only where it really changes way),
   or frees a pipe to bend anywhere.
+- **Toys** (`gadgets.ts`, art in `gadgetArt.ts`) are pieces too (a piece's
+  kind is a perch or a toy, with an `aim` in degrees for the ones that
+  turn), so they're built, picked, moved, taken away and saved like any
+  other; they're painted live, being always on the move. A `GadgetWorks`
+  runs them each frame. A **fan** pushes every node of a cat in its wind (a
+  column 460 long, 116 wide) along it, hardest by the fan, less the faster
+  the cat already goes with it (so an upward one floats a cat where the
+  push meets its weight, settled rather than bobbing). A **belt** pulls the
+  speed of a cat sitting on it toward its own (230, its way). A **bumper**
+  sends a cat that touches it straight off, at 760, keeping a little of
+  what went along it (not again for a moment), and lights up. A **cannon**
+  takes a cat that's let go at its mouth (generously) or falls into it: the
+  cat's out of the physics, squeezed small into the barrel (drawn behind
+  it), the cannon trembles for 0.55 s, and the cat comes out round just
+  past the muzzle at 1250 the way it's aimed (anywhere up, in 15° steps),
+  with a pomf, and can't go straight back in. Its barrel is solid (a cat
+  can sit on it) and its cart stands on things like a cushion does. A
+  toy's aim handle is an arrow out on a stem the way it points: dragged
+  round, it turns to face the finger.
 - **Changing what's built.** A tap on any piece or tube picks it: the bar
   shows Done and Remove (and for a tube, the switch and Redraw). It stays
   in the sky, cats on it and all, until it's actually changed; the first

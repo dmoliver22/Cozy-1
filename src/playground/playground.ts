@@ -26,7 +26,7 @@ import { NAMES } from '../house/house';
 import { paintPipeJoint, paintPipeRun, paintSkyBell } from '../house/houseArt';
 import { inRingOf } from '../house/leap';
 import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack, paintPerchFront, perchThumb } from '../house/perchArt';
-import { PERCHES, PERCH_ORDER, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
+import { PERCHES, PERCH_ORDER, perchBox, type Box, type PerchKind } from '../house/perches';
 import { Tubes } from '../house/tubes';
 import {
   FALL,
@@ -40,6 +40,8 @@ import {
   buildPiece,
   distToTube,
   drawPipe,
+  footOf,
+  gadgetOf,
   extendTube,
   lowest,
   mouthOf,
@@ -65,12 +67,16 @@ import {
   tubeMiddle,
   tubeRun,
   tubeShapes,
+  type PieceKind,
+  type PieceProp,
   type PlayPiece,
   type PlaySave,
   type PlayTube,
   type SkyTube,
 } from './layout';
 import { floatPuff, paintSky, paintSpawn } from './skyArt';
+import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, GadgetWorks, aimDir, fitAim, isGadget, type Gadget } from './gadgets';
+import { gadgetThumb, paintGadget } from './gadgetArt';
 
 export interface PlayHost {
   readonly renderer: Renderer;
@@ -113,6 +119,8 @@ type Drag =
   | { k: 'hold'; id: number; sx: number; sy: number; timer: number; hit: Built }
   /** Dragging a piece that's being placed. */
   | { k: 'ghost'; id: number; dx: number; dy: number; sx: number; sy: number }
+  /** Turning a toy (by the arrow on its aim handle). */
+  | { k: 'aim'; id: number; sx: number; sy: number }
   /**
    * Working on a tube that's being placed: drawing it on from an end (the
    * finger `dx, dy` off the end), moving the whole of it by its knob, bending
@@ -126,6 +134,11 @@ type Drag =
       | { how: 'bend'; at: number; from: Pt[]; x0: number; y0: number }
       | { how: 'slide'; run: number; from: Pt[]; x0: number; y0: number }
     ));
+
+/** A piece's name. */
+const nameOf = (k: PieceKind): string => (isGadget(k) ? GADGETS[k].name : PERCHES[k].name);
+/** Does a piece have a part painted over the cats (a perch's front, a cannon's barrel)? */
+const fronted = (k: PieceKind): boolean => (isGadget(k) ? k === 'cannon' : hasFront(k));
 
 /** What each piece is, up here (there are no walls or floors in the sky). */
 const SKY_BLURBS: Record<PerchKind, string> = {
@@ -147,7 +160,9 @@ export class Playground {
   private active = false;
   readonly tubes: Tubes<Cat, SkyTube>;
   /** The pieces up in the sky (their colliders are in the world), and the tubes as they're ridden. */
-  private props: PerchProp[] = [];
+  private props: PieceProp[] = [];
+  /** The toys at work (cannons, fans, bumpers, belts). */
+  readonly works: GadgetWorks;
   private skyTubes: SkyTube[] = [];
   /** The view: where its middle is, and how far it's zoomed in. */
   private cam = { x: SPAWN.x, y: SPAWN.y - 120, zoom: 1 };
@@ -180,6 +195,7 @@ export class Playground {
     this.save = readPlay(safeGet(PLAY_KEY));
     this.tubes = new Tubes<Cat, SkyTube>(() => host.session.world);
     this.tubes.inTheWay = (cat, out) => this.inTheWay(cat, out);
+    this.works = new GadgetWorks(() => host.session.world);
     // along the bottom: home, build, respawn
     this.bar = document.createElement('footer');
     this.bar.id = 'playBar';
@@ -274,6 +290,7 @@ export class Playground {
     if (this.active) {
       if (this.placing) this.endPlacing(false, true);
       this.tubes.finishAll();
+      this.works.releaseAll();
       this.write();
     }
     this.active = false;
@@ -374,24 +391,35 @@ export class Playground {
       if (!overlaps(p.box, r, 40)) continue;
       // (something that stands, with nothing under it, floats on a little cloud)
       if (standing(s.kind)) {
-        const foot = s.y + PERCHES[s.kind].height;
+        const foot = s.y + footOf(s.kind);
         const on = tops.some((t) => t.propId !== s.id && Math.abs(t.y - foot) < 1 && t.x0 < s.x + 20 && t.x1 > s.x - 20);
         if (!on) floatPuff(ctx, s.x, foot, (p.box.x1 - p.box.x0) * 1.2);
       }
-      if (!this.moving(p)) this.stampPiece(ctx, s.kind, s.x, s.y, s.id, 'back');
+      // (a toy moves: painted as it is now)
+      const g = gadgetOf(s);
+      if (g) this.paintToy(ctx, g, 'back');
+      else if (!this.moving(p)) this.stampPiece(ctx, s.kind as PerchKind, s.x, s.y, s.id, 'back');
     }
+  }
+
+  /** A toy as it is this frame (its blades turning, its belt running, a cat in its barrel...). */
+  private paintToy(ctx: Ctx, g: Gadget, layer: 'back' | 'front'): void {
+    paintGadget(ctx, g, layer, { time: this.time, flash: this.works.flash.get(g.id) ?? 0, recoil: this.works.recoil.get(g.id) ?? 0, charge: this.works.charge(g.id) });
   }
 
   private paintFront(ctx: Ctx, r: Rect): void {
     for (const p of this.props) {
       const s = p.save;
-      if (hasFront(s.kind) && !this.moving(p) && overlaps(p.box, r, 40)) this.stampPiece(ctx, s.kind, s.x, s.y, s.id, 'front');
+      if (!fronted(s.kind) || !overlaps(p.box, r, 40)) continue;
+      const g = gadgetOf(s);
+      if (g) this.paintToy(ctx, g, 'front');
+      else if (!this.moving(p)) this.stampPiece(ctx, s.kind as PerchKind, s.x, s.y, s.id, 'front');
     }
     for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.paintTube(ctx, t, 'front', r);
   }
 
   /** A hammock or a bouncy cushion that's moving (one at rest looks as it always does, and is painted from what's kept). */
-  private moving(p: PerchProp): boolean {
+  private moving(p: PieceProp): boolean {
     if (p.sling) return !p.sling.still;
     if (p.bouncer) return Math.abs(p.bouncer.squash) > 0.01 || Math.abs(p.bouncer.vel) > 0.01;
     return false;
@@ -401,8 +429,9 @@ export class Playground {
   private paintLive(ctx: Ctx, front: boolean): void {
     const r = this.host.renderer.onScreen();
     for (const p of this.props) {
-      if (!isLive(p.save.kind) || !this.moving(p) || !overlaps(p.box, r, 60)) continue;
-      const look = { ...p, save: { ...p.save, id: 3 + (p.save.id % 3) } };
+      const k = p.save.kind;
+      if (isGadget(k) || !isLive(k) || !this.moving(p) || !overlaps(p.box, r, 60)) continue;
+      const look = { ...p, save: { ...p.save, kind: k, id: 3 + (p.save.id % 3) } };
       if (front) paintLiveFront(ctx, look);
       else paintLiveBack(ctx, look);
     }
@@ -552,10 +581,47 @@ export class Playground {
     ctx.globalAlpha = ok ? 1 : 0.7;
     // (one that's built and not moved yet is where it always was, cats on it and all)
     const p = pl.piece;
+    const g = gadgetOf(p);
     if (pl.lifted) {
-      if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + PERCHES[p.kind].height, (b.x1 - b.x0) * 1.2);
-      paintPerchBack(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
-      if (hasFront(p.kind)) paintPerchFront(ctx, p.kind, p.x, p.y, 3 + (p.id % 3));
+      if (standing(p.kind) && !this.standsOn(p)) floatPuff(ctx, p.x, p.y + footOf(p.kind), (b.x1 - b.x0) * 1.2);
+      if (g) {
+        this.paintToy(ctx, g, 'back');
+        this.paintToy(ctx, g, 'front');
+      } else {
+        const k = p.kind as PerchKind;
+        paintPerchBack(ctx, k, p.x, p.y, 3 + (p.id % 3));
+        if (hasFront(k)) paintPerchFront(ctx, k, p.x, p.y, 3 + (p.id % 3));
+      }
+    }
+    ctx.globalAlpha = 1;
+    // a toy that turns: its aim handle, an arrow out on a stem (drag it round)
+    const h = g ? aimHandle(g) : null;
+    if (g && h) {
+      const k = 1 / Math.max(0.6, this.cam.zoom);
+      const ink = ok ? 'rgba(79,154,107,0.95)' : 'rgba(200,90,90,0.95)';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2.4 * k;
+      ctx.setLineDash([4 * k, 3 * k]);
+      ctx.beginPath();
+      ctx.moveTo(h.cx, h.cy);
+      ctx.lineTo(h.x, h.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,253,248,0.95)';
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, 13 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // (an arrow pointing the way it's aimed)
+      const d = aimDir(g);
+      ctx.fillStyle = ink;
+      ctx.beginPath();
+      ctx.moveTo(h.x + d.x * 8 * k, h.y + d.y * 8 * k);
+      ctx.lineTo(h.x - d.x * 5 * k - d.y * 6 * k, h.y - d.y * 5 * k + d.x * 6 * k);
+      ctx.lineTo(h.x - d.x * 2 * k, h.y - d.y * 2 * k);
+      ctx.lineTo(h.x - d.x * 5 * k + d.y * 6 * k, h.y - d.y * 5 * k - d.x * 6 * k);
+      ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -651,7 +717,7 @@ export class Playground {
   }
 
   private standsOn(p: PlayPiece): boolean {
-    const foot = p.y + PERCHES[p.kind].height;
+    const foot = p.y + footOf(p.kind);
     return surfacesOf(this.save.pieces.filter((q) => q.id !== p.id)).some((t) => Math.abs(t.y - foot) < 1 && t.x0 < p.x + 20 && t.x1 > p.x - 20);
   }
 
@@ -662,10 +728,11 @@ export class Playground {
   }
 
   private behindFront(cat: Cat): boolean {
-    if (this.tubes.riding(cat)) return true;
+    if (this.tubes.riding(cat) || this.works.inCannon(cat) !== null) return true;
     const b = cat.body;
     for (const p of this.props) {
-      if (!hasFront(p.save.kind)) continue;
+      const k = p.save.kind;
+      if (isGadget(k) || !hasFront(k)) continue;
       const bx = p.box;
       if (b.cx > bx.x0 && b.cx < bx.x1 && b.cy > bx.y0 - b.p.radius && b.cy < bx.y1) return true;
     }
@@ -838,6 +905,12 @@ export class Playground {
   private grab(pl: Placing, id: number, sx: number, sy: number, wx: number, wy: number): boolean {
     const zoomSlop = 26 / (this.host.renderer.scale * this.cam.zoom);
     if (pl.k === 'piece') {
+      const g = gadgetOf(pl.piece);
+      const h = g ? aimHandle(g) : null;
+      if (h && Math.hypot(wx - h.x, wy - h.y) < zoomSlop + 8) {
+        this.drag = { k: 'aim', id, sx, sy };
+        return true;
+      }
       const b = this.placeBox(pl);
       if (wx > b.x0 - zoomSlop && wx < b.x1 + zoomSlop && wy > b.y0 - zoomSlop && wy < b.y1 + zoomSlop) {
         this.drag = { k: 'ghost', id, dx: pl.piece.x - wx, dy: pl.piece.y - wy, sx, sy };
@@ -983,6 +1056,15 @@ export class Playground {
       if (p.x === pl.piece.x && p.y === pl.piece.y) return;
       this.lift(pl);
       pl.piece = { ...pl.piece, x: p.x, y: p.y };
+    } else if (d.k === 'aim' && pl.k === 'piece') {
+      // (turned to point at the finger, in steps)
+      const g = gadgetOf(pl.piece);
+      if (!g) return;
+      const h = aimHandle(g)!;
+      const aim = fitAim(g.kind, (Math.atan2(wy - h.cy, wx - h.cx) * 180) / Math.PI);
+      if (aim === g.aim) return;
+      this.lift(pl);
+      pl.piece = { ...pl.piece, aim };
     } else if (d.k === 'tube' && pl.k === 'tube') {
       const t = pl.tube;
       let next: PlayTube;
@@ -1056,6 +1138,9 @@ export class Playground {
         <div class="shop-rows">
           <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#BFD9E4" stroke-width="12" stroke-linecap="round"/><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#E8F4F8" stroke-width="5" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Twisty tube</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
           <button class="pg-piece" data-piece="pipe"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#BFD9E4" stroke-width="12"/><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#E8F4F8" stroke-width="5"/><path d="M30 29 V 43 M46 20 H 39 M46 20 H 53" stroke="#CDA86C" stroke-width="3.5"/></svg></span><span class="shop-what"><b>Pipe</b><small>Like a real one: straight runs and neat elbows, all lined up. Draw it, and it goes straight</small></span></button>
+          <p class="shop-h">Toys</p>
+          ${GADGET_ORDER.map((k) => `<button class="pg-piece" data-piece="${k}"><span class="shop-pic"></span><span class="shop-what"><b>${GADGETS[k].name}</b><small>${GADGETS[k].blurb}</small></span></button>`).join('')}
+          <p class="shop-h">Perches</p>
           ${rows}
         </div>
         <p class="shop-tip">Tap anything you've built to change it: move it, reshape it, or take it away.</p>
@@ -1064,12 +1149,13 @@ export class Playground {
       (root) => {
         root.querySelectorAll<HTMLElement>('[data-piece]').forEach((el) => {
           const k = el.dataset.piece!;
-          if (k !== 'tube' && k !== 'pipe') el.querySelector('.shop-pic')!.appendChild(perchThumb(k as PerchKind, 64, 46));
+          if (isGadget(k)) el.querySelector('.shop-pic')!.appendChild(gadgetThumb(k, 64, 46));
+          else if (k !== 'tube' && k !== 'pipe') el.querySelector('.shop-pic')!.appendChild(perchThumb(k as PerchKind, 64, 46));
           el.addEventListener('click', () => {
             this.host.closeOverlay();
             this.host.audio.seat(70);
             if (k === 'tube' || k === 'pipe') this.startTube(k === 'pipe');
-            else this.startPiece(k as PerchKind);
+            else this.startPiece(k as PieceKind);
           });
         });
       },
@@ -1077,11 +1163,13 @@ export class Playground {
   }
 
   /** A new piece, in the middle of the view (joined up to whatever's there), or as near as it can be put. */
-  private startPiece(kind: PerchKind): void {
+  private startPiece(kind: PieceKind): void {
     const id = this.save.nextId++;
     const at = this.freeSpot((x, y) => {
       const p = snapPiece(kind, x, y, this.save.pieces);
-      return { k: 'piece', piece: { id, kind, x: p.x, y: p.y }, prev: null, lifted: true };
+      const piece: PlayPiece = { id, kind, x: p.x, y: p.y };
+      if (isGadget(kind)) piece.aim = GADGETS[kind].aim0;
+      return { k: 'piece', piece, prev: null, lifted: true };
     });
     this.beginPlacing(at);
   }
@@ -1181,7 +1269,7 @@ export class Playground {
     const pl = this.placing;
     if (!pl) return;
     const pr = this.problem(pl);
-    const what = pl.k === 'piece' ? PERCHES[pl.piece.kind].name.toLowerCase() : 'tube';
+    const what = pl.k === 'piece' ? nameOf(pl.piece.kind).toLowerCase() : 'tube';
     const pipe = pl.k === 'tube' && !!pl.tube.bends;
     const why = {
       cat: 'A cat’s in the way',
@@ -1191,7 +1279,9 @@ export class Playground {
     };
     const hint =
       pl.k === 'piece'
-        ? `Drag the ${what} where you’d like it`
+        ? isGadget(pl.piece.kind) && GADGETS[pl.piece.kind].aim
+          ? `Drag the ${what} where you’d like it, and its arrow to ${pl.piece.kind === 'belt' ? 'turn it round' : 'aim it'}`
+          : `Drag the ${what} where you’d like it`
         : pipe
           ? 'Drag an end to lay more pipe (or back, less), a straight bit to slide it, its knob to move it'
           : 'Drag an end to draw on (or back, shorter), the tube to bend it, its knob to move it';
@@ -1357,7 +1447,7 @@ export class Playground {
   // Life up here
 
   canTouch(cat: Cat): boolean {
-    return !this.tubes.riding(cat);
+    return !this.tubes.riding(cat) && this.works.inCannon(cat) === null;
   }
 
   /** A cat can be carried anywhere up here. */
@@ -1370,6 +1460,12 @@ export class Playground {
     if (!this.active) return;
     const b = cat.body;
     b.computeCentroid();
+    // let go at a cannon's mouth: in it goes
+    const cannon = GadgetWorks.cannonAt(this.toys(), b.cx, b.cy);
+    if (cannon && this.works.load(cat, cannon)) {
+      this.loaded(cat);
+      return;
+    }
     for (const t of this.skyTubes) {
       const m = mouthOf(t, b.cx, b.cy);
       if (m !== null) {
@@ -1405,9 +1501,25 @@ export class Playground {
         this.cooldown.set(e.cat, 45);
       }
     }
+    // the toys at work: fans blowing, belts running, bumpers and cannons
+    for (const e of this.works.step(this.toys(), s.cats, (c) => !c.grabbed && !this.tubes.riding(c))) {
+      const v = BREEDS[e.cat.breed].voice;
+      e.cat.settled = 0;
+      e.cat.intent = null;
+      if (e.t === 'load') this.loaded(e.cat);
+      else if (e.t === 'fire') {
+        e.cat.sinceTouch = 0;
+        this.host.audio.pomf();
+        this.host.renderer.puff(e.x, e.y, 8);
+        if (Math.random() < 0.6) this.host.audio.grab(v.pitch, false);
+      } else {
+        this.host.audio.boing(e.speed, 0.15);
+        this.host.renderer.puff(e.cat.body.cx, e.cat.body.cy, 3);
+      }
+    }
     const sea = this.seaY;
     for (const c of s.cats) {
-      if (c.grabbed || this.tubes.riding(c)) continue;
+      if (c.grabbed || this.tubes.riding(c) || this.works.inCannon(c) !== null) continue;
       const b = c.body;
       b.computeCentroid();
       if (b.cy > sea) {
@@ -1427,6 +1539,23 @@ export class Playground {
       if (t <= 1) this.cooldown.delete(c);
       else this.cooldown.set(c, t - 1);
     }
+  }
+
+  /** The toys up in the sky, as the toys' works take them. */
+  private toys(): Gadget[] {
+    const out: Gadget[] = [];
+    for (const p of this.save.pieces) {
+      const g = gadgetOf(p);
+      if (g) out.push(g);
+    }
+    return out;
+  }
+
+  /** A cat into a cannon: a little glorp, and a puff at its mouth. */
+  private loaded(cat: Cat): void {
+    const v = BREEDS[cat.breed].voice;
+    this.host.audio.glorp(v.pitch * 1.2, 0.3, 0.1);
+    cat.sinceTouch = 0;
   }
 
   /** Hammocks take the weight of who's in them; bouncy cushions spring a cat that lands on them back up, boing. */
@@ -1485,6 +1614,7 @@ export class Playground {
   respawnAll(): void {
     this.host.audio.click();
     this.tubes.finishAll();
+    this.works.releaseAll();
     for (const c of this.host.session.cats) {
       if (c.grabbed) continue;
       this.respawn(c);
@@ -1528,6 +1658,18 @@ function edgePush(x: number, y: number, W: number, H: number, top: number, botto
   const b0 = H - bottom - EDGE * 0.8;
   const ey = y < t0 ? -(t0 - y) / EDGE : y > b0 ? (y - b0) / EDGE : 0;
   return { x: clamp(ex, -1, 1), y: clamp(ey, -1, 1) };
+}
+
+/** Where a toy that turns has its aim handle (out the way it's aimed), and the middle it turns about; null if it doesn't turn. */
+function aimHandle(g: Gadget): { x: number; y: number; cx: number; cy: number } | null {
+  if (!GADGETS[g.kind].aim) return null;
+  const d = aimDir(g);
+  if (g.kind === 'belt') {
+    const cy = g.y + BELT.h / 2;
+    return { x: g.x + d.x * (BELT.half + 30), y: cy, cx: g.x, cy };
+  }
+  const out = g.kind === 'cannon' ? CANNON.fore + 40 : FAN.r + 42;
+  return { x: g.x + d.x * out, y: g.y + d.y * out, cx: g.x, cy: g.y };
 }
 
 /** Two lines of points the same? */

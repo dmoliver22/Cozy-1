@@ -8,8 +8,9 @@ import type { BreedId } from '../physics/breeds';
 import { ALL_CATS } from '../house/house';
 import { capsule, roundedBox, type StaticShape } from '../physics/shapes';
 import type { Surface } from '../game/props';
-import { PERCHES, PERCH_ORDER, buildPerch, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
+import { PERCHES, PERCH_ORDER, PERCH_PROP_BASE, buildPerch, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
 import type { RideTube } from '../house/tubes';
+import { GADGETS, GADGET_ORDER, fitAim, gadgetBox, gadgetFoot, gadgetShapes, gadgetSurface, isGadget, type GadgetKind } from './gadgets';
 import { pathLength, pointAt } from '../util/path';
 
 /** The respawn cloud: its top's middle at (x, y), and how far it reaches either side. */
@@ -23,13 +24,24 @@ export const FALL = 1100;
 /** How near and how far the view goes (1: the house's). */
 export const ZOOM = { min: 0.3, max: 2.4 };
 
-/** A piece put up in the sky: a perch, with its top's middle at (x, y). */
+/** What a piece is: a perch, or one of the toys (gadgets.ts). */
+export type PieceKind = PerchKind | GadgetKind;
+
+/**
+ * A piece put up in the sky: a perch, with its top's middle at (x, y); or a
+ * toy, with its middle there (a belt: its top's middle), aimed `aim`
+ * degrees (0 right, -90 up).
+ */
 export interface PlayPiece {
   id: number;
-  kind: PerchKind;
+  kind: PieceKind;
   x: number;
   y: number;
+  aim?: number;
 }
+
+/** A piece as it is in the sky: its colliders, its seats, and (a hammock, a bouncy cushion) its springs. */
+export type PieceProp = Omit<PerchProp, 'save'> & { save: PlayPiece };
 
 type Pt = [number, number];
 
@@ -82,8 +94,11 @@ export function readPlay(raw: string | null): PlaySave {
   const fresh = (id: unknown): id is number => finite(id) && id > 0 && Number.isInteger(id) && !ids.has(id) && (ids.add(id), true);
   if (Array.isArray(o.pieces)) {
     for (const p of o.pieces as Record<string, unknown>[]) {
-      if (!p || !(PERCH_ORDER as unknown[]).includes(p.kind) || !near(p.x) || !near(p.y) || !fresh(p.id)) continue;
-      out.pieces.push({ id: p.id as number, kind: p.kind as PerchKind, x: p.x as number, y: p.y as number });
+      if (!p || !((PERCH_ORDER as unknown[]).includes(p.kind) || (GADGET_ORDER as unknown[]).includes(p.kind)) || !near(p.x) || !near(p.y) || !fresh(p.id)) continue;
+      const kind = p.kind as PieceKind;
+      const piece: PlayPiece = { id: p.id as number, kind, x: p.x as number, y: p.y as number };
+      if (isGadget(kind)) piece.aim = fitAim(kind, finite(p.aim) ? p.aim : GADGETS[kind].aim0);
+      out.pieces.push(piece);
     }
   }
   if (Array.isArray(o.tubes)) {
@@ -139,26 +154,40 @@ export function spawnSpots(n: number): number[] {
 // ---------------------------------------------------------------------------
 // Pieces
 
-export function buildPiece(p: PlayPiece): PerchProp {
-  return buildPerch({ id: p.id, kind: p.kind, x: p.x, y: p.y });
+/** A toy as the toys' works take it (its aim made right). */
+export function gadgetOf(p: PlayPiece): { id: number; kind: GadgetKind; x: number; y: number; aim: number } | null {
+  return isGadget(p.kind) ? { id: p.id, kind: p.kind, x: p.x, y: p.y, aim: fitAim(p.kind, p.aim ?? GADGETS[p.kind].aim0) } : null;
+}
+
+export function buildPiece(p: PlayPiece): PieceProp {
+  const g = gadgetOf(p);
+  if (!g) return { ...buildPerch({ id: p.id, kind: p.kind as PerchKind, x: p.x, y: p.y }), save: p };
+  const propId = PERCH_PROP_BASE + p.id;
+  const top = gadgetSurface(g, propId);
+  return { save: p, floor: 'living', box: gadgetBox(g), shapes: gadgetShapes(g, propId), surfaces: top ? [top] : [], propId };
 }
 
 /** What a piece's top a cat sits on reaches across (a shelf's plank, a cushion's top): the bit that joins up with the next. */
-function topSpan(kind: PerchKind, x: number): [number, number] {
-  const half: Record<PerchKind, number> = { shelf: 33, cushion: 43, cloud: 42, hammock: 48, pod: 41, beanbag: 44, bounce: 33, bed: 40, tree: 40 };
+function topSpan(kind: PieceKind, x: number): [number, number] {
+  const half: Record<PieceKind, number> = { shelf: 33, cushion: 43, cloud: 42, hammock: 48, pod: 41, beanbag: 44, bounce: 33, bed: 40, tree: 40, belt: 69, cannon: 30, fan: 28, bumper: 22 };
   return [x - half[kind], x + half[kind]];
 }
 
-/** Does it stand on something (a beanbag, a cushion, a bed, a tree), rather than hang on a wall? */
-export function standing(kind: PerchKind): boolean {
-  return PERCHES[kind].mount === 'floor';
+/** Does it stand on something (a beanbag, a cushion, a bed, a tree, a cannon on its cart), rather than hang on a wall or float? */
+export function standing(kind: PieceKind): boolean {
+  return isGadget(kind) ? gadgetFoot(kind) > 0 : PERCHES[kind].mount === 'floor';
+}
+
+/** How far a piece that stands reaches down from where it's put to its foot. */
+export function footOf(kind: PieceKind): number {
+  return isGadget(kind) ? gadgetFoot(kind) : PERCHES[kind].height;
 }
 
 /** How near a piece has to be dragged to another to join up with it (world units). */
 export const JOIN = 18;
 
 /** The pieces that join end to end into longer platforms. */
-export const JOINS: readonly PerchKind[] = ['shelf', 'cushion', 'cloud'];
+export const JOINS: readonly PieceKind[] = ['shelf', 'cushion', 'cloud', 'belt'];
 
 /**
  * Where a piece dragged to (x, y) goes. A shelf, a ledge or a cloud dragged
@@ -167,10 +196,10 @@ export const JOINS: readonly PerchKind[] = ['shelf', 'cushion', 'cloud'];
  * dragged a little way over something's top stands on it; anywhere else it
  * floats.
  */
-export function snapPiece(kind: PerchKind, x: number, y: number, others: readonly PlayPiece[]): { x: number; y: number } {
+export function snapPiece(kind: PieceKind, x: number, y: number, others: readonly PlayPiece[]): { x: number; y: number } {
   const [a0, a1] = topSpan(kind, x);
   if (standing(kind)) {
-    const h = PERCHES[kind].height;
+    const h = footOf(kind);
     let best: { x: number; y: number } | null = null;
     for (const s of surfacesOf(others)) {
       // (its foot a little over the top, or a little in it)
@@ -201,7 +230,7 @@ export function snapPiece(kind: PerchKind, x: number, y: number, others: readonl
 export function surfacesOf(pieces: readonly PlayPiece[]): Surface[] {
   const out: Surface[] = [SPAWN_SURFACE];
   for (const p of pieces) {
-    if (p.kind === 'hammock' || p.kind === 'pod') continue;
+    if (p.kind === 'hammock' || p.kind === 'pod' || (isGadget(p.kind) && p.kind !== 'belt')) continue;
     const [x0, x1] = topSpan(p.kind, p.x);
     out.push({ x0, x1, y: p.y, propId: p.id });
   }
@@ -209,7 +238,8 @@ export function surfacesOf(pieces: readonly PlayPiece[]): Surface[] {
 }
 
 /** What a piece covers (as painted). */
-export function pieceBox(p: Pick<PlayPiece, 'kind' | 'x' | 'y'>): Box {
+export function pieceBox(p: Pick<PlayPiece, 'kind' | 'x' | 'y' | 'aim'>): Box {
+  if (isGadget(p.kind)) return gadgetBox({ kind: p.kind, x: p.x, y: p.y, aim: fitAim(p.kind, p.aim ?? GADGETS[p.kind].aim0) });
   return perchBox(p.kind, p.x, p.y);
 }
 

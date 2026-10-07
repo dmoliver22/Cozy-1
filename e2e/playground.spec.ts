@@ -10,10 +10,11 @@ interface SkyHandle {
   renderer: { cam: { x: number; y: number; zoom: number }; worldToScreen(x: number, y: number): { x: number; y: number } };
   session: { cats: { breed: string; body: { cx: number; cy: number; computeCentroid(): void; placeAt(x: number, y: number): void } }[]; world: { statics: unknown[] } };
   playground: {
-    placing: { k: string; lifted: boolean; piece?: { x: number; y: number }; tube?: { pts: [number, number][]; bends?: [number, number][] } } | null;
+    placing: { k: string; lifted: boolean; piece?: { x: number; y: number; aim?: number }; tube?: { pts: [number, number][]; bends?: [number, number][] } } | null;
     follow: { breed: string } | null;
     save: { pieces: { id: number; kind: string; x: number; y: number }[]; tubes: { id: number; pts: [number, number][]; bends?: [number, number][] }[] };
     tubes: { transits: { cat: { breed: string } }[] };
+    works: { inCannon(cat: unknown): number | null };
   };
 }
 
@@ -216,6 +217,49 @@ test('tap anything built to change it: a tube drawn on, a shelf taken away and p
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cozy-playground:v1')!).tubes.filter((t: { bends?: unknown }) => t.bends).length)).toBe(1);
+});
+
+test('toys: a cannon built, aimed by its arrow, and a cat let go at its mouth is fired out of it; it is there next time', async ({ page }) => {
+  await upToTheSky(page, ['kitten']);
+  await page.getByRole('button', { name: 'Up we go!' }).click();
+  await page.waitForFunction(() => (window as unknown as { __app: SkyHandle }).__app.kind === 'playground');
+  await page.waitForTimeout(400);
+  await page.locator('[data-pg=build]').click();
+  await page.locator('[data-piece=cannon]').click();
+  const bar = page.locator('.play-place');
+  await expect(bar.locator('.place-hint')).toHaveText('Drag the cat cannon where you’d like it, and its arrow to aim it');
+  const c = (await sky(page, (a) => a.playground.placing!.piece!))!;
+  expect(c.aim).toBe(-50);
+  // its arrow dragged round to point straight up
+  const r = Math.hypot(Math.cos((-50 * Math.PI) / 180), Math.sin((-50 * Math.PI) / 180)) * (56 + 40);
+  await drag(page, { x: c.x + Math.cos((-50 * Math.PI) / 180) * r, y: c.y + Math.sin((-50 * Math.PI) / 180) * r }, { x: c.x, y: c.y - 120 });
+  expect(await sky(page, (a) => a.playground.placing!.piece!.aim)).toBe(-90);
+  await bar.getByRole('button', { name: 'Put it here' }).click();
+  const placed = (await sky(page, (a) => a.playground.save.pieces.find((q) => q.kind === 'cannon')))!;
+  // Pip carried round it, up to its mouth (straight up from it) and let go: in, and a moment later, out of the top, flying up
+  const pip = await where(page, 'kitten');
+  await drawPath(page, [pip, { x: placed.x - 110, y: pip.y - 30 }, { x: placed.x - 110, y: placed.y - 110 }, { x: placed.x, y: placed.y - 56 - 14 }]);
+  await page.waitForFunction(() => {
+    const a = (window as unknown as { __app: SkyHandle }).__app;
+    return a.playground.works.inCannon(a.session.cats[0]) !== null;
+  });
+  await page.waitForFunction(
+    () => {
+      const a = (window as unknown as { __app: SkyHandle }).__app;
+      return a.playground.works.inCannon(a.session.cats[0]) === null;
+    },
+    null,
+    { timeout: 3000 },
+  );
+  const out = await where(page, 'kitten');
+  await page.waitForTimeout(150);
+  const up = await where(page, 'kitten');
+  expect(up.y).toBeLessThan(out.y - 60);
+  expect(Math.abs(up.x - placed.x)).toBeLessThan(60);
+  // next time, it's there, aimed as it was
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cozy-playground:v1')!).pieces.map((q: { kind: string; aim: number }) => [q.kind, q.aim]))).toEqual([['cannon', -90]]);
 });
 
 test('a cat carried to a tube and let go goes in, whoosh, and out of the other end', async ({ page }) => {

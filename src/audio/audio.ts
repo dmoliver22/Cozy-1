@@ -26,6 +26,7 @@ import {
   renderImpact,
   renderIR,
   renderKick,
+  renderPomf,
   renderMew,
   renderNom,
   renderPiano,
@@ -389,6 +390,17 @@ export class AudioEngine {
       const g = this.live();
       if (!g || !this.gate(g, 'undo', 0.1)) return;
       this.play(g, this.uiBuffer(g, 'undo', Math.floor(Math.random() * 2)), 0.15);
+    } catch (e) {
+      this.oops(e);
+    }
+  }
+
+  /** A cat fired out of a cannon: a soft, round pomf. */
+  pomf(): void {
+    try {
+      const g = this.live();
+      if (!g || !this.gate(g, 'pomf', 0.08)) return;
+      this.play(g, this.cached(g, 'pomf', loRate(g), (sr) => renderPomf(sr)), 0.32, { rate: jitter(0.05), pan: (Math.random() - 0.5) * 0.2 });
     } catch (e) {
       this.oops(e);
     }

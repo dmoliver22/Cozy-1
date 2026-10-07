@@ -32,9 +32,11 @@ import {
   tubeEnds,
   tubeLength,
   tubeShapes,
+  gadgetOf,
   type PlayPiece,
   type SkyTube,
 } from '../src/playground/layout';
+import { FAN, GadgetWorks, cannonMouth, fitAim, type GadgetEvent } from '../src/playground/gadgets';
 
 type Pt = [number, number];
 
@@ -516,5 +518,121 @@ describe('tubes', () => {
     let vx = 0;
     for (let i = 0; i < cat.body.n; i++) vx += cat.body.vx[i] / cat.body.n;
     expect(vx).toBeGreaterThan(200);
+  });
+});
+
+describe('toys', () => {
+  const run = (pieces: PlayPiece[], frames: number, cat: Cat, s: Session, works: GadgetWorks, on?: (f: number) => void): GadgetEvent[] => {
+    const toys = pieces.map(gadgetOf).filter((g): g is NonNullable<typeof g> => !!g);
+    const out: GadgetEvent[] = [];
+    for (let f = 0; f < frames; f++) {
+      out.push(...works.step(toys, s.cats, (c) => !c.grabbed));
+      s.step();
+      on?.(f);
+    }
+    void cat;
+    return out;
+  };
+
+  it('a fan pointing up floats a cat on its wind; pointing along, blows it along', () => {
+    const fan: PlayPiece = { id: 1, kind: 'fan', x: 300, y: -100, aim: -90 };
+    const s = sky([fan]);
+    const cat = s.addCat('kitten', 300, -200, 'Pip');
+    const works = new GadgetWorks(() => s.world);
+    let top = Infinity;
+    run([fan], 240, cat, s, works, () => {
+      cat.body.computeCentroid();
+      top = Math.min(top, cat.body.cy);
+    });
+    cat.body.computeCentroid();
+    // up it went, and it's still up there, hovering over the fan
+    expect(top).toBeLessThan(-300);
+    expect(cat.body.cy).toBeLessThan(-200);
+    expect(cat.body.cy).toBeGreaterThan(-100 - FAN.reach - 60);
+    const side: PlayPiece = { id: 2, kind: 'fan', x: -400, y: -100, aim: 0 };
+    const s2 = sky([side]);
+    const c2 = s2.addCat('kitten', -330, -100, 'Pip');
+    run([side], 40, c2, s2, new GadgetWorks(() => s2.world));
+    c2.body.computeCentroid();
+    expect(c2.body.cx).toBeGreaterThan(-200);
+  });
+
+  it('a belt carries a cat sitting on it its way; turned round, the other way', () => {
+    for (const aim of [0, 180]) {
+      const belt: PlayPiece = { id: 1, kind: 'belt', x: 300, y: -200, aim };
+      const s = sky([belt]);
+      const cat = s.addCat('kitten', 300, -200 - 22, 'Pip');
+      const works = new GadgetWorks(() => s.world);
+      run([belt], 50, cat, s, works);
+      cat.body.computeCentroid();
+      if (aim === 0) expect(cat.body.cx).toBeGreaterThan(340);
+      else expect(cat.body.cx).toBeLessThan(260);
+    }
+  });
+
+  it('a bumper bounces a cat dropped on it off, hard, and lights up', () => {
+    const bumper: PlayPiece = { id: 5, kind: 'bumper', x: 300, y: -200 };
+    const s = sky([bumper]);
+    const cat = s.addCat('kitten', 310, -300, 'Pip');
+    const works = new GadgetWorks(() => s.world);
+    let bumped: GadgetEvent | null = null;
+    let top = Infinity;
+    let after = false;
+    run([bumper], 90, cat, s, works, () => {
+      cat.body.computeCentroid();
+      if (after) top = Math.min(top, cat.body.cy);
+      if (!after && works.flash.get(5)) after = true;
+    });
+    bumped = run([bumper], 0, cat, s, works)[0] ?? null;
+    void bumped;
+    expect(after).toBe(true);
+    // (up and away again, higher than it'd bounce off anything soft)
+    expect(top).toBeLessThan(-330);
+  });
+
+  it('a cat let go at a cannon is loaded, and a moment later fired the way it points', () => {
+    const cannon: PlayPiece = { id: 7, kind: 'cannon', x: 300, y: -200, aim: -45 };
+    const s = sky([cannon]);
+    const cat = s.addCat('kitten', 0, -40, 'Pip');
+    const works = new GadgetWorks(() => s.world);
+    const g = gadgetOf(cannon)!;
+    const m = cannonMouth(g);
+    cat.body.placeAt(m.zx, m.zy);
+    expect(GadgetWorks.cannonAt([g], m.zx, m.zy)).toBe(g);
+    expect(works.load(cat, g)).toBe(true);
+    expect(works.inCannon(cat)).toBe(7);
+    expect(s.world.bodies).not.toContain(cat.body);
+    let fired: { x: number; y: number } | null = null;
+    let vx = 0;
+    let vy = 0;
+    for (let f = 0; f < 80 && !fired; f++) {
+      for (const e of works.step([g], s.cats, (c) => !c.grabbed)) {
+        if (e.t === 'fire') {
+          fired = { x: e.x, y: e.y };
+          for (let i = 0; i < cat.body.n; i++) {
+            vx += cat.body.vx[i] / cat.body.n;
+            vy += cat.body.vy[i] / cat.body.n;
+          }
+        }
+      }
+      s.step();
+    }
+    expect(fired).not.toBeNull();
+    expect(works.inCannon(cat)).toBeNull();
+    expect(s.world.bodies).toContain(cat.body);
+    // out of its muzzle, up and to the right, fast
+    expect(fired!.x).toBeGreaterThan(m.x);
+    expect(fired!.y).toBeLessThan(m.y);
+    expect(vx).toBeGreaterThan(600);
+    expect(vy).toBeLessThan(-600);
+    // (not straight back in)
+    expect(works.load(cat, g)).toBe(false);
+  });
+
+  it('saved with its aim; an aim that makes no sense is put right', () => {
+    const s = readPlay(JSON.stringify({ v: 1, pieces: [{ id: 1, kind: 'cannon', x: 0, y: -100, aim: 60 }, { id: 2, kind: 'belt', x: 0, y: -300, aim: 170 }, { id: 3, kind: 'fan', x: 0, y: -500 }], tubes: [], nextId: 4, cats: [] }));
+    expect(s.pieces.map((p) => p.aim)).toEqual([0, 180, -90]);
+    expect(fitAim('cannon', -52)).toBe(-45);
+    expect(fitAim('fan', 97)).toBe(90);
   });
 });
