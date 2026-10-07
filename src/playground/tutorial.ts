@@ -16,15 +16,30 @@ import type { BreedId } from '../physics/breeds';
 import { FRAME_DT, GRAVITY } from '../physics/world';
 import { NAMES } from '../house/house';
 import { cannonMouth } from './gadgets';
-import { SPAWN, evenTube, gadgetOf, type PlaySave } from './layout';
+import { SPAWN, evenTube, gadgetOf, snapFunnel, type PlaySave } from './layout';
 import type { SkyEvent, SkySim } from './sim';
 
 /** Who takes the ride, and where it starts (on the respawn cloud, left of the cannon). */
 export const TOUR_CAT: BreedId = 'kitten';
 export const TOUR_START = { x: SPAWN.x - 60 };
 
-/** The course: the cannon on the respawn cloud, the tube it shoots into, the fan, the bouncy cushion on its cloud, and the hammock. */
+/** The course: the cannon on the respawn cloud, the funnel it shoots into on the tube, the fan, the bouncy cushion on its cloud, and the hammock. */
 export function course(): PlaySave {
+  const tube = {
+    id: 6,
+    pts: evenTube([
+      [270, -235],
+      [380, -320],
+      [500, -370],
+      [620, -360],
+      [720, -300],
+      [790, -220],
+      [800, -160],
+      [800, -130],
+    ]),
+  };
+  // (the funnel on the tube's end, facing the cannon: a wide mouth to catch the shot)
+  const f = snapFunnel(270, -235, [tube])!;
   return {
     v: 1,
     pieces: [
@@ -33,23 +48,10 @@ export function course(): PlaySave {
       { id: 3, kind: 'bounce', x: 860, y: 150 },
       { id: 4, kind: 'cloud', x: 860, y: 184 },
       { id: 5, kind: 'hammock', x: 1330, y: 140 },
+      { id: 7, kind: 'funnel', x: f.x, y: f.y, aim: f.aim },
     ],
-    tubes: [
-      {
-        id: 6,
-        pts: evenTube([
-          [270, -235],
-          [380, -320],
-          [500, -370],
-          [620, -360],
-          [720, -300],
-          [790, -220],
-          [800, -160],
-          [800, -130],
-        ]),
-      },
-    ],
-    nextId: 7,
+    tubes: [tube],
+    nextId: 8,
     cats: [],
   };
 }

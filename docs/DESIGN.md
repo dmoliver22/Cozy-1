@@ -675,6 +675,25 @@ perches (`buildPerch`, their art from `perchArt.ts`) and of tubes ridden
 like the house's (`Tubes` takes any path with a mouth at each end). Notes on
 the choices:
 
+- **The funnel** (a toy, `gadgets.ts`) is two glass sides from a spout as
+  wide as a tube's bell out to a mouth three times as wide. A cat in it is
+  drawn to the spout (1900 along it, more than gravity, so it works facing
+  any way), pulled toward its middle line, its sideways swing damped. A cat
+  going out of it fast is left be (one just shot out of the tube under it).
+  Let go within 70 of a tube's end, it goes on it (`snapFunnel`): its spout
+  at the end, facing the way the end points (its aim kept to the degree, not
+  in 15° steps like the others). The tube's mouth then does the rest.
+  Without a tube a cat pours out of the spout. A cat in a funnel is drawn
+  behind its near glass.
+- **Tips** (`src/ui/coach.ts`): one line each, once each (`cozy-tips:v1`),
+  in a bubble pointing at what it's about. One shows at a time: the first
+  waiting tip whose thing is on screen, never over a card. Tap it, or do
+  the thing, and it's done. At home, once welcomed: the games and treats,
+  the faces (rename), swiping round the house, the Playground. Up there:
+  Build; with a tube built, how to ride it; with anything built, how to
+  change it. The Build card marks the twisty tube "Try this first" until
+  anything's built. The welcome card is down to the cats' names and Make
+  my cat: the rest of what it said is in these.
 - **What goes on each step** up there is `SkySim` (`sim.ts`): the hammocks
   and bouncy cushions, the tubes, the toys, and cats falling into the sea of
   cloud. It has no screen. It reports what happened, and the Playground
@@ -689,6 +708,9 @@ the choices:
   mouth; let go anywhere within 130 of it, and in it goes). Then it watches:
   pomf, into a tube, out pointing down past a fan blowing sideways, onto a
   bouncy cushion, back up through the fan's wind, and down into a hammock.
+  The tube's mouth wears a funnel facing the cannon. The shot would go in
+  without it, but with it a cat knocked a quarter of the cannon's speed off
+  line still gets caught (the tests check this).
   Once it's lain there still a moment, it's "Off home!", and home, where the
   welcome card asks the cats' names. On the ride the cat can't be picked
   up, the sky can't be built on or looked about, and the view follows the

@@ -6,7 +6,7 @@
 
 import { lightOf, mix, rgba, roundRect, shadowOf, softShadow, type Ctx } from '../render/paint';
 import { inkLine } from '../render/roomKit';
-import { BELT, BUMPER, CANNON, FAN, aimDir, gadgetBox, type Gadget } from './gadgets';
+import { BELT, BUMPER, CANNON, FAN, FUNNEL, aimDir, gadgetBox, type Gadget } from './gadgets';
 
 const TAU = Math.PI * 2;
 
@@ -25,6 +25,9 @@ export function paintGadget(ctx: Ctx, g: Gadget, layer: 'back' | 'front', look: 
     case 'cannon':
       if (layer === 'back') cannonCart(ctx, g);
       else cannonBarrel(ctx, g, look);
+      return;
+    case 'funnel':
+      funnel(ctx, g, layer);
       return;
     case 'fan':
       if (layer === 'back') fan(ctx, g, look.time);
@@ -159,6 +162,89 @@ function star(ctx: Ctx, x: number, y: number, r: number, color: string): void {
   }
   ctx.closePath();
   ctx.fill();
+}
+
+/**
+ * The funnel: a glass cone, its far side and the dark of its spout under the
+ * cats, its near side over them (a cat in it is seen through the glass), a
+ * brass collar at the spout and a rolled rim round its mouth.
+ */
+function funnel(ctx: Ctx, g: Gadget, layer: 'back' | 'front'): void {
+  const d = aimDir(g);
+  const { spout: s, mouth: m, len: L } = FUNNEL;
+  ctx.save();
+  ctx.translate(g.x, g.y);
+  ctx.rotate(Math.atan2(d.y, d.x));
+  const cone = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.lineTo(L, -m);
+    ctx.lineTo(L, m);
+    ctx.lineTo(0, s);
+    ctx.closePath();
+  };
+  if (layer === 'back') {
+    // the glass's far side: a pale tint, deeper toward the spout
+    const tint = ctx.createLinearGradient(0, 0, L, 0);
+    tint.addColorStop(0, 'rgba(120,160,182,0.34)');
+    tint.addColorStop(1, 'rgba(190,222,236,0.16)');
+    ctx.fillStyle = tint;
+    cone();
+    ctx.fill();
+    // down the spout: dark
+    ctx.fillStyle = 'rgba(46,40,62,0.42)';
+    ctx.beginPath();
+    ctx.ellipse(1, 0, 4, s - 3, 0, 0, TAU);
+    ctx.fill();
+    // the mouth's far lip
+    ctx.strokeStyle = 'rgba(150,190,208,0.7)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(L, 0, 9, m, 0, -Math.PI / 2, Math.PI / 2, true);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  // the near glass: a wash, its two sides, a shine down one of them
+  ctx.fillStyle = 'rgba(214,236,244,0.13)';
+  cone();
+  ctx.fill();
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    ctx.strokeStyle = 'rgba(122,160,180,0.85)';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(0, side * s);
+    ctx.lineTo(L, side * m);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(232,246,250,0.95)';
+    ctx.lineWidth = 3.2;
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(10, -s - 2);
+  ctx.lineTo(L - 14, -m + 12);
+  ctx.stroke();
+  // the rolled rim round its mouth, near half
+  ctx.strokeStyle = 'rgba(122,160,180,0.85)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.ellipse(L, 0, 9, m, 0, -Math.PI / 2, Math.PI / 2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(240,250,252,0.98)';
+  ctx.lineWidth = 3.4;
+  ctx.stroke();
+  // the brass collar at its spout
+  const p = (): void => roundRect(ctx, -5, -s - 4, 10, s * 2 + 8, 3);
+  ctx.fillStyle = GOLD;
+  p();
+  ctx.fill();
+  inkLine(ctx, p, GOLD, 1, 0.5);
+  ctx.fillStyle = 'rgba(255,243,214,0.7)';
+  ctx.fillRect(-3, -s - 2, 2.5, s * 2 + 4);
+  ctx.restore();
 }
 
 const MINT = '#8FCBB5';

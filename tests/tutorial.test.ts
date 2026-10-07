@@ -111,6 +111,10 @@ describe('the first-time tour', () => {
       ['fire', -25, 0],
       ['fire', 0, 25],
       ['fire', 0, -25],
+      // (way off: the funnel on the tube still catches it)
+      ['fire', 212, 212],
+      ['fire', -212, -212],
+      ['fire', -212, 212],
       ['out', 15, 15],
       ['out', -15, -15],
       ['boing', 12, 0],

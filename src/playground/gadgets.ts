@@ -13,7 +13,7 @@ import { capsule, roundedBox, type StaticShape } from '../physics/shapes';
 import type { SoftBody } from '../physics/softbody';
 import { FRAME_DT, type World } from '../physics/world';
 
-export type GadgetKind = 'cannon' | 'fan' | 'bumper' | 'belt';
+export type GadgetKind = 'cannon' | 'funnel' | 'fan' | 'bumper' | 'belt';
 
 export interface GadgetSpec {
   name: string;
@@ -27,10 +27,11 @@ export interface GadgetSpec {
 export const GADGETS: Record<GadgetKind, GadgetSpec> = {
   cannon: { name: 'Cat cannon', blurb: 'Let a cat go at its mouth: it trembles, and pomf! Out it flies, the way it’s aimed', aim: 'up', aim0: -50 },
   fan: { name: 'Fan', blurb: 'Blows cats along: point it up, and a cat floats on its wind', aim: 'any', aim0: -90 },
+  funnel: { name: 'Funnel', blurb: 'A wide glass mouth that draws cats in: put its spout on the end of a tube and it catches cats for it, or pour one right through', aim: 'any', aim0: -90 },
   bumper: { name: 'Bumper', blurb: 'Ding! A cat that touches it is bounced off, like a pinball', aim: null, aim0: 0 },
   belt: { name: 'Conveyor belt', blurb: 'A moving platform: a cat sitting on it gets carried along', aim: 'side', aim0: 0 },
 };
-export const GADGET_ORDER: GadgetKind[] = ['cannon', 'fan', 'bumper', 'belt'];
+export const GADGET_ORDER: GadgetKind[] = ['cannon', 'funnel', 'fan', 'bumper', 'belt'];
 
 export function isGadget(kind: string): kind is GadgetKind {
   return kind in GADGETS;
@@ -50,6 +51,8 @@ export const CANNON = { back: 22, fore: 56, r: 19, cart: 30, speed: 1250, wait: 
 export const FAN = { r: 30, reach: 460, half: 58, push: 2600, drag: 2.4 };
 export const BUMPER = { r: 24, kick: 760 };
 export const BELT = { half: 75, h: 20, speed: 230 };
+/** The funnel: half as wide at its spout as a tube's bell, half as wide at its mouth, how far apart they are; how hard it draws a cat in (gravity's 1100), and how near a tube's end its spout goes onto it. */
+export const FUNNEL = { spout: 25, mouth: 78, len: 95, pull: 1900, snap: 70 };
 
 /** How tall a toy that stands on something is, from where it's put (its middle) down to its foot (a cannon's cart), or 0. */
 export const gadgetFoot = (kind: GadgetKind): number => (kind === 'cannon' ? CANNON.cart : 0);
@@ -68,6 +71,8 @@ export function fitAim(kind: GadgetKind, deg: number): number {
   if (!spec.aim) return 0;
   let a = ((((deg + 180) % 360) + 360) % 360) - 180;
   if (spec.aim === 'side') return Math.cos(rad(a)) < 0 ? 180 : 0;
+  // (a funnel goes on a tube's end whichever way that points)
+  if (kind === 'funnel') return Math.round(a) === 180 ? -180 : Math.round(a);
   a = Math.round(a / 15) * 15;
   if (spec.aim === 'up') {
     // (pointing down: it'd shoot into its own cart)
@@ -100,6 +105,12 @@ export function gadgetBox(g: Pick<Gadget, 'kind' | 'x' | 'y' | 'aim'>): { x0: nu
         y1: y + CANNON.cart + 2,
       };
     }
+    case 'funnel': {
+      const c = funnelCorners(g);
+      const xs = c.map((q) => q[0]);
+      const ys = c.map((q) => q[1]);
+      return { x0: Math.min(...xs) - 8, y0: Math.min(...ys) - 8, x1: Math.max(...xs) + 8, y1: Math.max(...ys) + 8 };
+    }
     case 'fan':
       return { x0: x - FAN.r - 8, y0: y - FAN.r - 8, x1: x + FAN.r + 8, y1: y + FAN.r + 8 };
     case 'bumper':
@@ -107,6 +118,31 @@ export function gadgetBox(g: Pick<Gadget, 'kind' | 'x' | 'y' | 'aim'>): { x0: nu
     case 'belt':
       return { x0: x - BELT.half - 6, y0: y - 4, x1: x + BELT.half + 6, y1: y + BELT.h + 4 };
   }
+}
+
+/** A funnel's corners: its spout's two sides, then its mouth's (in the same order across). */
+export function funnelCorners(g: Pick<Gadget, 'x' | 'y' | 'aim'>): [number, number][] {
+  const d = { x: Math.cos(rad(g.aim)), y: Math.sin(rad(g.aim)) };
+  const p = { x: -d.y, y: d.x };
+  const { spout, mouth, len } = FUNNEL;
+  return [
+    [g.x - p.x * spout, g.y - p.y * spout],
+    [g.x + p.x * spout, g.y + p.y * spout],
+    [g.x + d.x * len + p.x * mouth, g.y + d.y * len + p.y * mouth],
+    [g.x + d.x * len - p.x * mouth, g.y + d.y * len - p.y * mouth],
+  ];
+}
+
+/** Is (x, y) in a funnel (between its sides, from just past its spout to its mouth; `pad`: a little more all round)? */
+export function inFunnel(g: Pick<Gadget, 'x' | 'y' | 'aim'>, x: number, y: number, pad = 4): boolean {
+  const d = { x: Math.cos(rad(g.aim)), y: Math.sin(rad(g.aim)) };
+  const rx = x - g.x;
+  const ry = y - g.y;
+  const u = rx * d.x + ry * d.y;
+  const v = -rx * d.y + ry * d.x;
+  if (u < -pad || u > FUNNEL.len + pad) return false;
+  const hw = FUNNEL.spout + ((FUNNEL.mouth - FUNNEL.spout) * Math.max(0, Math.min(FUNNEL.len, u))) / FUNNEL.len;
+  return Math.abs(v) < hw + pad;
 }
 
 /** A toy's colliders (carrying propId). */
@@ -121,6 +157,12 @@ export function gadgetShapes(g: Gadget, propId: number): StaticShape[] {
         capsule(x - d.x * CANNON.back, y - d.y * CANNON.back, x + d.x * (CANNON.fore - CANNON.r), y + d.y * (CANNON.fore - CANNON.r), CANNON.r, metal),
         roundedBox(x - 30, y + 6, 60, CANNON.cart - 6, 8, { material: 'wood', friction: 0.7, propId }),
       ];
+    }
+    case 'funnel': {
+      // its two glass sides, spout to mouth
+      const [s0, s1, m1, m0] = funnelCorners(g);
+      const glass = { material: 'ceramic' as const, friction: 0.25, propId };
+      return [capsule(s0[0], s0[1], m0[0], m0[1], 4, glass), capsule(s1[0], s1[1], m1[0], m1[1], 4, glass)];
     }
     case 'fan':
       return [capsule(x - 0.5, y, x + 0.5, y, FAN.r - 2, metal)];
@@ -272,6 +314,7 @@ export class GadgetWorks {
       for (const g of gadgets) {
         if (g.kind === 'fan') this.blow(g, b);
         else if (g.kind === 'belt') this.carry(g, b);
+        else if (g.kind === 'funnel') this.suck(g, b);
         else if (g.kind === 'bumper') {
           const hit = this.bump(g, cat);
           if (hit) out.push({ t: 'bump', cat, id: g.id, speed: hit });
@@ -383,6 +426,29 @@ export class GadgetWorks {
       const a = (push - FAN.drag * v) * FRAME_DT;
       b.vx[i] += d.x * a;
       b.vy[i] += d.y * a;
+    }
+  }
+
+  /**
+   * A funnel: a cat in it is drawn in to its spout (into the tube there, if
+   * there's one, or out through it), along it and in toward its middle, its
+   * sideways swing damped, whichever way the funnel faces. Not one going out
+   * of it fast: just shot out of the tube under it.
+   */
+  private suck(g: Gadget, b: SoftBody): void {
+    if (!inFunnel(g, b.cx, b.cy)) return;
+    const d = aimDir(g);
+    const out = b.vcx * d.x + b.vcy * d.y;
+    if (out > 120) return;
+    const px = -d.y;
+    const py = d.x;
+    const v = (b.cx - g.x) * px + (b.cy - g.y) * py;
+    const sway = b.vcx * px + b.vcy * py;
+    const across = -v * 22 - sway * 3;
+    b.wake();
+    for (let i = 0; i < b.n; i++) {
+      b.vx[i] += (-d.x * FUNNEL.pull + px * across) * FRAME_DT;
+      b.vy[i] += (-d.y * FUNNEL.pull + py * across) * FRAME_DT;
     }
   }
 

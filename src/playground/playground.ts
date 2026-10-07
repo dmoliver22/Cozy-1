@@ -51,6 +51,7 @@ import {
   pieceBox,
   readPlay,
   skyTube,
+  snapFunnel,
   snapPiece,
   spawnSpots,
   standing,
@@ -68,9 +69,10 @@ import {
   type PlayTube,
 } from './layout';
 import { floatPuff, paintSky, paintSpawn } from './skyArt';
-import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, aimDir, cannonMouth, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
+import { BELT, CANNON, FAN, FUNNEL, GADGETS, GADGET_ORDER, aimDir, cannonMouth, inFunnel, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
 import { gadgetThumb, paintGadget } from './gadgetArt';
 import { SkySim } from './sim';
+import { coach } from '../ui/coach';
 import { TOUR_CAT, TOUR_START, Tour, course, hammockDrop, markTourSeen, nearCannon, settleCourse } from './tutorial';
 
 export interface PlayHost {
@@ -133,7 +135,7 @@ type Drag =
 /** A piece's name. */
 const nameOf = (k: PieceKind): string => (isGadget(k) ? GADGETS[k].name : PERCHES[k].name);
 /** Does a piece have a part painted over the cats (a perch's front, a cannon's barrel)? */
-const fronted = (k: PieceKind): boolean => (isGadget(k) ? k === 'cannon' : hasFront(k));
+const fronted = (k: PieceKind): boolean => (isGadget(k) ? k === 'cannon' || k === 'funnel' : hasFront(k));
 
 /** What each piece is, up here (there are no walls or floors in the sky). */
 const SKY_BLURBS: Record<PerchKind, string> = {
@@ -921,6 +923,12 @@ export class Playground {
     const b = cat.body;
     for (const p of this.props) {
       const k = p.save.kind;
+      // (in a funnel: seen through its glass)
+      if (k === 'funnel') {
+        const g = gadgetOf(p.save);
+        if (g && inFunnel(g, b.cx, b.cy, b.p.radius * 0.6)) return true;
+        continue;
+      }
       if (isGadget(k) || !hasFront(k)) continue;
       const bx = p.box;
       if (b.cx > bx.x0 && b.cx < bx.x1 && b.cy > bx.y0 - b.p.radius && b.cy < bx.y1) return true;
@@ -998,6 +1006,15 @@ export class Playground {
     this.cam.y = clamp(this.cam.y, reach.y0, reach.y1);
     this.syncCam();
     this.updateHud();
+    if (!this.tour && !this.placing && !this.host.overlayOpen()) this.tips();
+  }
+
+  /** The Playground's tips, each once (ui/coach.ts): Build; then, with something built, how to ride a tube and change what's built. */
+  private tips(): void {
+    coach.tip('sky-build', 'All yours up here, and everything’s free: tap Build to make something.', () => this.bar.querySelector<HTMLElement>('[data-pg=build]'));
+    const top = (): HTMLElement | null => document.getElementById('topbar');
+    if (this.save.tubes.length) coach.tip('sky-ride', 'Carry a cat to either end of a tube and let go: whoosh!', top, true);
+    if (this.save.tubes.length + this.save.pieces.length) coach.tip('sky-edit', 'Tap anything you’ve built to move it, reshape it or take it away.', top, true);
   }
 
   /** How far the view goes: a good way round everything there is (more as you build). */
@@ -1262,9 +1279,13 @@ export class Playground {
     if (!pl || !d) return;
     if (d.k === 'ghost' && pl.k === 'piece') {
       const p = snapPiece(pl.piece.kind, wx + d.dx, wy + d.dy, this.save.pieces.filter((q) => q.id !== pl.piece.id));
-      if (p.x === pl.piece.x && p.y === pl.piece.y) return;
+      // (a funnel near a tube's end goes on it)
+      const f = pl.piece.kind === 'funnel' ? snapFunnel(wx + d.dx, wy + d.dy, this.save.tubes) : null;
+      const aim = f ? f.aim : pl.piece.aim;
+      const at = f ?? p;
+      if (at.x === pl.piece.x && at.y === pl.piece.y && aim === pl.piece.aim) return;
       this.lift(pl);
-      pl.piece = { ...pl.piece, x: p.x, y: p.y };
+      pl.piece = { ...pl.piece, x: at.x, y: at.y, aim };
     } else if (d.k === 'aim' && pl.k === 'piece') {
       // (turned to point at the finger, in steps)
       const g = gadgetOf(pl.piece);
@@ -1337,6 +1358,9 @@ export class Playground {
   /** The pieces to build with: every perch, and a tube. */
   showBuild(): void {
     this.host.audio.click();
+    coach.done('sky-build');
+    // (nothing built yet: a tube's the thing to try first)
+    const first = !this.save.tubes.length && !this.save.pieces.length;
     const rows = PERCH_ORDER.map(
       (k) => `<button class="pg-piece" data-piece="${k}"><span class="shop-pic"></span><span class="shop-what"><b>${PERCHES[k].name}</b><small>${SKY_BLURBS[k]}</small></span></button>`,
     ).join('');
@@ -1345,7 +1369,7 @@ export class Playground {
         <h2>Build</h2>
         <p class="sub">As many as you like, free. Shelves, ledges and clouds put end to end join into one long platform.</p>
         <div class="shop-rows">
-          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#BFD9E4" stroke-width="12" stroke-linecap="round"/><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#E8F4F8" stroke-width="5" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Twisty tube</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
+          <button class="pg-piece" data-piece="tube"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#BFD9E4" stroke-width="12" stroke-linecap="round"/><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#E8F4F8" stroke-width="5" stroke-linecap="round"/></svg></span><span class="shop-what"><b>Twisty tube${first ? ' <span class="pg-try">Try this first</span>' : ''}</b><small>In at either end, whoosh, and out of the other: draw it with your finger, as long and as twisty as you like</small></span></button>
           <button class="pg-piece" data-piece="pipe"><span class="shop-pic pg-tube-pic"><svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#BFD9E4" stroke-width="12"/><path d="M8 36 H 34 Q 46 36, 46 24 V 8" fill="none" stroke="#E8F4F8" stroke-width="5"/><path d="M30 29 V 43 M46 20 H 39 M46 20 H 53" stroke="#CDA86C" stroke-width="3.5"/></svg></span><span class="shop-what"><b>Pipe</b><small>Like a real one: straight runs and neat elbows, all lined up. Draw it, and it goes straight</small></span></button>
           <p class="shop-h">Toys</p>
           ${GADGET_ORDER.map((k) => `<button class="pg-piece" data-piece="${k}"><span class="shop-pic"></span><span class="shop-what"><b>${GADGETS[k].name}</b><small>${GADGETS[k].blurb}</small></span></button>`).join('')}
@@ -1405,6 +1429,7 @@ export class Playground {
 
   /** Long-pressed: up it comes on the finger (out of the sky till it's put down). Whatever was being changed is done with first. */
   private pickUp(hit: Built): void {
+    coach.done('sky-edit');
     const d = this.drag;
     if (d?.k === 'hold') this.drag = null;
     if (!this.letGo()) return;
@@ -1416,6 +1441,7 @@ export class Playground {
 
   /** Tapped: picked, to change (it stays where it is till it's changed). Whatever was being changed is done with first. */
   private select(hit: Built): void {
+    coach.done('sky-edit');
     if (!this.letGo()) return;
     this.host.audio.click();
     this.beginPlacing('kind' in hit ? { k: 'piece', piece: { ...hit }, prev: hit, lifted: false } : { k: 'tube', tube: { ...hit }, prev: hit, lifted: false });
@@ -1486,8 +1512,13 @@ export class Playground {
       short: 'Keep going: draw it a little longer',
       long: 'That’s as long as a tube can be',
     };
+    const onTube = pl.k === 'piece' && pl.piece.kind === 'funnel' && this.save.tubes.some((t) => tubeEnds(t).some((e) => Math.hypot(e.x - pl.piece.x, e.y - pl.piece.y) < 1));
     const hint =
-      pl.k === 'piece'
+      pl.k === 'piece' && pl.piece.kind === 'funnel'
+        ? onTube
+          ? 'On the end of a tube: it’ll catch cats for it. Its arrow turns it'
+          : 'Drag its spout onto the end of a tube, and it catches cats for it'
+        : pl.k === 'piece'
         ? isGadget(pl.piece.kind) && GADGETS[pl.piece.kind].aim
           ? `Drag the ${what} where you’d like it, and its arrow to ${pl.piece.kind === 'belt' ? 'turn it round' : 'aim it'}`
           : `Drag the ${what} where you’d like it`
@@ -1689,8 +1720,9 @@ export class Playground {
     for (const e of this.sim.step(this.seaY)) {
       const v = BREEDS[e.cat ? e.cat.breed : 'kitten'].voice;
       if (this.tour) {
+        // (into the cannon, or straight into the tube: drawn in by its funnel, say)
+        if (e.t === 'load' || e.t === 'in') this.tourRide(e.cat);
         this.tour.heard(e);
-        if (e.t === 'load') this.tourRide(e.cat);
         if (e.t === 'fell' && this.tour.handsOff) {
           // (never, but just in case: off the course on the tour, into the hammock)
           this.tourRescue(e.cat);
@@ -1700,6 +1732,7 @@ export class Playground {
       switch (e.t) {
         case 'in':
           this.host.audio.glorp(v.pitch * 1.1, 0.4, 0.1);
+          if (!this.tour) coach.done('sky-ride');
           break;
         case 'out':
           this.host.audio.boop(v.pitch);
@@ -1817,7 +1850,7 @@ function aimHandle(g: Gadget): { x: number; y: number; cx: number; cy: number } 
     const cy = g.y + BELT.h / 2;
     return { x: g.x + d.x * (BELT.half + 30), y: cy, cx: g.x, cy };
   }
-  const out = g.kind === 'cannon' ? CANNON.fore + 40 : FAN.r + 42;
+  const out = g.kind === 'cannon' ? CANNON.fore + 40 : g.kind === 'funnel' ? FUNNEL.len + 30 : FAN.r + 42;
   return { x: g.x + d.x * out, y: g.y + d.y * out, cx: g.x, cy: g.y };
 }
 

@@ -90,7 +90,7 @@ test('the tour can be skipped, straight home; and taken again from the menu, lea
   await page.getByRole('button', { name: /The tour again/ }).click();
   await page.waitForFunction(() => (window as unknown as { __app: TourHandle }).__app.kind === 'playground');
   await expect(card(page)).toContainText('Tap Kitten');
-  expect(await app(page, (a) => a.playground.save.pieces.length)).toBe(5);
+  expect(await app(page, (a) => a.playground.save.pieces.length)).toBe(6);
   // (the sky can't be built on, on the tour: the bar's away)
   await expect(page.locator('#playBar')).toBeHidden();
   await page.locator('#menuBtn').click();

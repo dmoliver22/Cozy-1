@@ -37,12 +37,18 @@ npm run dev          # http://localhost:5173
 
 The very first time, you start up in the clouds on a little **tour**: tap
 the kitten to boop it, then carry it into the cannon's mouth and let go.
-Pomf! It's shot into a tube, out of the far end, blown along by a fan onto a
+Pomf! It's shot into a funnel on a tube, out of the far end, blown along by a fan onto a
 bouncy cushion, boing, back through the wind and down into a hammock, where
 it curls up. Then it's home, where everyone's waiting. The ride's the same
 every time. Skip it with the button on its card, or take it again from the
 menu (**The tour again**); it's built in a sky of its own, so your
 Playground stays as you left it.
+
+The welcome card just asks the cats' names (and offers to make your own).
+The rest comes as **tips**, one line each, once each, in a bubble pointing
+at what they're about: the games, the cats' faces, swiping round the house,
+the Playground, and up there Build, riding a tube and changing what you've
+built. Tap one (or do what it says) and it's gone.
 
 At home:
 
@@ -162,7 +168,10 @@ The Playground (the cloud tin on the bar along the bottom):
 - **Toys** that make the cats do things: a **cat cannon** (let a cat go at its
   mouth: in it's stuffed head first, its back end too big to fit bulging out of
   the muzzle, tail wagging and feet kicking; the cannon trembles, and pomf! out
-  it flies the way it's aimed), a **fan** (it blows cats along its wind: point it up and a cat floats
+  it flies the way it's aimed), a **funnel** (a wide glass mouth that draws
+  cats in: let it go near the end of a tube and its spout goes on it, and it
+  catches cats for that tube; on its own, a cat pours right through it), a
+  **fan** (it blows cats along its wind: point it up and a cat floats
   on it), a **bumper** (ding! a cat that touches it is bounced off, like a
   pinball) and a **conveyor belt** (a moving platform that carries a cat
   along). Picked to change, a cannon, a fan or a belt has an arrow on a stem:

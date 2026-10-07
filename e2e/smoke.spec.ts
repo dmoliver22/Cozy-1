@@ -100,3 +100,26 @@ test('a house from before the cat maker is offered it, once', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Make your own cat!' })).toHaveCount(0);
   expect((await saved(page)).catAsked).toBe(true);
 });
+
+test('the welcome card is short; the rest comes as tips, once each, by what they are about', async ({ page }) => {
+  await openHouse(page, null, {}, { tips: true });
+  const card = page.locator('#overlay .card');
+  await expect(card.getByRole('heading', { name: 'Welcome home!' })).toBeVisible();
+  await expect(card).not.toContainText('Cat Drop');
+  await page.getByRole('button', { name: 'Later' }).click();
+  const tip = page.locator('.coach:not(.hidden)');
+  await expect(tip).toContainText('Play Cat Jar and Cat Drop', { timeout: 6000 });
+  await tip.getByRole('button', { name: 'Got it' }).click();
+  // next: the faces up top; doing what it says (the cats card) does for it too
+  await expect(tip).toContainText('Tap the faces');
+  await page.locator('.home-cats').click();
+  await expect(page.locator('#overlay')).toBeVisible();
+  await expect(tip).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(tip).toContainText('Swipe up and down');
+  // once only
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __app?: { kind: string } }).__app?.kind === 'home');
+  await expect(tip).toContainText('Swipe up and down', { timeout: 6000 });
+  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('cozy-tips:v1')))!)).toEqual(['home-games', 'home-faces']);
+});

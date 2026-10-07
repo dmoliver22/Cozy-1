@@ -27,6 +27,7 @@ import {
   snapPiece,
   spawnShapes,
   spawnSpots,
+  snapFunnel,
   straightTube,
   surfacesOf,
   tubeEnds,
@@ -34,8 +35,10 @@ import {
   tubeShapes,
   gadgetOf,
   type PlayPiece,
+  type PlaySave,
   type SkyTube,
 } from '../src/playground/layout';
+import { SkySim } from '../src/playground/sim';
 import { CANNON, FAN, GadgetWorks, cannonMouth, fitAim, type GadgetEvent } from '../src/playground/gadgets';
 
 type Pt = [number, number];
@@ -662,6 +665,37 @@ describe('toys', () => {
       for (let f = 0; f < 60 && works.inCannon(cat) !== null; f++) works.step([g], s.cats, (c) => !c.grabbed);
       expect(works.rump(cat)).toBeNull();
       expect(works.shake(7)).toBe(0);
+    }
+  });
+
+  it('a funnel draws a cat in: on the end of a tube, into the tube; on its own, out through its spout', () => {
+    // a tube along, its left end at (0, -300), and a funnel let go near that end: it goes on it, facing out of it
+    const tube = straightTube(9, 0, -300, 300, -300);
+    const f = snapFunnel(20, -290, [tube])!;
+    expect(f).toMatchObject({ x: 0, y: -300, aim: -180 });
+    expect(snapFunnel(200, -500, [tube])).toBeNull();
+    for (const onTube of [true, false]) {
+      const funnel: PlayPiece = onTube ? { id: 1, kind: 'funnel', ...f } : { id: 1, kind: 'funnel', x: 0, y: -300, aim: -90 };
+      const save: PlaySave = { v: 1, pieces: [funnel], tubes: onTube ? [tube] : [], nextId: 10, cats: [] };
+      let s!: Session;
+      const sim = new SkySim(() => s);
+      s = new Session({ id: 'playground', name: 'Playground', theme: 'living', furniture: [], containers: [], decor: [], cats: [{ breed: 'kitten', x: 0, y: 0, name: 'Pip' }] }, { shell: () => sim.build(save), spawnOk: () => true, unmerge: true });
+      const cat = s.cats[0];
+      // just inside its mouth (a sideways one: gravity alone would take it out again)
+      const g = gadgetOf(funnel)!;
+      const d = { x: Math.cos((g.aim * Math.PI) / 180), y: Math.sin((g.aim * Math.PI) / 180) };
+      cat.body.placeAt(g.x + d.x * 75, g.y + d.y * 75);
+      let rode = false;
+      let lowest = -Infinity;
+      for (let f2 = 0; f2 < 120; f2++) {
+        s.step();
+        for (const e of sim.step(5000)) if (e.t === 'in') rode = true;
+        cat.body.computeCentroid();
+        lowest = Math.max(lowest, cat.body.cy);
+      }
+      if (onTube) expect(rode).toBe(true);
+      // (on its own, facing up: in at the top and out of the bottom, falling on down)
+      else expect(lowest).toBeGreaterThan(-300 + 150);
     }
   });
 

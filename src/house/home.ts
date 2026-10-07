@@ -112,6 +112,7 @@ import {
 import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack as paintPerch, paintPerchFront, perchThumb } from './perchArt';
 import { PERCHES, PERCH_ORDER, buildPerch, perchBox, placeProblem, snapPerch, type Box, type PerchKind, type PerchProp, type PlaceProblem } from './perches';
 import { Tubes } from './tubes';
+import { coach } from '../ui/coach';
 
 export interface HomeHost {
   readonly renderer: Renderer;
@@ -303,9 +304,16 @@ export class Home {
       this.labelEls.set(f, b);
     }
     document.getElementById('app')!.appendChild(this.labels);
-    for (const b of this.bar.querySelectorAll<HTMLElement>('[data-game]')) b.addEventListener('click', () => host.play(b.dataset.game as GameId));
+    for (const b of this.bar.querySelectorAll<HTMLElement>('[data-game]'))
+      b.addEventListener('click', () => {
+        coach.done('home-games');
+        host.play(b.dataset.game as GameId);
+      });
     this.bar.querySelector('[data-act=shop]')?.addEventListener('click', () => this.showShop());
-    this.bar.querySelector('[data-act=playground]')?.addEventListener('click', () => host.playground());
+    this.bar.querySelector('[data-act=playground]')?.addEventListener('click', () => {
+      coach.done('home-sky');
+      host.playground();
+    });
     // the next stop up and down: a pill at the top and the bottom of the view
     this.lift = document.createElement('div');
     this.lift.className = 'home-floors hidden';
@@ -947,6 +955,7 @@ export class Home {
       this.offerMaker();
       return;
     }
+    if (this.house.welcomed && this.since > 1.5) this.tips();
     this.hopIn -= dt;
     if (this.hopIn <= 0) {
       this.hopIn = HOP_GAP[0] + Math.random() * (HOP_GAP[1] - HOP_GAP[0]);
@@ -1524,7 +1533,10 @@ export class Home {
     }
     if (d.k === 'scroll') {
       const r = this.host.renderer;
-      if (Math.abs(sy - d.sy) > SLOP) d.moved = true;
+      if (Math.abs(sy - d.sy) > SLOP && !d.moved) {
+        d.moved = true;
+        coach.done('home-scroll');
+      }
       const [lo, hi] = this.stage.pan;
       const want = d.camY - (sy - d.sy) * r.unitsPerPx;
       // a little give past the ends
@@ -1599,6 +1611,7 @@ export class Home {
   /** Mouse wheel / trackpad: scroll the house. */
   wheel(dy: number): void {
     if (!this.active) return;
+    coach.done('home-scroll');
     this.follow = null;
     this.camGoal = null;
     this.camV = 0;
@@ -1853,10 +1866,7 @@ export class Home {
         <h2>Welcome home!</h2>
         <p class="sub">Two cats live here already. What are they called?</p>
         <div class="hc-namers">${namers}</div>
-        <p class="hc-games">Pick them up, carry them about, boop them, pour them into the vase. Rename any cat any time, in <b>Your cats</b> (the faces up top).</p>
-        <p class="hc-games"><b>Make your own cat</b> to live here too: its coat, its fur, how big, and how squishy, from a firm loaf to a puddle.</p>
-        <p class="hc-games">Play <b>Cat Jar</b> and <b>Cat Drop</b> (the big buttons along the bottom) to earn treats for the <b>shop</b>, and more cats will move in. Swipe up and down to look round the house.</p>
-        <p class="hc-games">And take them up to the <b>Playground</b> in the clouds: build them anything you like, as big as you like.</p>
+        <p class="hc-games">And make a cat of your very own to live here too.</p>
         <div class="btns"><button class="btn primary" data-act="make">Make my cat</button><button class="btn" data-close>Later</button></div>
       </div>`,
       (root) => {
@@ -1868,6 +1878,15 @@ export class Home {
     this.house.catAsked = true;
     this.house.gift = localDateKey();
     writeHouse(this.house);
+  }
+
+  /** The house's tips, each once, one at a time (ui/coach.ts): what the welcome card used to say, by what it's about. */
+  private tips(): void {
+    const bar = this.bar;
+    coach.tip('home-games', 'Play Cat Jar and Cat Drop to earn treats for the shop. More cats move in as you play.', () => bar.querySelector<HTMLElement>('[data-game=jar]'));
+    coach.tip('home-faces', 'Tap the faces up here to see your cats, and rename them.', () => document.getElementById('faces'));
+    coach.tip('home-scroll', 'Swipe up and down to look round the house.', () => this.lift.querySelector<HTMLElement>('.floor-up:not(.off)'));
+    coach.tip('home-sky', 'Take your cats up to the Playground, and build them anything you like.', () => bar.querySelector<HTMLElement>('[data-act=playground]'));
   }
 
   /** Once, for a house from before there was a cat maker: make your own cat? */
@@ -1976,6 +1995,7 @@ export class Home {
 
   /** Who lives here, and what brings each of the others home (yours first: make it, or restyle it). */
   showCats(): void {
+    coach.done('home-faces');
     const h = this.house;
     const mineHere = h.residents.includes('mine') || h.arriving.includes('mine');
     const row = (b: BreedId): string => {

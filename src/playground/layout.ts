@@ -10,7 +10,7 @@ import { capsule, roundedBox, type StaticShape } from '../physics/shapes';
 import type { Surface } from '../game/props';
 import { PERCHES, PERCH_ORDER, PERCH_PROP_BASE, buildPerch, perchBox, type Box, type PerchKind, type PerchProp } from '../house/perches';
 import type { RideTube } from '../house/tubes';
-import { GADGETS, GADGET_ORDER, fitAim, gadgetBox, gadgetFoot, gadgetShapes, gadgetSurface, isGadget, type GadgetKind } from './gadgets';
+import { FUNNEL, GADGETS, GADGET_ORDER, fitAim, gadgetBox, gadgetFoot, gadgetShapes, gadgetSurface, isGadget, type GadgetKind } from './gadgets';
 import { pathLength, pointAt } from '../util/path';
 
 /** The respawn cloud: its top's middle at (x, y), and how far it reaches either side. */
@@ -169,7 +169,7 @@ export function buildPiece(p: PlayPiece): PieceProp {
 
 /** What a piece's top a cat sits on reaches across (a shelf's plank, a cushion's top): the bit that joins up with the next. */
 function topSpan(kind: PieceKind, x: number): [number, number] {
-  const half: Record<PieceKind, number> = { shelf: 33, cushion: 43, cloud: 42, hammock: 48, pod: 41, beanbag: 44, bounce: 33, bed: 40, tree: 40, belt: 69, cannon: 30, fan: 28, bumper: 22 };
+  const half: Record<PieceKind, number> = { shelf: 33, cushion: 43, cloud: 42, hammock: 48, pod: 41, beanbag: 44, bounce: 33, bed: 40, tree: 40, belt: 69, cannon: 30, funnel: 40, fan: 28, bumper: 22 };
   return [x - half[kind], x + half[kind]];
 }
 
@@ -224,6 +224,21 @@ export function snapPiece(kind: PieceKind, x: number, y: number, others: readonl
     }
   }
   return best ? { x: Math.round(best.x), y: Math.round(best.y) } : { x: Math.round(x), y: Math.round(y) };
+}
+
+/**
+ * A funnel let go near a tube's end goes on it: its spout at the end, facing
+ * the way that end points (null: no tube's end near enough).
+ */
+export function snapFunnel(x: number, y: number, tubes: readonly PlayTube[]): { x: number; y: number; aim: number } | null {
+  let best: { x: number; y: number; aim: number; d: number } | null = null;
+  for (const t of tubes) {
+    for (const e of tubeEnds(t)) {
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d < FUNNEL.snap && (!best || d < best.d)) best = { x: e.x, y: e.y, aim: fitAim('funnel', (Math.atan2(e.fy, e.fx) * 180) / Math.PI), d };
+    }
+  }
+  return best && { x: best.x, y: best.y, aim: best.aim };
 }
 
 /** The tops of the pieces and of the respawn cloud: where things stand, and where cats sit. */
