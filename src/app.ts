@@ -279,6 +279,12 @@ export class App {
           }
           break;
         }
+        case 'unstuck': {
+          // (a cat stuck fast, put down again somewhere clear: a puff where it was, and a boop)
+          r.puff(e.x, e.y, 6);
+          this.audio.boop(BREEDS[e.cat.breed].voice.pitch);
+          break;
+        }
         case 'seat': {
           // a cat who settles into the vase or the basket is happy about it
           // (not the ones settling back into their spots as you come home)
@@ -442,8 +448,8 @@ export class App {
       const w = this.renderer.screenToWorld(p.x, p.y);
       let cat = this.session.catAt(w.x, w.y, 18 / this.renderer.scale + 6);
       // no picking up a cat that's in a tube, or while a perch is being put
-      // somewhere; and a tap on the yarn beside a cat (not on the cat itself) is for the yarn
-      if (cat && (!this.home.canTouch(cat) || this.home.placing || (this.home.yarnAt(w.x, w.y) && !this.session.catAt(w.x, w.y, 0)))) cat = null;
+      // somewhere; and a tap on the yarn or the present beside a cat (not on the cat itself) is for them
+      if (cat && (!this.home.canTouch(cat) || this.home.placing || ((this.home.yarnAt(w.x, w.y) || this.home.giftAt(w.x, w.y)) && !this.session.catAt(w.x, w.y, 0)))) cat = null;
       if (!cat) {
         // the cats' present, opened; a scrap broken up, the yarn batted
         if (this.home.openGiftAt(w.x, w.y)) return;

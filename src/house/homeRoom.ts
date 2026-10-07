@@ -3,7 +3,7 @@
 // the room the tubes, the chimney and the attic's rafters take up.
 
 import { FLOOR_Y, WORLD_W, type ContainerPlacement, type FurniturePlacement } from '../game/props';
-import type { CatPlacement, DecorPlacement, RoomDef } from '../game/room';
+import type { CatPlacement, DecorPlacement, RoomDef, SpawnOk } from '../game/room';
 import { BREEDS, type BreedId } from '../physics/breeds';
 import type { HouseSave } from './house';
 import { NAMES, isOpen } from './house';
@@ -67,8 +67,13 @@ export function homeDecor(): DecorPlacement[] {
   ];
 }
 
-/** Where the cats leave their present (on the floor between the funnel and the box). */
-export const GIFT_SPOT = { x: 128, y: FLOOR_Y };
+/**
+ * Where the cats leave their present: on the window sill, at the end Pip
+ * doesn't sit on (the yarn's at the other). The floor along the wall is full
+ * (the funnel, the vase, the cushion and the basket), and on a short screen
+ * the bar along the bottom and the way down hide the front of it.
+ */
+export const GIFT_SPOT = { x: 57, y: 212 };
 
 /** Where each cat likes to be when it first moves in (x, and the top of what it sits on). */
 export const SPOTS: Record<BreedId, { x: number; y: number }> = {
@@ -137,6 +142,21 @@ export function canSit(h: Pick<HouseSave, 'open'>, b: BreedId, x: number, y: num
   if (x < r + 2 || x > WORLD_W - r - 2 || y > fl.floorY + 0.5 || y - 2 * r < fl.ceilY + 4) return false;
   const box: Box = { x0: x - r, y0: y - 2 * r, x1: x + r, y1: y - 2 };
   return !fittingBoxes(h).some((t) => box.x0 < t.x1 && box.x1 > t.x0 && box.y0 < t.y1 && box.y1 > t.y0);
+}
+
+/**
+ * Where in the house a cat may be put instead, when its place isn't clear
+ * (see buildRoom) or it's stuck fast (see Session.unstick): on the floor it
+ * was on, in the room, clear of the fittings.
+ */
+export function houseSpawnOk(h: Pick<HouseSave, 'open'>): SpawnOk {
+  return (x, y, r, from) => {
+    const f = floorAt(from.y);
+    if (floorAt(y + r * 0.9) !== f) return false;
+    const fl = FLOORS[f];
+    if (x < r + 2 || x > WORLD_W - r - 2 || y + r * 0.9 > fl.floorY || y - r < fl.ceilY + 4) return false;
+    return !fittingBoxes(h).some((t) => x + r > t.x0 && x - r < t.x1 && y + r > t.y0 && y - r < t.y1);
+  };
 }
 
 /** The house, with everyone who lives here where they last were (or in their favourite spot). */

@@ -10,13 +10,16 @@ import { clamp } from '../util/math';
 import { cozyScore, measureOverlap, type CozyResult, type Overlap } from './fit';
 import { FLOOR_Y, WORLD_W, type Prop } from './props';
 import { SoftBody as Body } from '../physics/softbody';
-import { buildRoom, type RoomDef } from './room';
+import { buildRoom, type RoomDef, type SpawnOk } from './room';
+import { nearestRoom, stuckFast, type Ring } from './spawn';
 
 const SETTLE_ENERGY = 400;
 const SETTLE_SPEED2 = 14 * 14;
 const SETTLE_FRAMES = 16;
 /** Downward pull on the part of a cat inside a container opening (units/s^2). */
 const SLURP = 2600;
+/** Frames a cat is stuck fast before it's put down somewhere clear (see Session.unstick). */
+const UNSTICK_FRAMES = 60;
 
 export interface SeatInfo {
   container: number;
@@ -63,12 +66,21 @@ export type GameEvent =
   | { t: 'unseat'; cat: Cat }
   | { t: 'grab'; cat: Cat }
   | { t: 'release'; cat: Cat }
-  | { t: 'boop'; cat: Cat };
+  | { t: 'boop'; cat: Cat }
+  /** A cat stuck fast was put down somewhere clear (it was at x, y). */
+  | { t: 'unstuck'; cat: Cat; x: number; y: number };
 
 export interface SessionOptions {
   settleFrames?: number;
   /** The room's walls, floor and ceiling (the house has floors of its own). */
   shell?: () => StaticShape[];
+  /**
+   * Where a cat whose place isn't clear may go instead (see buildRoom), and
+   * where one stuck fast may be put down again (see Session.unstick).
+   */
+  spawnOk?: SpawnOk;
+  /** Cats found in one another are slid apart (see World.unmerge). */
+  unmerge?: boolean;
 }
 
 /** Where a cat was drawn from and to (see Session.beginLerp), and its flowing shape. */
@@ -102,6 +114,12 @@ export class Session {
   private grabbing: Cat | null = null;
   private readonly settleFrames: number;
   private readonly shell: SessionOptions['shell'];
+  private readonly spawnOk: SessionOptions['spawnOk'];
+  private readonly unmerge: boolean;
+  /** Frames each cat has been stuck fast (see unstick). */
+  private stuck = new Map<Cat, number>();
+  /** When each was last put down somewhere clear, and how many times running. */
+  private unstuck = new Map<Cat, { frame: number; n: number }>();
   /** Where a carried cat can be taken (world): the room, or the house's floor it's on. */
   grabBox = { x0: 4, x1: WORLD_W - 4, y0: -40, y1: FLOOR_Y - 4 };
 
@@ -109,11 +127,13 @@ export class Session {
     this.def = def;
     this.settleFrames = opts.settleFrames ?? 75;
     this.shell = opts.shell;
+    this.spawnOk = opts.spawnOk;
+    this.unmerge = opts.unmerge ?? false;
     this.load();
   }
 
   private load(): void {
-    const built = buildRoom(this.def, this.settleFrames, this.shell);
+    const built = buildRoom(this.def, this.settleFrames, this.shell, this.spawnOk, this.unmerge);
     this.world = built.world;
     this.props = built.props;
     this.containers = built.containers;
@@ -140,6 +160,8 @@ export class Session {
     }));
     this.frame = 0;
     this.grabbing = null;
+    this.stuck.clear();
+    this.unstuck.clear();
     this.events = [];
     // Evaluate starting seats (a cat may begin inside something).
     this.updateCats();
@@ -257,6 +279,50 @@ export class Session {
       if (cat) this.events.push({ t: 'impact', cat, material: imp.shape.material, speed: imp.speed, container: imp.shape.container });
     }
     this.updateCats();
+    if (this.spawnOk && this.frame % 10 === 0) this.unstick();
+  }
+
+  /**
+   * A cat stuck fast for a second (its skin crossed over itself, or caught
+   * in the furniture), or still in another cat that it couldn't be slid out
+   * of (see World.unmerge: the smaller one), is put down again in the nearest
+   * clear place that spawnOk allows, a fresh round cat: never left stuck for
+   * good. Not one being carried, or out of the world (in a tube, mid-leap,
+   * in a scrap). One that gets stuck again soon after is given more room.
+   */
+  private unstick(): void {
+    const w = this.world;
+    for (const c of this.cats) {
+      const b = c.body;
+      const free = !c.grabbed && w.bodies.includes(b);
+      const n = free && stuckFast(w.statics, b) ? (this.stuck.get(c) ?? 0) + 10 : 0;
+      const m = free && this.unmerge ? w.mergedWith(b) : null;
+      const caught = m !== null && m.frames >= UNSTICK_FRAMES * 1.5 && (m.other.grab !== null || b.p.radius < m.other.p.radius || (b.p.radius === m.other.p.radius && b.id < m.other.id));
+      if (n < UNSTICK_FRAMES && !caught) {
+        if (n) this.stuck.set(c, n);
+        else this.stuck.delete(c);
+        continue;
+      }
+      this.stuck.delete(c);
+      const others: Ring[] = [];
+      for (const o of this.cats) {
+        if (o === c || !w.bodies.includes(o.body)) continue;
+        o.body.computeCentroid();
+        others.push({ x: o.body.cx, y: o.body.cy, r: o.body.p.radius });
+      }
+      b.computeCentroid();
+      const r = b.p.radius;
+      const from = { x: b.cx, y: b.cy };
+      const last = this.unstuck.get(c);
+      const again = last && this.frame - last.frame < 600 ? last.n + 1 : 0;
+      const at = nearestRoom(w.statics, others, from.x, from.y, r, (x, y) => this.spawnOk!(x, y, r, from), 320, 0.9 + 0.3 * Math.min(again, 2));
+      if (!at) continue;
+      b.reset(at.x, at.y);
+      c.intent = null;
+      c.settled = 0;
+      this.unstuck.set(c, { frame: this.frame, n: again });
+      this.events.push({ t: 'unstuck', cat: c, x: from.x, y: from.y });
+    }
   }
 
   drainEvents(): GameEvent[] {

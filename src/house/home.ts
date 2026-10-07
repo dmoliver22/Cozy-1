@@ -36,7 +36,7 @@ import { Antics, MOOD_WORDS, TEMPERS, moodOf } from './antics';
 import { CatMaker } from './catMaker';
 import { paintFish, paintHealBadge, paintPlaster } from './anticsArt';
 import { paintCeiling } from './homeArt';
-import { GIFT_SPOT, fittingBoxes, houseRoom } from './homeRoom';
+import { GIFT_SPOT, fittingBoxes, houseRoom, houseSpawnOk } from './homeRoom';
 import { ATTIC_THEME, BASEMENT_THEME, paintAttic, paintAtticShade, paintBasement, paintBasementShade, paintRoof, paintTubeBack, paintTubeFront, type Rect } from './houseArt';
 import {
   ALL_CATS,
@@ -331,6 +331,9 @@ export class Home {
         this.perchProps = placedPerches(this.house).map((p) => buildPerch(p));
         return [...houseShell(), ...this.fittingShapes(), ...this.perchProps.flatMap((p) => p.shapes)];
       },
+      // a cat whose place isn't clear any more (or that gets stuck fast) goes to the nearest one that is, on its floor
+      spawnOk: houseSpawnOk(this.house),
+      unmerge: true,
     };
   }
 
@@ -357,9 +360,15 @@ export class Home {
     key: () => this.perchKey(),
     paintBack: (ctx, r) => this.paintBack(ctx, r),
     paintFront: (ctx, r) => this.paintFront(ctx, r),
-    underlay: (ctx) => {
+    underlay: (ctx, dt) => {
       this.paintLive(ctx, false);
       this.antics.underlay(ctx);
+      // (behind the cats: one sitting by it is in front of it, not in it)
+      const g = this.gift;
+      if (g) {
+        g.t += dt;
+        paintPresent(ctx, g.x, g.y, g.t);
+      }
     },
     liveFront: (ctx) => this.paintLive(ctx, true),
     overlay: (ctx, dt) => this.paintOverlay(ctx, dt),
@@ -473,7 +482,7 @@ export class Home {
     if (!isOpen(this.house, 'attic')) paintAtticShade(ctx, r);
   }
 
-  /** Over everything, each frame: the cats' antics, hurt cats' plasters and fish, a perch being placed, the day's present. */
+  /** Over everything, each frame: the cats' antics, hurt cats' plasters and fish, a perch being placed. */
   private paintOverlay(ctx: Ctx, dt: number): void {
     this.antics.overlay(ctx);
     this.paintHurt(ctx, dt);
@@ -495,11 +504,6 @@ export class Home {
       paintPerch(ctx, pl.kind, pl.x, pl.y, pl.id);
       if (hasFront(pl.kind)) paintPerchFront(ctx, pl.kind, pl.x, pl.y, pl.id);
       ctx.restore();
-    }
-    const g = this.gift;
-    if (g) {
-      g.t += dt;
-      paintPresent(ctx, g.x, g.y, g.t);
     }
   }
 
@@ -562,7 +566,7 @@ export class Home {
     this.hopIn = 5 + Math.random() * 4;
     this.newcomer = null;
     this.arrivalIn = this.house.arriving.length ? 1.1 : -1;
-    // (on the floor between the funnel and the box)
+    // (on the window sill)
     this.gift = giftDue(this.house, localDateKey()) ? { x: GIFT_SPOT.x, y: GIFT_SPOT.y, t: 0 } : null;
     this.refreshBar();
     this.refreshLift();
@@ -1633,10 +1637,15 @@ export class Home {
   // ---------------------------------------------------------------------------
   // The day's present
 
+  /** Is (x, y) on the present? */
+  giftAt(wx: number, wy: number): boolean {
+    const g = this.gift;
+    return this.active && !!g && !this.placing && Math.abs(wx - g.x) <= 24 && wy >= g.y - 40 && wy <= g.y + 8;
+  }
+
   /** A tap on the present opens it. */
   openGiftAt(wx: number, wy: number): boolean {
-    const g = this.gift;
-    if (!this.active || !g || this.placing || Math.abs(wx - g.x) > 24 || wy < g.y - 40 || wy > g.y + 8) return false;
+    if (!this.giftAt(wx, wy)) return false;
     this.openGift();
     return true;
   }

@@ -375,6 +375,30 @@ Notes on the choices:
   the speed it's falling at (a ballistic kick fell short: a soft body pushing
   off loses much of its spring). Nobody leaps straight up into the underside
   of a ledge, or to where someone is or is on the way to.
+- **Never in one another, never in the furniture.** A cat put down in a spot
+  that isn't clear any more (saved before a vase or a cushion stood there,
+  restyled bigger beside a neighbour, two saved in the same place) would be
+  stuck there for good: the solver pushes skin out of things the nearest way,
+  so it ends up wrapped round a wall or tangled up in the other cat, jagged
+  and quivering. So the house builds its cats lowest first, and one whose
+  ring (nine tenths of its radius, all of it, so a thin wall through its
+  middle counts too) isn't clear of the colliders and of the cats already
+  placed goes to the nearest place that is, up or to either side, on the
+  same floor and clear of the tubes (`spawn.ts`, `houseSpawnOk`). Cats that
+  only touch never have a node inside one another (their skins keep them
+  apart), so two that do for six frames running are slid apart a little each
+  frame, the smaller further (`World.unmerge`; Cat Jar leaves it off, as it
+  packs its pile tight on purpose). And a cat stuck fast for a second (its
+  skin crossed over itself, a few of its nodes deep in something, or
+  something inside it: a thin rod slipped between two of its nodes, a
+  cushion it's wrapped right round), or still in another cat it couldn't be
+  slid out of after a second and a half (the smaller one), is put down again
+  in the nearest clear place as a fresh round cat, with a puff and a boop
+  (`Session.unstick`); one stuck again soon after gets more room. None of
+  it ever touches a cat being carried. `tests/stuck.test.ts` builds saves
+  with every one of those clashes, forces cats into one another and into the
+  shelf, and piles every cat up by hand to check nothing is slid or moved
+  that only touches.
 - **Treats.** Every game pays treats, about the same for the time it takes
   (ten or fifteen a minute): Cat Jar a treat per 150 points (~30 for a whole
   jar); Cat Drop a treat per two fish and per 50 m (20 to 60 a run).
@@ -382,7 +406,11 @@ Notes on the choices:
   carries the run's id and pays what it's earned since the last one
   (`payTreats`), so leaving a game half way loses nothing and nothing is paid
   twice. The cats also leave a present the first time you're home each day
-  (10 treats, a little box on the rug to tap).
+  (10 treats, a little box to tap on the window sill beside Pip: the floor
+  along the wall is full, and on a short screen the bar along the bottom
+  hides the front of it). It's drawn behind the cats, so one sitting by it
+  is in front of it, and a tap on it opens it rather than booping a cat
+  beside it.
 - **The shop** sells the floors (the basement 80, the attic 110, the roof
   garden 150) and perches (a wall shelf, a beanbag, a cushion ledge, a bouncy
   cushion, a cat bed, a hammock, a wicker pod, a cloud shelf and a cat tree,

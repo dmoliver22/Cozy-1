@@ -6,6 +6,7 @@ import { BREEDS } from '../physics/breeds';
 import { SoftBody } from '../physics/softbody';
 import { World } from '../physics/world';
 import type { StaticShape } from '../physics/shapes';
+import { nearestRoom, roomFor, type Ring } from './spawn';
 import {
   buildContainer,
   buildFurniture,
@@ -75,23 +76,47 @@ export interface BuiltRoom {
 }
 
 /**
- * Build physics for a room (inside `shell`, the room's walls, floor and
- * ceiling). Cats are dropped onto their surfaces and settled.
+ * May a cat be put at (x, y) (the middle of its ring, radius r) instead of
+ * where it was (`from`: a point in it, or just above what it sat on)?
  */
-export function buildRoom(def: RoomDef, settleFrames = 75, shell: () => StaticShape[] = roomShell): BuiltRoom {
+export type SpawnOk = (x: number, y: number, r: number, from: { x: number; y: number }) => boolean;
+
+/**
+ * Build physics for a room (inside `shell`, the room's walls, floor and
+ * ceiling). Cats are dropped onto their surfaces and settled. With `spawnOk`,
+ * a cat whose place isn't clear (something's there now, or another cat) is
+ * put in the nearest place that is, and that `spawnOk` allows.
+ */
+export function buildRoom(def: RoomDef, settleFrames = 75, shell: () => StaticShape[] = roomShell, spawnOk?: SpawnOk, unmerge = false): BuiltRoom {
   resetPropUids();
   const world = new World();
+  world.unmerge = unmerge;
   for (const s of shell()) world.addStatic(s);
   const furniture = def.furniture.map(buildFurniture);
   const containers = def.containers.map(buildContainer);
   const props = [...furniture, ...containers];
   for (const p of props) for (const s of p.shapes) world.addStatic(s);
-  const bodies = def.cats.map((c) => {
+  // (with spawnOk, the lowest first: a cat that was on top of another makes room, not the one under it)
+  const at: Ring[] = def.cats.map((c) => {
     const r = BREEDS[c.breed].physics.radius;
-    const b = new SoftBody(c.breed, c.x, c.y - r * 0.92 - 3);
-    world.addBody(b);
-    return b;
+    return { x: c.x, y: c.y - r * 0.92 - 3, r };
   });
+  if (spawnOk) {
+    const placed: Ring[] = [];
+    for (const k of def.cats.map((_, k) => k).sort((a, b) => def.cats[b].y - def.cats[a].y)) {
+      const c = def.cats[k];
+      const a = at[k];
+      if (!roomFor(world.statics, placed, a.x, a.y, a.r)) {
+        const p = nearestRoom(world.statics, placed, a.x, a.y, a.r, (px, py) => spawnOk(px, py, a.r, { x: c.x, y: c.y - 1 }));
+        if (p) {
+          a.x = p.x;
+          a.y = p.y;
+        }
+      }
+      placed.push(a);
+    }
+  }
+  const bodies = def.cats.map((c, k) => world.addBody(new SoftBody(c.breed, at[k].x, at[k].y)));
   for (let i = 0; i < settleFrames; i++) {
     for (const b of bodies) b.loafiness = Math.min(1, i / 40);
     world.step();

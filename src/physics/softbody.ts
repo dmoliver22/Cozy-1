@@ -504,6 +504,60 @@ export class SoftBody {
     this.computeCentroid();
   }
 
+  /** Slide the whole body over by (dx, dy), as it is, without setting it moving. */
+  shift(dx: number, dy: number): void {
+    this.wake();
+    for (let i = 0; i < this.n; i++) {
+      this.x[i] += dx;
+      this.y[i] += dy;
+      this.px[i] += dx;
+      this.py[i] += dy;
+    }
+    this.cx += dx;
+    this.cy += dy;
+  }
+
+  /**
+   * Start over: a fresh round body with its middle at (x, y), still. For a
+   * cat stuck fast in something, put somewhere else.
+   */
+  reset(x: number, y: number): void {
+    const n = this.n;
+    for (let i = 0; i < n; i++) {
+      this.x[i] = this.px[i] = x + this.roundX[i];
+      this.y[i] = this.py[i] = y + this.roundY[i];
+      this.vx[i] = 0;
+      this.vy[i] = 0;
+    }
+    this.qx.set(this.roundX);
+    this.qy.set(this.roundY);
+    this.loafiness = 0;
+    this.crouch = 0;
+    this.plastic = 0;
+    this.hang = 0;
+    this.knotted = 0;
+    this.held.fill(0);
+    this.letGo = null;
+    this.grab = null;
+    this.tent = 0;
+    this.tentV = 0;
+    this.tentOn = false;
+    this.contactShape.fill(-1);
+    this.bodyTouch.fill(0);
+    this.resistX = 0;
+    this.resistY = 0;
+    this.emaVx = 0;
+    this.emaVy = 0;
+    this.emaEnergy = 0;
+    this.energy = 0;
+    this.airborneFrames = 0;
+    this.assistAx = 0;
+    this.settleForce = 0;
+    this.frictionMul = 1;
+    this.wake();
+    this.computeCentroid();
+  }
+
   /** Add a velocity to every node (boops and hops). */
   kick(dvx: number, dvy: number): void {
     this.wake();

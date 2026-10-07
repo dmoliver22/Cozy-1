@@ -16,6 +16,19 @@ export interface ImpactEvent {
 }
 
 export class World {
+  /**
+   * Cats found in one another (put down in the same place, say) are slid
+   * apart, whole, a little each frame, until they aren't. Pushing their skins
+   * apart can't do it: each skin is pushed out of the other the nearest way,
+   * which for two cats in the same place is any way at all, so they stay
+   * tangled up in one another, and a cat at rest holds still with friction
+   * and rest damping besides. (Cats that only touch never have a node inside
+   * one another: their skins keep them apart.) Off by default (Cat Jar packs
+   * its pile tight on purpose).
+   */
+  unmerge = false;
+  /** Frames each pair of cats has been in one another (keyed by their ids). */
+  private merged = new Map<number, number>();
   static iterations = 2;
   /** Substeps per frame (other games on the engine may trade accuracy for speed). */
   substeps = SUBSTEPS;
@@ -115,6 +128,7 @@ export class World {
         if (!b.asleep) b.finishSubstep(h);
       }
     }
+    if (this.unmerge) this.slideApart();
     for (const b of bodies) {
       b.frameUpdate(FRAME_DT);
       let touching = SoftBody.restOnBodies && b.bodyContacts > 0;
@@ -131,6 +145,64 @@ export class World {
       }
     }
     this.frame++;
+  }
+
+  /** See `unmerge`. */
+  private slideApart(): void {
+    const bodies = this.bodies;
+    const was = this.merged;
+    const now = new Map<number, number>();
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i];
+        const b = bodies[j];
+        a.bounds(skinBB);
+        b.bounds(skinBB2);
+        if (skinBB.maxX < skinBB2.minX || skinBB2.maxX < skinBB.minX || skinBB.maxY < skinBB2.minY || skinBB2.maxY < skinBB.minY) continue;
+        a.computeCentroid();
+        b.computeCentroid();
+        // (a few of their nodes in one another, or one swallowed whole: its middle inside the other)
+        const n = nodesIn(a, b, skinBB2) + nodesIn(b, a, skinBB);
+        const swallowed = pointInBody(b, a.cx, a.cy) || pointInBody(a, b.cx, b.cy);
+        if (n < 3 && !swallowed) continue;
+        const key = a.id < b.id ? a.id * 65536 + b.id : b.id * 65536 + a.id;
+        const frames = (was.get(key) ?? 0) + 1;
+        now.set(key, frames);
+        // (not for a moment's squash: a cat flung hard into another)
+        if (frames < 6) continue;
+        // (the smaller one goes further; one being carried stays in the hand)
+        const wa = a.grab ? 0 : 1 / (a.p.radius * a.p.radius);
+        const wb = b.grab ? 0 : 1 / (b.p.radius * b.p.radius);
+        if (wa + wb === 0) continue;
+        let dx = a.cx - b.cx;
+        let dy = a.cy - b.cy;
+        let d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 1e-6) {
+          dx = a.id < b.id ? -1 : 1;
+          dy = 0;
+          d = 1;
+        }
+        const step = Math.min(3, 0.6 + n * 0.12 + (swallowed ? 2.4 : 0)) / (wa + wb);
+        a.shift((dx / d) * step * wa, (dy / d) * step * wa);
+        b.shift((-dx / d) * step * wb, (-dy / d) * step * wb);
+      }
+    }
+    this.merged = now;
+  }
+
+  /** The cat this one has been in longest, still, and for how many frames (see `unmerge`). */
+  mergedWith(b: SoftBody): { other: SoftBody; frames: number } | null {
+    let best: { other: SoftBody; frames: number } | null = null;
+    for (const [key, frames] of this.merged) {
+      const lo = Math.floor(key / 65536);
+      const hi = key - lo * 65536;
+      if (lo !== b.id && hi !== b.id) continue;
+      if (best && best.frames >= frames) continue;
+      const id = lo === b.id ? hi : lo;
+      const other = this.bodies.find((o) => o.id === id);
+      if (other) best = { other, frames };
+    }
+    return best;
   }
 
   drainImpacts(): ImpactEvent[] {
@@ -375,6 +447,32 @@ export function collideBodies(a: SoftBody, b: SoftBody): void {
   b.bounds(skinBB2);
   a.bounds(skinBB);
   nodesVsBody(b, a, skinBB);
+}
+
+/** How many of a's nodes are inside b (whose bounds are `bb`). */
+function nodesIn(a: SoftBody, b: SoftBody, bb: { minX: number; minY: number; maxX: number; maxY: number }): number {
+  let count = 0;
+  for (let i = 0; i < a.n; i++) {
+    const px = a.x[i];
+    const py = a.y[i];
+    if (px < bb.minX || px > bb.maxX || py < bb.minY || py > bb.maxY) continue;
+    if (pointInBody(b, px, py)) count++;
+  }
+  return count;
+}
+
+/** Is (px, py) inside b's skin? */
+function pointInBody(b: SoftBody, px: number, py: number): boolean {
+  const bn = b.n;
+  const bx = b.x;
+  const by = b.y;
+  let inside = false;
+  for (let k = 0, j = bn - 1; k < bn; j = k++) {
+    const yk = by[k];
+    const yj = by[j];
+    if (yk > py !== yj > py && px < bx[j] + ((py - yj) * (bx[k] - bx[j])) / (yk - yj)) inside = !inside;
+  }
+  return inside;
 }
 
 /** Kinetic energy per unit mass above which a cat bumping a sleeper wakes it. */
