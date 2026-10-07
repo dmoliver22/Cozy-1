@@ -18,7 +18,7 @@ async function firstVisit(page: Page): Promise<void> {
   await openHouse(page, null);
 }
 
-test('first visit: the home is where you start, with two games along the bottom and a cat of your own to make', async ({ page }) => {
+test('first visit, after the tour: home, with two games along the bottom and a cat of your own to make', async ({ page }) => {
   await firstVisit(page);
   await expect(page.getByRole('heading', { name: 'Welcome home!' })).toBeVisible();
   // the two who live here: name them (they go by their kinds till you do)

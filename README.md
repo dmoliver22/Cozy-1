@@ -35,6 +35,15 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
+The very first time, you start up in the clouds on a little **tour**: tap
+the kitten to boop it, then carry it into the cannon's mouth and let go.
+Pomf! It's shot into a tube, out of the far end, blown along by a fan onto a
+bouncy cushion, boing, back through the wind and down into a hammock, where
+it curls up. Then it's home, where everyone's waiting. The ride's the same
+every time. Skip it with the button on its card, or take it again from the
+menu (**The tour again**); it's built in a sky of its own, so your
+Playground stays as you left it.
+
 At home:
 
 - **Drag** a cat to pick it up by the scruff and carry it. The spot you pinch
@@ -190,6 +199,7 @@ game).
 | The house: four floors you scroll through (the living room twice as tall), cats moving in, treats, the shop, perches you place, glass tubes between the floors | `src/house/` |
 | Perches that move: a hammock that's a simulated sling, a bouncy cushion that squashes and throws a cat back up | `src/house/springs.ts`, art in `src/house/perchArt.ts` |
 | The Playground: your own corner of the sky, built of perches and tubes, with a free camera (pan, pinch, follow) | `src/playground/`, the camera in `src/render/renderer.ts` (`Stage.camera`) |
+| The first-time tour: a course in the clouds, the same ride every time | `src/playground/tutorial.ts` (what goes on each step up there: `src/playground/sim.ts`) |
 | Cats with ways of their own at home: temperaments and moods, stalk, wiggle and pounce, a ball of yarn, scraps in a dust cloud, a hurt cat nursed back with fish | `src/house/antics.ts`, art in `src/house/anticsArt.ts` |
 | Gouache look, paper grain, round chunky tin-can buttons, Baloo 2 + Nunito | `src/render/`, `src/styles.css` |
 | Glorps, clinks, layered purrs, gentle piano and brushed drums (all synthesized) | `src/audio/` |

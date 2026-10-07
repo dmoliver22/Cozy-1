@@ -15,8 +15,6 @@ import type { RoomDef } from '../game/room';
 import type { Cat, Session, SessionOptions } from '../game/session';
 import { roomFor } from '../game/spawn';
 import { BREEDS, type BreedId } from '../physics/breeds';
-import type { SoftBody } from '../physics/softbody';
-import { FRAME_DT, GRAVITY } from '../physics/world';
 import type { Expression } from '../render/catArt';
 import { roundRect, type Ctx } from '../render/paint';
 import type { Renderer, Stage } from '../render/renderer';
@@ -24,10 +22,8 @@ import { faceSVG } from '../ui/faces';
 import { clamp } from '../util/math';
 import { NAMES } from '../house/house';
 import { paintPipeJoint, paintPipeRun, paintSkyBell } from '../house/houseArt';
-import { inRingOf } from '../house/leap';
 import { hasFront, isLive, paintLiveBack, paintLiveFront, paintPerchBack, paintPerchFront, perchThumb } from '../house/perchArt';
 import { PERCHES, PERCH_ORDER, perchBox, type Box, type PerchKind } from '../house/perches';
-import { Tubes } from '../house/tubes';
 import {
   FALL,
   PLAY_KEY,
@@ -44,7 +40,6 @@ import {
   gadgetOf,
   extendTube,
   lowest,
-  mouthOf,
   movePipe,
   moveTube,
   nearestOnTube,
@@ -57,7 +52,6 @@ import {
   readPlay,
   skyTube,
   snapPiece,
-  spawnShapes,
   spawnSpots,
   standing,
   surfacesOf,
@@ -72,11 +66,12 @@ import {
   type PlayPiece,
   type PlaySave,
   type PlayTube,
-  type SkyTube,
 } from './layout';
 import { floatPuff, paintSky, paintSpawn } from './skyArt';
-import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, GadgetWorks, aimDir, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
+import { BELT, CANNON, FAN, GADGETS, GADGET_ORDER, aimDir, cannonMouth, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
 import { gadgetThumb, paintGadget } from './gadgetArt';
+import { SkySim } from './sim';
+import { TOUR_CAT, TOUR_START, Tour, course, hammockDrop, markTourSeen, nearCannon, settleCourse } from './tutorial';
 
 export interface PlayHost {
   readonly renderer: Renderer;
@@ -158,12 +153,8 @@ export class Playground {
   /** Who's come along this time. */
   who: BreedId[] = [];
   private active = false;
-  readonly tubes: Tubes<Cat, SkyTube>;
-  /** The pieces up in the sky (their colliders are in the world), and the tubes as they're ridden. */
-  private props: PieceProp[] = [];
-  /** The toys at work (cannons, fans, bumpers, belts). */
-  readonly works: GadgetWorks;
-  private skyTubes: SkyTube[] = [];
+  /** What goes on up here each step: the pieces, tubes and toys at work (sim.ts). */
+  readonly sim: SkySim;
   /** The view: where its middle is, and how far it's zoomed in. */
   private cam = { x: SPAWN.x, y: SPAWN.y - 120, zoom: 1 };
   private camV = { x: 0, y: 0 };
@@ -176,9 +167,6 @@ export class Playground {
   private pinch: { d0: number; z0: number; wx: number; wy: number } | null = null;
   private drag: Drag | null = null;
   placing: Placing | null = null;
-  private cooldown = new Map<Cat, number>();
-  private fellAt = new WeakMap<SoftBody, number>();
-  private frame = 0;
   private time = 0;
   /** Painted pieces, kept (a piece's kind and look, how sharp: pixels per unit). */
   private sprites = new Map<string, { c: HTMLCanvasElement; ppu: number; x0: number; y0: number; w: number; h: number }>();
@@ -190,12 +178,17 @@ export class Playground {
   private readonly undoBar: HTMLElement;
   private undo: { item: Built; timer: number } | null = null;
   private lastHud = '';
+  /** The first-time tour (tutorial.ts), while it's on: the course is up instead of your own sky, which waits here. */
+  tour: Tour | null = null;
+  private ownSave: PlaySave | null = null;
+  private readonly tourCard: HTMLElement;
+  private tourShown = '';
+  /** Time to go home (the tour's over): done from tick, not mid-step. */
+  private tourOver = false;
 
   constructor(private readonly host: PlayHost) {
     this.save = readPlay(safeGet(PLAY_KEY));
-    this.tubes = new Tubes<Cat, SkyTube>(() => host.session.world);
-    this.tubes.inTheWay = (cat, out) => this.inTheWay(cat, out);
-    this.works = new GadgetWorks(() => host.session.world);
+    this.sim = new SkySim(() => host.session);
     // along the bottom: home, build, respawn
     this.bar = document.createElement('footer');
     this.bar.id = 'playBar';
@@ -226,6 +219,14 @@ export class Playground {
     this.undoBar.innerHTML = `<span>Taken away</span><button class="btn" data-undo>Undo</button>`;
     this.undoBar.querySelector('[data-undo]')!.addEventListener('click', () => this.undoRemove());
     document.getElementById('app')!.appendChild(this.undoBar);
+    // the tour's card, where the bar goes: what to do, and a way out
+    this.tourCard = document.createElement('div');
+    this.tourCard.className = 'pg-tour hidden';
+    this.tourCard.setAttribute('role', 'status');
+    this.tourCard.setAttribute('aria-live', 'polite');
+    this.tourCard.innerHTML = `<p class="pg-tour-line"></p><p class="pg-tour-sub"></p><button class="pg-tour-skip" data-tour="skip">Skip</button>`;
+    this.tourCard.querySelector('[data-tour=skip]')!.addEventListener('click', () => this.skipTour());
+    document.getElementById('app')!.appendChild(this.tourCard);
   }
 
   get isActive(): boolean {
@@ -242,18 +243,14 @@ export class Playground {
 
   /** The cats who've come, on the respawn cloud. */
   room(): RoomDef {
-    const xs = spawnSpots(this.who.length);
+    const xs = this.tour ? [TOUR_START.x] : spawnSpots(this.who.length);
     const cats = this.who.map((b, i) => ({ breed: b, x: xs[i], y: SPAWN.y, name: NAMES[b] }));
     return { id: 'playground', name: 'Playground', theme: 'living', furniture: [], containers: [], decor: [], cats };
   }
 
   get sessionOptions(): SessionOptions {
     return {
-      shell: () => {
-        this.props = this.save.pieces.map(buildPiece);
-        this.skyTubes = this.save.tubes.map(skyTube);
-        return [...spawnShapes(), ...this.props.flatMap((p) => p.shapes), ...this.save.tubes.flatMap(tubeShapes)];
-      },
+      shell: () => this.sim.build(this.save),
       // (a cat stuck fast goes to the nearest clear place: up here, anywhere)
       spawnOk: () => true,
       unmerge: true,
@@ -264,8 +261,8 @@ export class Playground {
   enter(arriving: BreedId | null = null): void {
     this.active = true;
     this.time = 0;
-    this.frame = 0;
-    this.cooldown.clear();
+    this.sim.start();
+    this.tourOver = false;
     this.follow = null;
     this.camV = { x: 0, y: 0 };
     this.cam = { x: SPAWN.x, y: SPAWN.y - 110, zoom: 1 };
@@ -284,6 +281,15 @@ export class Playground {
       this.syncCam();
       this.host.renderer.puff(SPAWN.x, SPAWN.y - 560, 8);
     }
+    if (this.tour) {
+      // (the hammock hung still before anyone's there: the ride's the same whenever it starts)
+      settleCourse(this.sim);
+      this.bar.classList.add('hidden');
+      this.cam = { x: TOUR_FRAME.x, y: TOUR_FRAME.y, zoom: TOUR_FRAME.zoom };
+      this.syncCam();
+      this.tourShown = '';
+      this.refreshTour();
+    }
   }
 
   leave(): void {
@@ -301,9 +307,115 @@ export class Playground {
     this.placeBar.classList.add('hidden');
     this.forgetUndo();
     this.host.renderer.stage = null;
+    if (this.tour) {
+      // (your own sky back, as it was)
+      this.tour = null;
+      this.save = this.ownSave ?? this.save;
+      this.ownSave = null;
+      this.tourCard.classList.add('hidden');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The first-time tour (tutorial.ts)
+
+  /** The tour's next: the course goes up in place of your own sky (put back as it was when you leave). */
+  startTour(): void {
+    if (!this.tour) this.ownSave = this.save;
+    this.tour = new Tour();
+    this.save = course();
+    this.who = [TOUR_CAT];
+  }
+
+  /** No more tour: home. */
+  skipTour(): void {
+    if (!this.tour) return;
+    this.host.audio.click();
+    markTourSeen();
+    this.host.closeOverlay();
+    this.host.home();
+  }
+
+  /** A cat booped: the tour's first step done. */
+  booped(cat: Cat): void {
+    const t = this.tour;
+    if (!t || t.stage !== 'boop') return;
+    t.booped();
+    cat.body.computeCentroid();
+    this.host.renderer.hearts(cat.body.cx, cat.body.cy - cat.body.p.radius - 6, 2);
+    this.refreshTour();
+  }
+
+  /** In it went: off it goes, the view along with it. */
+  private tourRide(cat: Cat): void {
+    const t = this.tour;
+    if (!t || t.handsOff) return;
+    t.loaded();
+    this.follow = cat;
+    this.camV = { x: 0, y: 0 };
+    this.refreshTour();
+  }
+
+  /** The tour's card says where it's got to. */
+  private refreshTour(): void {
+    const t = this.tour;
+    if (!t) return;
+    const key = `${t.line}|${t.sub}`;
+    if (key === this.tourShown) return;
+    this.tourShown = key;
+    this.tourCard.classList.remove('hidden');
+    this.tourCard.dataset.stage = t.stage;
+    this.tourCard.querySelector('.pg-tour-line')!.textContent = t.line;
+    this.tourCard.querySelector('.pg-tour-sub')!.textContent = t.sub;
+    // (no skipping once it's all but over)
+    this.tourCard.querySelector<HTMLElement>('[data-tour=skip]')!.hidden = t.stage === 'snug' || t.stage === 'home';
+  }
+
+  /** The tour, each step: how it's going, and what it's said to do. */
+  private stepTour(): void {
+    const t = this.tour;
+    const cat = this.host.session.cats[0];
+    if (!t || !cat) return;
+    const b = cat.body;
+    if (!t.handsOff && !cat.grabbed && cat.settled > 90) {
+      // (put down somewhere off the cloud: back on it, by the cannon)
+      b.computeCentroid();
+      if (Math.abs(b.cx - SPAWN.x) > SPAWN.half || b.cy > SPAWN.y + 5) this.respawn(cat);
+    }
+    switch (t.step(this.sim, cat)) {
+      case 'snug':
+        b.computeCentroid();
+        this.host.renderer.hearts(b.cx, b.cy - b.p.radius - 6, 4);
+        this.host.audio.reveal();
+        break;
+      case 'rescue':
+        this.tourRescue(cat);
+        break;
+      case 'home':
+        markTourSeen();
+        break;
+      case 'leave':
+        this.tourOver = true;
+        break;
+    }
+    this.refreshTour();
+  }
+
+  /** Gone astray (it never has, but if it ever did): a puff, and it's in the hammock. */
+  private tourRescue(cat: Cat): void {
+    const h = hammockDrop(this.sim);
+    if (!h) return;
+    const b = cat.body;
+    b.computeCentroid();
+    this.host.renderer.puff(b.cx, b.cy, 7);
+    b.reset(h.x, h.y);
+    this.host.renderer.puff(h.x, h.y, 7);
+    this.host.audio.boop(BREEDS[cat.breed].voice.pitch);
   }
 
   private write(): void {
+    // (the tour's course is never kept)
+    if (this.tour) return;
     try {
       localStorage.setItem(PLAY_KEY, JSON.stringify(this.save));
     } catch {
@@ -542,6 +654,7 @@ export class Playground {
 
   /** Over everything: what's being placed, and a little marker over the cat the view's following. */
   private paintOverlay(ctx: Ctx): void {
+    if (this.tour) this.paintTourHint(ctx);
     const f = this.follow;
     if (f && !this.tubes.riding(f)) {
       const b = f.body;
@@ -632,6 +745,75 @@ export class Playground {
    * the tube itself, and its handles: an end each (drag one to draw on, or
    * back along it to take it in) and a grip in its middle to move it by.
    */
+  /** The tour's pointers: rings round the cat to boop it, then the way to the cannon's mouth, and rings round that. */
+  private paintTourHint(ctx: Ctx): void {
+    const t = this.tour!;
+    const cat = this.host.session.cats[0];
+    if (!cat || t.handsOff) return;
+    const b = cat.body;
+    b.computeCentroid();
+    const rings = (x: number, y: number, r: number): void => {
+      for (let k = 0; k < 2; k++) {
+        const u = (this.time * 0.9 + k * 0.5) % 1;
+        ctx.strokeStyle = `rgba(246,200,95,${(0.9 * (1 - u)).toFixed(3)})`;
+        ctx.lineWidth = 4 * (1 - u) + 1;
+        ctx.beginPath();
+        ctx.arc(x, y, r + u * 22, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    };
+    ctx.save();
+    if (t.stage === 'boop') {
+      rings(b.cx, b.cy, b.p.radius + 6);
+      ctx.restore();
+      return;
+    }
+    const g = this.toys().find((q) => q.kind === 'cannon');
+    if (!g) {
+      ctx.restore();
+      return;
+    }
+    const m = cannonMouth(g);
+    rings(m.zx, m.zy, 20);
+    if (!cat.grabbed) {
+      // from over the cat, up and across to the mouth (marching along)
+      const x0 = b.cx;
+      const y0 = b.cy - b.p.radius - 14;
+      const cx = (x0 + m.zx) / 2;
+      const cy = Math.min(y0, m.zy) - 70;
+      ctx.setLineDash([9, 8]);
+      ctx.lineDashOffset = -this.time * 30;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(122,90,42,0.45)';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.quadraticCurveTo(cx, cy, m.zx, m.zy - 24);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(246,200,95,0.95)';
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // an arrowhead, pointing on along the curve
+      const dx = m.zx - cx;
+      const dy = m.zy - 24 - cy;
+      const a = Math.atan2(dy, dx);
+      ctx.translate(m.zx, m.zy - 24);
+      ctx.rotate(a);
+      ctx.fillStyle = 'rgba(246,200,95,0.98)';
+      ctx.strokeStyle = 'rgba(122,90,42,0.7)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(4, 0);
+      ctx.lineTo(-10, -8);
+      ctx.lineTo(-10, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   private paintTubeGhost(ctx: Ctx, t: PlayTube): void {
     const pts = t.pts;
     if (!pts.length) return;
@@ -757,8 +939,23 @@ export class Playground {
   /** Each frame: the view coasts after a fling, follows a cat, and goes along with a carried cat (or what's being placed) at the screen's edges. */
   tick(dt: number): void {
     if (!this.active) return;
+    if (this.tourOver) {
+      this.tourOver = false;
+      this.host.home();
+      return;
+    }
     this.time += dt;
     const r = this.host.renderer;
+    if (this.tour) {
+      // the tour's view: the cat and the cannon, then along with the ride, out a little to see more of it
+      const k = 1 - Math.exp(-2.5 * dt);
+      const riding = this.tour.handsOff;
+      this.cam.zoom += ((riding ? TOUR_FRAME.ride : TOUR_FRAME.zoom) - this.cam.zoom) * k;
+      if (!riding && !this.host.carryFinger()) {
+        this.cam.x += (TOUR_FRAME.x - this.cam.x) * k;
+        this.cam.y += (TOUR_FRAME.y - this.cam.y) * k;
+      }
+    }
     const upp = 1 / (r.scale * this.cam.zoom);
     // a carried cat, or what's being placed, at the edge of the screen: the view goes that way
     const f = this.host.carryFinger() ?? (this.drag?.k === 'ghost' || this.drag?.k === 'tube' ? { x: this.drag.sx, y: this.drag.sy } : null);
@@ -834,7 +1031,7 @@ export class Playground {
 
   /** Mouse wheel or trackpad: zoom in and out where it's pointing (and a trackpad's two-finger slide looks about). */
   wheel(dx: number, dy: number, sx: number, sy: number, pinch: boolean): void {
-    if (!this.active) return;
+    if (!this.active || this.tour) return;
     this.follow = null;
     if (pinch || Math.abs(dx) < 0.5) this.zoomTo(this.cam.zoom * Math.exp(-dy * (pinch ? 0.01 : 0.0015)), sx, sy);
     else {
@@ -857,12 +1054,16 @@ export class Playground {
   /** The top bar: where you are, and the cats here (tap one to follow it). */
   private updateHud(): void {
     const s = this.host.session;
-    const key = `${s.cats.map((c) => c.breed).join('|')}:${this.follow?.breed ?? ''}`;
+    const key = `${s.cats.map((c) => c.breed).join('|')}:${this.follow?.breed ?? ''}:${!!this.tour}`;
     if (key === this.lastHud) return;
     this.lastHud = key;
     const $ = (id: string): HTMLElement => document.getElementById(id)!;
     $('roomName').textContent = 'Playground';
-    $('roomSub').textContent = this.follow ? `Following ${NAMES[this.follow.breed]}` : 'Tap a face to follow that cat';
+    $('roomSub').textContent = this.tour ? 'Your first visit' : this.follow ? `Following ${NAMES[this.follow.breed]}` : 'Tap a face to follow that cat';
+    if (this.tour) {
+      $('faces').innerHTML = '';
+      return;
+    }
     $('faces').innerHTML = s.cats
       .map((c) => `<button class="face pg-follow${this.follow === c ? ' on' : ''}" data-follow="${c.breed}" aria-pressed="${this.follow === c}" aria-label="Follow ${NAMES[c.breed]}" title="${NAMES[c.breed]}">${faceSVG(c.breed, { mood: 'happy', size: 26 })}</button>`)
       .join('');
@@ -876,7 +1077,8 @@ export class Playground {
 
   /** A finger down where there's no cat (the app has a cat that's touched). True if the playground takes it. */
   pointerDown(id: number, sx: number, sy: number, wx: number, wy: number): boolean {
-    if (!this.active) return false;
+    // (on the tour, the sky's just to look at)
+    if (!this.active || this.tour) return false;
     this.fingers.set(id, { sx, sy });
     if (this.fingers.size === 2) {
       // a second finger: a pinch (whatever the first was doing stops)
@@ -1425,7 +1627,7 @@ export class Playground {
 
   private addTube(t: PlayTube): void {
     this.save.tubes.push(t);
-    this.skyTubes.push(skyTube(t));
+    this.sim.skyTubes.push(skyTube(t));
     const w = this.host.session.world;
     for (const sh of tubeShapes(t)) w.addStatic(sh);
     this.host.session.registerShapes();
@@ -1433,7 +1635,7 @@ export class Playground {
 
   private removeTube(id: number): void {
     this.save.tubes = this.save.tubes.filter((t) => t.id !== id);
-    this.skyTubes = this.skyTubes.filter((t) => t.play.id !== id);
+    this.sim.skyTubes = this.sim.skyTubes.filter((t) => t.play.id !== id);
     this.host.session.world.removeStaticsOfProp(TUBE_PROP_BASE + id);
     this.host.session.registerShapes();
   }
@@ -1454,7 +1656,7 @@ export class Playground {
   // Life up here
 
   canTouch(cat: Cat): boolean {
-    return !this.tubes.riding(cat) && this.works.inCannon(cat) === null;
+    return !this.tubes.riding(cat) && this.works.inCannon(cat) === null && !this.tour?.handsOff;
   }
 
   /** A cat can be carried anywhere up here. */
@@ -1462,100 +1664,85 @@ export class Playground {
     return { x0: -1e6, x1: 1e6, y0: -1e6, y1: 1e6 };
   }
 
-  /** Let go by a tube's mouth: in it goes. */
+  /** Let go at a cannon's mouth or a tube's: in it goes. */
   released(cat: Cat): void {
     if (!this.active) return;
-    const b = cat.body;
-    b.computeCentroid();
-    // let go at a cannon's mouth: in it goes
-    const cannon = GadgetWorks.cannonAt(this.toys(), b.cx, b.cy);
-    if (cannon && this.works.load(cat, cannon)) {
-      this.loaded(cat);
+    const into = this.sim.released(cat);
+    if (into === 'cannon') this.loaded(cat);
+    if (!this.tour) return;
+    if (into) {
+      this.tourRide(cat);
       return;
     }
-    for (const t of this.skyTubes) {
-      const m = mouthOf(t, b.cx, b.cy);
-      if (m !== null) {
-        this.ride(cat, t, m);
-        return;
-      }
+    // (on the tour, let go anywhere near the cannon's mouth and in it goes)
+    const b = cat.body;
+    const g = nearCannon(this.sim, b.cx, b.cy);
+    if (g && this.works.load(cat, g)) {
+      this.loaded(cat);
+      this.tourRide(cat);
     }
   }
 
-  private ride(cat: Cat, t: SkyTube, mouth: 0 | 1): void {
-    // (in at b, its lower mouth, is "up" the way the house's tubes go)
-    this.tubes.start(cat, t, mouth === 1);
-  }
-
-  /** One physics step: the springy pieces, the tubes, cats put in a tube's mouth or falling into the sea. */
+  /** One physics step: the springy pieces, the tubes, the toys, cats put in a tube's mouth or falling into the sea (sim.ts), and their sounds. */
   step(): void {
     if (!this.active) return;
-    this.frame++;
-    const s = this.host.session;
-    this.stepLive();
-    this.tubes.step();
-    // (out of a tube: a moment before a mouth can have it again. Its own is
-    // right there: without that, it'd go straight back in, and back and forth)
-    for (const e of this.tubes.drain()) {
-      const v = BREEDS[e.cat.breed].voice;
-      if (e.t === 'in') this.host.audio.glorp(v.pitch * 1.1, 0.4, 0.1);
-      else {
-        e.cat.sinceTouch = 0;
-        e.cat.settled = 0;
-        e.cat.intent = null;
-        this.host.audio.boop(v.pitch);
-        this.host.renderer.puff(e.x, e.y + e.cat.body.p.radius, 5);
-        this.cooldown.set(e.cat, 45);
-      }
-    }
-    // the toys at work: fans blowing, belts running, bumpers and cannons
-    for (const e of this.works.step(this.toys(), s.cats, (c) => !c.grabbed && !this.tubes.riding(c))) {
-      const v = BREEDS[e.cat.breed].voice;
-      e.cat.settled = 0;
-      e.cat.intent = null;
-      if (e.t === 'load') this.loaded(e.cat);
-      else if (e.t === 'fire') {
-        e.cat.sinceTouch = 0;
-        this.host.audio.pomf();
-        this.host.renderer.puff(e.x, e.y, 8);
-        if (Math.random() < 0.6) this.host.audio.grab(v.pitch, false);
-      } else {
-        this.host.audio.boing(e.speed, 0.15);
-        this.host.renderer.puff(e.cat.body.cx, e.cat.body.cy, 3);
-      }
-    }
-    const sea = this.seaY;
-    for (const c of s.cats) {
-      if (c.grabbed || this.tubes.riding(c) || this.works.inCannon(c) !== null) continue;
-      const b = c.body;
-      b.computeCentroid();
-      if (b.cy > sea) {
-        this.respawn(c);
-        continue;
-      }
-      if ((this.cooldown.get(c) ?? 0) > 0) continue;
-      for (const t of this.skyTubes) {
-        const m = mouthOf(t, b.cx, b.cy);
-        if (m !== null) {
-          this.ride(c, t, m);
-          break;
+    for (const e of this.sim.step(this.seaY)) {
+      const v = BREEDS[e.cat ? e.cat.breed : 'kitten'].voice;
+      if (this.tour) {
+        this.tour.heard(e);
+        if (e.t === 'load') this.tourRide(e.cat);
+        if (e.t === 'fell' && this.tour.handsOff) {
+          // (never, but just in case: off the course on the tour, into the hammock)
+          this.tourRescue(e.cat);
+          continue;
         }
       }
+      switch (e.t) {
+        case 'in':
+          this.host.audio.glorp(v.pitch * 1.1, 0.4, 0.1);
+          break;
+        case 'out':
+          this.host.audio.boop(v.pitch);
+          this.host.renderer.puff(e.x, e.y + e.cat.body.p.radius, 5);
+          break;
+        case 'load':
+          this.loaded(e.cat);
+          break;
+        case 'fire':
+          this.host.audio.pomf();
+          this.host.renderer.puff(e.x, e.y, 8);
+          if (Math.random() < 0.6) this.host.audio.grab(v.pitch, false);
+          break;
+        case 'bump':
+          this.host.audio.boing(e.speed, 0.15);
+          this.host.renderer.puff(e.cat.body.cx, e.cat.body.cy, 3);
+          break;
+        case 'boing':
+          this.host.audio.boing(e.speed, e.cat ? clamp((e.cat.body.p.radius - 22) / 20, 0, 1) : 0);
+          break;
+        case 'fell':
+          this.respawn(e.cat);
+          break;
+      }
     }
-    for (const [c, t] of this.cooldown) {
-      if (t <= 1) this.cooldown.delete(c);
-      else this.cooldown.set(c, t - 1);
-    }
+    if (this.tour) this.stepTour();
   }
 
   /** The toys up in the sky, as the toys' works take them. */
-  private toys(): Gadget[] {
-    const out: Gadget[] = [];
-    for (const p of this.save.pieces) {
-      const g = gadgetOf(p);
-      if (g) out.push(g);
-    }
-    return out;
+  toys(): Gadget[] {
+    return this.sim.toys();
+  }
+
+  private get props(): PieceProp[] {
+    return this.sim.props;
+  }
+
+  private get tubes(): SkySim['tubes'] {
+    return this.sim.tubes;
+  }
+
+  get works(): SkySim['works'] {
+    return this.sim.works;
   }
 
   /** A cat into a cannon: a little glorp, and a puff at its mouth. */
@@ -1563,36 +1750,6 @@ export class Playground {
     const v = BREEDS[cat.breed].voice;
     this.host.audio.glorp(v.pitch * 1.2, 0.3, 0.1);
     cat.sinceTouch = 0;
-  }
-
-  /** Hammocks take the weight of who's in them; bouncy cushions spring a cat that lands on them back up, boing. */
-  private stepLive(): void {
-    const s = this.host.session;
-    const bodies = s.world.bodies;
-    const catOf = (b: SoftBody): Cat | undefined => s.cats.find((c) => c.body === b);
-    const free = (b: SoftBody): boolean => {
-      const c = catOf(b);
-      return !c || (!c.grabbed && !this.tubes.riding(c));
-    };
-    const fell = (b: SoftBody): number => this.fellAt.get(b) ?? 0;
-    for (const p of this.props) {
-      if (p.sling) {
-        p.sling.gather(bodies);
-        p.sling.step(FRAME_DT, GRAVITY);
-      }
-      if (p.bouncer) {
-        const hit = p.bouncer.step(bodies, free, fell);
-        if (hit) {
-          const c = catOf(hit.body);
-          this.host.audio.boing(hit.speed, c ? clamp((c.body.p.radius - 22) / 20, 0, 1) : 0);
-          if (c) {
-            c.settled = 0;
-            c.intent = null;
-          }
-        }
-      }
-    }
-    for (const b of bodies) this.fellAt.set(b, b.vcy);
   }
 
   /** Back on the respawn cloud, where there's room (or dropped onto it from above), with a puff. */
@@ -1632,29 +1789,14 @@ export class Playground {
     this.cam.y = SPAWN.y - 110;
     this.syncCam();
   }
-
-  /** Something in the way of a cat coming out of a tube: it waits, and whoever's there is shooed off. */
-  private inTheWay(cat: Cat, out: Float64Array): boolean {
-    const s = this.host.session;
-    const n = cat.body.n;
-    const by = inRingOf(out, n, s.world.bodies, cat.body);
-    if (this.frame % 20 === 0) {
-      let mx = 0;
-      for (let i = 0; i < n; i++) mx += out[i * 2] / n;
-      for (const b of by) {
-        const o = s.cats.find((c) => c.body === b);
-        if (o?.grabbed) continue;
-        b.computeCentroid();
-        b.kick((Math.sign(b.cx - mx) || 1) * 170, -200);
-      }
-    }
-    return by.length > 0;
-  }
 }
 
 // ---------------------------------------------------------------------------
 
 type Rect = { x0: number; y0: number; x1: number; y1: number };
+
+/** The tour's view to begin with (the cat and the cannon), and how far out it goes for the ride. */
+const TOUR_FRAME = { x: SPAWN.x + 10, y: SPAWN.y - 80, zoom: 1.2, ride: 0.85 };
 
 const overlaps = (b: Box, r: Rect, pad = 0): boolean => b.x1 + pad > r.x0 && b.x0 - pad < r.x1 && b.y1 + pad > r.y0 && b.y0 - pad < r.y1;
 

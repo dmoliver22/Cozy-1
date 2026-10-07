@@ -1341,3 +1341,66 @@ button:focus-visible {
   padding: 6px 16px;
   font-size: 16px;
 }
+/* the first-time tour's card (playground/tutorial.ts), where the Playground's bar goes */
+.pg-tour {
+  position: absolute;
+  left: 50%;
+  bottom: calc(14px + var(--safe-bottom));
+  transform: translateX(-50%);
+  width: min(380px, calc(100% - 32px));
+  padding: 14px 18px 16px;
+  border-radius: 26px;
+  background: var(--panel);
+  color: var(--panel-ink);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  text-align: center;
+  z-index: 6;
+  animation: pg-tour-in 0.35s ease-out;
+}
+.pg-tour-line {
+  margin: 0 44px 4px;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.pg-tour-sub {
+  margin: 0;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--panel-muted);
+  text-wrap: balance;
+}
+.pg-tour-skip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--line);
+  color: var(--panel-muted);
+  font: inherit;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pg-tour-skip[hidden] {
+  display: none;
+}
+@keyframes pg-tour-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pg-tour {
+    animation: none;
+  }
+}

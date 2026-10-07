@@ -675,6 +675,39 @@ perches (`buildPerch`, their art from `perchArt.ts`) and of tubes ridden
 like the house's (`Tubes` takes any path with a mouth at each end). Notes on
 the choices:
 
+- **What goes on each step** up there is `SkySim` (`sim.ts`): the hammocks
+  and bouncy cushions, the tubes, the toys, and cats falling into the sea of
+  cloud. It has no screen. It reports what happened, and the Playground
+  plays the sounds and the puffs. So the tests, and the tour below, run
+  exactly what the game runs.
+- **The first-time tour** (`tutorial.ts`). With no house saved and the tour
+  not yet seen (`cozy-tour:v1`), the app starts in the Playground on a
+  course of its own, put up in place of your sky (yours is put back as it
+  was, and the course is never saved). Its card, where the Playground's bar
+  goes, says what to do. First, tap the kitten (rings pulse round it). Then
+  carry it into the cannon (a dashed arrow marches from the cat to the
+  mouth; let go anywhere within 130 of it, and in it goes). Then it watches:
+  pomf, into a tube, out pointing down past a fan blowing sideways, onto a
+  bouncy cushion, back up through the fan's wind, and down into a hammock.
+  Once it's lain there still a moment, it's "Off home!", and home, where the
+  welcome card asks the cats' names. On the ride the cat can't be picked
+  up, the sky can't be built on or looked about, and the view follows the
+  cat a little zoomed out.
+  It's **the same ride every time**:
+  - The cannon fires a fresh round cat (`SoftBody.reset`), whatever it was
+    doing when it went in.
+  - The physics runs in fixed steps, with nothing left to chance.
+  - The tube ride is scripted.
+  - The hammock is let hang until it's still before anyone's there.
+
+  The tests check all of this. Three runs with different goings-on
+  beforehand end in exactly the same place. A nudge on the way (at the
+  cannon, out of the tube, off the cushion) still lands in the hammock,
+  which also covers the tiny differences in maths between browsers. If a
+  cat ever did go astray, or took over 14 s, it would be put in the hammock
+  with a puff. Skip is on the card (and in the menu); the house menu's
+  **The tour again** replays it.
+
 - **Getting there.** A cloud tin on the home bar asks who's coming (your
   cats as faces to tap: last time's lot, or your own cat, picked to begin
   with) and goes up; and once the roof garden is open, a cat let go under

@@ -13,6 +13,7 @@ import { NAMES, type GameId } from './house/house';
 import type { ExtraFloor } from './house/layout';
 import { pageStyles } from './pageStyles';
 import { Playground } from './playground/playground';
+import { TOUR_CAT, tourSeen } from './playground/tutorial';
 import { mountDrop } from './proto/drop/mount';
 import { mountJar } from './proto/jar/mount';
 import { loadBest } from './proto/kit';
@@ -135,10 +136,14 @@ export class App {
       this.paused = document.hidden;
       this.last = 0;
     });
-    // Home first; a link can go straight on into a game.
-    this.goHome();
-    const game = new URLSearchParams(location.search).get('game');
-    if (game === 'jar' || game === 'drop') this.openGame(game);
+    // The first time ever, the tour up in the clouds; after that, home first
+    // (a link can go straight on into a game, or take the tour again).
+    const q = new URLSearchParams(location.search);
+    const game = q.get('game');
+    const linked = game === 'jar' || game === 'drop';
+    if (q.get('tour') === '1' || (!linked && !this.home.house.welcomed && !tourSeen())) this.goTour();
+    else this.goHome();
+    if (linked) this.openGame(game);
     $('loading').classList.add('done');
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -189,6 +194,13 @@ export class App {
     this.kind = 'playground';
     this.lastFaces = '';
     this.playground.enter(arriving);
+  }
+
+  /** The first-time tour: up to a little course in the clouds, then home (playground/tutorial.ts). */
+  goTour(): void {
+    this.closeOverlay();
+    this.playground.startTour();
+    this.goPlayground([TOUR_CAT]);
   }
 
   /** Back home from the Playground. */
@@ -323,6 +335,7 @@ export class App {
           break;
         case 'boop': {
           this.audio.boop(BREEDS[e.cat.breed].voice.pitch);
+          if (this.inSky) this.playground.booped(e.cat);
           const v = r.view(e.cat);
           r.emit('note', v.hx + 14, v.hy - 8, { vy: -30, life: 0.9, size: 15, color: PALETTE.ink, text: '?' });
           break;
@@ -474,6 +487,7 @@ export class App {
           <button class="menu-item" data-act="shop"><span class="mi-icon">🛍️</span><span>Shop<small>Perches and the rest of the house · ${h.treats} treats</small></span></button>
           <button class="menu-item" data-play="jar"><span class="mi-icon">🫙</span><span>Cat Jar<small>Two the same melt into a bigger cat · ${best('catjar.best')}</small></span></button>
           <button class="menu-item" data-play="drop"><span class="mi-icon">🛁</span><span>Cat Drop<small>Drop down the house, ahead of bath time · ${best('catdrop.best')}</small></span></button>
+          <button class="menu-item" data-act="tour"><span class="mi-icon">☁️</span><span>The tour again<small>Boop, cannon, tube, fan, cushion, hammock</small></span></button>
         </div>
         ${this.togglesHtml()}
         <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back home</button></div>
@@ -482,6 +496,7 @@ export class App {
         root.querySelector('[data-act=maker]')!.addEventListener('click', () => this.home.showMaker());
         root.querySelector('[data-act=cats]')!.addEventListener('click', () => this.home.showCats());
         root.querySelector('[data-act=shop]')!.addEventListener('click', () => this.home.showShop());
+        root.querySelector('[data-act=tour]')!.addEventListener('click', () => this.goTour());
         root.querySelectorAll<HTMLElement>('[data-play]').forEach((b) =>
           b.addEventListener('click', () => {
             this.closeOverlay();
@@ -495,6 +510,24 @@ export class App {
 
   /** Up in the clouds: home, everyone back on the respawn cloud, a clean sky. */
   private showSkyMenu(): void {
+    if (this.playground.tour) {
+      this.openOverlay(
+        `<div class="card" role="dialog" aria-label="Menu">
+          <h2>Welcome!</h2>
+          <p class="sub">A first look round, up in the clouds</p>
+          <div class="menu-list">
+            <button class="menu-item" data-act="skip"><span class="mi-icon">🏠</span><span>Skip to home<small>The house, and everyone in it</small></span></button>
+          </div>
+          ${this.togglesHtml()}
+          <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back</button></div>
+        </div>`,
+        (root) => {
+          root.querySelector('[data-act=skip]')!.addEventListener('click', () => this.playground.skipTour());
+          this.bindToggles(root);
+        },
+      );
+      return;
+    }
     const n = this.playground.save.pieces.length + this.playground.save.tubes.length;
     this.openOverlay(
       `<div class="card" role="dialog" aria-label="Menu">

@@ -142,7 +142,7 @@ export type GadgetEvent =
   | { t: 'fire'; cat: Cat; id: number; x: number; y: number }
   | { t: 'bump'; cat: Cat; id: number; speed: number };
 
-/** A cat in a cannon: how long it's been in, its shape as it went in (to come out round again), and where its back end sticks out. */
+/** A cat in a cannon: how long it's been in, its shape as it went in (which way round each bit of it is, stuffed in), and where its back end sticks out. */
 interface Loaded {
   cat: Cat;
   id: number;
@@ -332,7 +332,7 @@ export class GadgetWorks {
     l.rump = { x: ox + d.x * along, y: oy + d.y * along, dx: d.x, dy: d.y, len: along, half: across };
   }
 
-  /** Out of its cannon: round again just out of the muzzle, flying the way it's aimed (or, its cannon gone, put back still). */
+  /** Out of its cannon: a fresh round cat just out of the muzzle, flying the way it's aimed (or, its cannon gone, put back still). */
   private unload(l: Loaded, g: Gadget | null): { x: number; y: number } {
     this.loaded.splice(this.loaded.indexOf(l), 1);
     const b = l.cat.body;
@@ -351,16 +351,12 @@ export class GadgetWorks {
       this.recoil.set(g.id, 1);
       this.fired.set(l.cat, 40);
     }
+    // (a fresh round cat, however it went in: a shot's the same every time)
+    b.reset(x, y);
     for (let i = 0; i < b.n; i++) {
-      b.x[i] = b.px[i] = x + l.shape[i * 2];
-      b.y[i] = b.py[i] = y + l.shape[i * 2 + 1];
       b.vx[i] = vx;
       b.vy[i] = vy;
     }
-    b.loafiness = 0;
-    b.held.fill(0);
-    b.wake();
-    b.computeCentroid();
     this.world().addBody(b);
     return { x, y };
   }
