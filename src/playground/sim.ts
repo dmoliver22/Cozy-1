@@ -39,11 +39,11 @@ export class SkySim {
     this.works = new GadgetWorks(() => session().world);
   }
 
-  /** The sky as built: its pieces and tubes, and every collider (the respawn cloud's too). */
-  build(save: PlaySave): StaticShape[] {
+  /** The sky as built: its pieces and tubes, and every collider (the respawn cloud's too, unless `spawn` is false: a challenge's course has none). */
+  build(save: PlaySave, spawn = true): StaticShape[] {
     this.props = save.pieces.map(buildPiece);
     this.skyTubes = save.tubes.map(skyTube);
-    return [...spawnShapes(), ...this.props.flatMap((p) => p.shapes), ...save.tubes.flatMap(tubeShapes)];
+    return [...(spawn ? spawnShapes() : []), ...this.props.flatMap((p) => p.shapes), ...save.tubes.flatMap(tubeShapes)];
   }
 
   /** A fresh start (a new session). */

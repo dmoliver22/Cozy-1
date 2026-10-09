@@ -71,8 +71,10 @@ import {
 import { floatPuff, paintSky, paintSpawn } from './skyArt';
 import { BELT, CANNON, FAN, FUNNEL, GADGETS, GADGET_ORDER, aimDir, cannonMouth, inFunnel, fitAim, isGadget, type Gadget, type Rump } from './gadgets';
 import { gadgetThumb, paintGadget } from './gadgetArt';
-import { SkySim } from './sim';
+import { SkySim, type SkyEvent } from './sim';
 import { coach } from '../ui/coach';
+import { Attempt, CHALLENGES, CHALLENGE_CAT, told, holdInCannon, kitLeft, markSolved, ofCourse, setOff, solvedChallenges, startSpot, unlocked, type Challenge, type Outcome } from './challenges';
+import { FIRSTS, FIRST_TREATS, Firsts, type FirstKind } from './firsts';
 import { TOUR_CAT, TOUR_START, Tour, course, hammockDrop, markTourSeen, nearCannon, settleCourse } from './tutorial';
 
 export interface PlayHost {
@@ -86,6 +88,10 @@ export interface PlayHost {
   carryFinger(): { x: number; y: number } | null;
   /** Back home. */
   home(): void;
+  /** The sky afresh (a new session from what's built, with whoever's up here): a challenge's go, or back from one. */
+  again(): void;
+  /** Treats earned up here, into the house. */
+  treats(n: number): void;
 }
 
 /** Long-press on a piece or a tube to pick it up (ms), and how far a finger may wander before it's a look about (px). */
@@ -187,6 +193,22 @@ export class Playground {
   private tourShown = '';
   /** Time to go home (the tour's over): done from tick, not mid-step. */
   private tourOver = false;
+  /**
+   * A challenge (challenges.ts), while one's on: its course up in place of
+   * your sky (yours waits, with whoever came up), and how it's going: being
+   * built, off (watched), made it, or not.
+   */
+  challenge: { ch: Challenge; phase: 'build' | 'go' | 'won' | 'lost'; attempt: Attempt | null; hint: boolean } | null = null;
+  private ownWho: BreedId[] = [];
+  /** Go was pressed: the fresh sky's up, the cat sets off. */
+  private goNext = false;
+  private readonly chBar: HTMLElement;
+  private readonly chCard: HTMLElement;
+  private chShown = '';
+  /** Treats for each first thing a cat does up here (firsts.ts), and the pill that says so. */
+  private readonly firsts = new Firsts();
+  private readonly firstPill: HTMLElement;
+  private firstTimer = 0;
 
   constructor(private readonly host: PlayHost) {
     this.save = readPlay(safeGet(PLAY_KEY));
@@ -198,6 +220,7 @@ export class Playground {
     this.bar.innerHTML = `
       <button class="tin tin-cream" data-pg="home" aria-label="Back home"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home" /></svg></span><span class="tin-label">Home</span></button>
       <button class="tin tin-mint" data-pg="build" aria-label="Build"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-build" /></svg></span><span class="tin-label">Build</span></button>
+      <button class="tin tin-ginger" data-pg="challenges" aria-label="Challenges"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-treat" /></svg></span><span class="tin-label">Challenges</span></button>
       <button class="tin tin-blue" data-pg="respawn" aria-label="Respawn"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-star" /></svg></span><span class="tin-label">Respawn</span></button>`;
     this.bar.querySelector('[data-pg=home]')!.addEventListener('click', () => {
       host.audio.click();
@@ -205,6 +228,7 @@ export class Playground {
     });
     this.bar.querySelector('[data-pg=build]')!.addEventListener('click', () => this.showBuild());
     this.bar.querySelector('[data-pg=respawn]')!.addEventListener('click', () => this.respawnAll());
+    this.bar.querySelector('[data-pg=challenges]')!.addEventListener('click', () => this.showChallenges());
     document.getElementById('app')!.appendChild(this.bar);
     // the bar shown while putting something somewhere
     this.placeBar = document.createElement('div');
@@ -229,6 +253,35 @@ export class Playground {
     this.tourCard.innerHTML = `<p class="pg-tour-line"></p><p class="pg-tour-sub"></p><button class="pg-tour-skip" data-tour="skip">Skip</button>`;
     this.tourCard.querySelector('[data-tour=skip]')!.addEventListener('click', () => this.skipTour());
     document.getElementById('app')!.appendChild(this.tourCard);
+    this.firstPill = document.createElement('div');
+    this.firstPill.className = 'pg-first hidden';
+    this.firstPill.setAttribute('role', 'status');
+    document.getElementById('app')!.appendChild(this.firstPill);
+    // a challenge's bar: back to your own sky, your kit, and Go
+    this.chBar = document.createElement('footer');
+    this.chBar.id = 'chBar';
+    this.chBar.className = 'tray play-bar hidden';
+    this.chBar.innerHTML = `
+      <button class="tin tin-cream" data-ch="back" aria-label="Leave the challenge"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-cloud" /></svg></span><span class="tin-label">Leave</span></button>
+      <button class="tin tin-mint" data-ch="build" aria-label="Your pieces"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-build" /></svg></span><span class="tin-label">Pieces</span><span class="tin-note"></span></button>
+      <button class="tin tin-ginger" data-ch="go" aria-label="Go"><span class="tin-lid"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-star" /></svg></span><span class="tin-label">Go!</span></button>`;
+    this.chBar.querySelector('[data-ch=back]')!.addEventListener('click', () => this.leaveChallenge());
+    this.chBar.querySelector('[data-ch=build]')!.addEventListener('click', () => this.showBuild());
+    this.chBar.querySelector('[data-ch=go]')!.addEventListener('click', () => this.chGo());
+    document.getElementById('app')!.appendChild(this.chBar);
+    // how a go's going (where the bar goes while it's off), and what's next when it's not made it
+    this.chCard = document.createElement('div');
+    this.chCard.className = 'pg-ch hidden';
+    this.chCard.setAttribute('role', 'status');
+    this.chCard.setAttribute('aria-live', 'polite');
+    this.chCard.innerHTML = `<p class="pg-tour-line"></p><p class="pg-tour-sub"></p><div class="pg-ch-btns"><button class="btn" data-chc="hint">Hint</button><button class="btn primary" data-chc="again">Try again</button></div>`;
+    this.chCard.querySelector('[data-chc=again]')!.addEventListener('click', () => this.chAgain());
+    this.chCard.querySelector('[data-chc=hint]')!.addEventListener('click', () => {
+      if (this.challenge) this.challenge.hint = true;
+      this.host.audio.click();
+      this.refreshChallenge();
+    });
+    document.getElementById('app')!.appendChild(this.chCard);
   }
 
   get isActive(): boolean {
@@ -246,13 +299,16 @@ export class Playground {
   /** The cats who've come, on the respawn cloud. */
   room(): RoomDef {
     const xs = this.tour ? [TOUR_START.x] : spawnSpots(this.who.length);
-    const cats = this.who.map((b, i) => ({ breed: b, x: xs[i], y: SPAWN.y, name: NAMES[b] }));
+    const ch = this.challenge;
+    const at = ch ? startSpot(ch.ch, this.save) : null;
+    const cats = this.who.map((b, i) => ({ breed: b, x: at ? at.x : xs[i], y: at ? at.y : SPAWN.y, name: NAMES[b] }));
     return { id: 'playground', name: 'Playground', theme: 'living', furniture: [], containers: [], decor: [], cats };
   }
 
   get sessionOptions(): SessionOptions {
     return {
-      shell: () => this.sim.build(this.save),
+      // (a challenge's course has no respawn cloud)
+      shell: () => this.sim.build(this.save, !this.challenge),
       // (a cat stuck fast goes to the nearest clear place: up here, anywhere)
       spawnOk: () => true,
       unmerge: true,
@@ -283,6 +339,9 @@ export class Playground {
       this.syncCam();
       this.host.renderer.puff(SPAWN.x, SPAWN.y - 560, 8);
     }
+    this.chBar.classList.add('hidden');
+    this.chCard.classList.add('hidden');
+    if (this.challenge) this.enterChallenge();
     if (this.tour) {
       // (the hammock hung still before anyone's there: the ride's the same whenever it starts)
       settleCourse(this.sim);
@@ -316,6 +375,254 @@ export class Playground {
       this.ownSave = null;
       this.tourCard.classList.add('hidden');
     }
+    this.chBar.classList.add('hidden');
+    this.chCard.classList.add('hidden');
+    this.firstPill.classList.add('hidden');
+    if (this.challenge && !this.goNext && !this.againNext) {
+      // (left for good: home, say)
+      this.challenge = null;
+      this.save = this.ownSave ?? this.save;
+      this.who = this.ownWho.length ? this.ownWho : this.who;
+      this.ownSave = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Challenges (challenges.ts)
+
+  /** The challenges: each one's goal and treats, done or not, the next one open. */
+  showChallenges(): void {
+    this.host.audio.click();
+    const done = solvedChallenges();
+    const rows = CHALLENGES.map((c, i) => {
+      const open = unlocked(i, done);
+      const ok = done.includes(c.id);
+      const state = ok ? '<span class="ch-state ch-done" aria-label="Done">✓</span>' : open ? '<span class="ch-state ch-open" aria-hidden="true">▶</span>' : '<span class="ch-state" aria-label="Not open yet">🔒</span>';
+      return `<button class="ch-row${ok ? ' done' : ''}" data-chi="${i}" ${open ? '' : 'disabled'}><span class="ch-num">${i + 1}</span><span class="shop-what"><b>${c.name}</b><small>${told(c.goal)}${ok ? '' : ` · ${c.treats} treats`}</small></span>${state}</button>`;
+    }).join('');
+    this.host.openOverlay(
+      `<div class="card shop-card" role="dialog" aria-label="Challenges">
+        <h2>Challenges</h2>
+        <p class="sub">A little course, a few pieces of your own, and a goal: put your pieces, press Go, and watch. Treats the first time each is done.</p>
+        <div class="shop-rows">${rows}</div>
+        <div class="btns"><button class="btn" data-close>Close</button></div>
+      </div>`,
+      (root) =>
+        root.querySelectorAll<HTMLElement>('[data-chi]').forEach((el) =>
+          el.addEventListener('click', () => {
+            this.host.closeOverlay();
+            this.startChallenge(CHALLENGES[Number(el.dataset.chi)]);
+          }),
+        ),
+    );
+  }
+
+  /** Into a challenge: its course up in place of your sky (yours waits, as it is, with whoever came). */
+  startChallenge(ch: Challenge): void {
+    if (this.tour) return;
+    if (this.placing) this.endPlacing(false, true);
+    if (!this.challenge) {
+      this.ownSave = this.save;
+      this.ownWho = [...this.who];
+      this.write();
+    }
+    this.challenge = { ch, phase: 'build', attempt: null, hint: false };
+    this.save = ch.course();
+    this.who = [CHALLENGE_CAT];
+    this.againNext = true;
+    this.chShown = '';
+    this.fresh();
+    this.introChallenge();
+  }
+
+  /** Out of the challenge: your own sky again, with whoever came up. */
+  leaveChallenge(): void {
+    if (!this.challenge) return;
+    this.host.audio.click();
+    if (this.placing) this.endPlacing(false, true);
+    this.challenge = null;
+    this.save = this.ownSave ?? this.save;
+    this.who = this.ownWho.length ? this.ownWho : this.who;
+    this.ownSave = null;
+    this.againNext = true;
+    this.fresh();
+  }
+
+  /** The sky afresh from what's built (the old one's riders and cannons let go of first). */
+  private againNext = false;
+  private fresh(): void {
+    this.tubes.finishAll();
+    this.works.releaseAll();
+    this.host.again();
+    this.againNext = false;
+  }
+
+  /** What there is to say about it first: the goal, and what you've got to do it with. */
+  private introChallenge(): void {
+    const c = this.challenge?.ch;
+    if (!c) return;
+    const kit = c.kit.map((k) => `<li>${k.n} × ${k.kind === 'tube' ? 'tube' : nameOf(k.kind).toLowerCase()}</li>`).join('');
+    const i = CHALLENGES.indexOf(c);
+    this.host.openOverlay(
+      `<div class="card" role="dialog" aria-label="${c.name}">
+        <h2>${i + 1}. ${c.name}</h2>
+        <p class="sub">${told(c.goal)}.</p>
+        <p class="hc-games">You've got:</p>
+        <ul class="ch-kit">${kit}</ul>
+        <p class="hc-games">Put them anywhere (tap <b>Pieces</b>), then press <b>Go!</b> Try as many times as you like.</p>
+        <div class="btns"><button class="btn primary" data-close>Let's go</button></div>
+      </div>`,
+    );
+  }
+
+  /** A fresh sky for a challenge: the cat at its start (in its cannon, waiting), the view on the course; or, Go pressed, off it goes. */
+  private enterChallenge(): void {
+    const c = this.challenge!;
+    settleCourse(this.sim);
+    this.bar.classList.add('hidden');
+    const cat = this.host.session.cats[0];
+    if (cat) holdInCannon(c.ch, this.sim, cat);
+    if (this.goNext && cat) {
+      this.goNext = false;
+      c.phase = 'go';
+      c.attempt = new Attempt(c.ch);
+      const at = setOff(c.ch, this.sim, this.host.session, cat);
+      this.host.renderer.puff(at.x, at.y + 10, 8);
+      this.host.audio.click();
+      this.follow = cat;
+    } else {
+      c.phase = 'build';
+      c.attempt = null;
+      this.frameCourse();
+    }
+    this.chShown = '';
+    this.refreshChallenge();
+  }
+
+  /** The view on the whole course. */
+  private frameCourse(): void {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of this.save.pieces) {
+      const b = pieceBox(p);
+      x0 = Math.min(x0, b.x0);
+      y0 = Math.min(y0, b.y0);
+      x1 = Math.max(x1, b.x1);
+      y1 = Math.max(y1, b.y1);
+    }
+    for (const t of this.save.tubes) {
+      const b = tubeBox(t);
+      x0 = Math.min(x0, b.x0);
+      y0 = Math.min(y0, b.y0);
+      x1 = Math.max(x1, b.x1);
+      y1 = Math.max(y1, b.y1);
+    }
+    const r = this.host.renderer;
+    const w = r.W / r.scale;
+    const h = (r.H - r.insets.top - r.insets.bottom - 120) / r.scale;
+    const zoom = clamp(Math.min(w / (x1 - x0 + 90), h / (y1 - y0 + 140)), ZOOM.min, 1.3);
+    this.cam = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 + 20 / zoom, zoom };
+    this.camV = { x: 0, y: 0 };
+    this.syncCam();
+  }
+
+  /** Go: a fresh sky from what's built, and the cat sets off. */
+  private chGo(): void {
+    const c = this.challenge;
+    if (!c || c.phase !== 'build') return;
+    if (this.placing) this.endPlacing(this.problem(this.placing) === null);
+    this.host.audio.click();
+    this.goNext = true;
+    this.fresh();
+  }
+
+  /** Back to building: the cat at its start again, everything you've put where you put it. */
+  private chAgain(): void {
+    const c = this.challenge;
+    if (!c) return;
+    this.host.audio.click();
+    this.follow = null;
+    this.goNext = false;
+    this.fresh();
+  }
+
+  /** How it went. */
+  private chEnded(o: Outcome): void {
+    const c = this.challenge!;
+    const cat = this.host.session.cats[0];
+    if (o.t === 'won') {
+      c.phase = 'won';
+      const first = markSolved(c.ch.id);
+      if (first) this.host.treats(c.ch.treats);
+      if (cat) {
+        cat.body.computeCentroid();
+        this.host.renderer.hearts(cat.body.cx, cat.body.cy - cat.body.p.radius - 6, 5);
+      }
+      this.host.audio.reveal();
+      const i = CHALLENGES.indexOf(c.ch);
+      const next = CHALLENGES[i + 1] ?? null;
+      setTimeout(() => {
+        if (this.challenge?.ch !== c.ch || c.phase !== 'won') return;
+        this.host.openOverlay(
+          `<div class="card" role="dialog" aria-label="Made it">
+            <h2>Made it!</h2>
+            <p class="sub">Challenge ${i + 1} done!</p>
+            ${first ? `<p class="ch-prize">+${c.ch.treats} treats</p>` : '<p class="hc-games">Done before (the treats were the first time).</p>'}
+            <div class="btns">${next ? '<button class="btn primary" data-act="next">Next challenge</button>' : ''}<button class="btn${next ? '' : ' primary'}" data-act="list">Challenges</button><button class="btn" data-act="leave">My Playground</button></div>
+          </div>`,
+          (root) => {
+            root.querySelector('[data-act=next]')?.addEventListener('click', () => {
+              this.host.closeOverlay();
+              if (next) this.startChallenge(next);
+            });
+            root.querySelector('[data-act=list]')!.addEventListener('click', () => this.showChallenges());
+            root.querySelector('[data-act=leave]')!.addEventListener('click', () => {
+              this.host.closeOverlay();
+              this.leaveChallenge();
+            });
+          },
+        );
+      }, 1300);
+    } else {
+      c.phase = 'lost';
+      c.attempt!.done = o;
+    }
+    this.refreshChallenge();
+  }
+
+  /** The bars and the card say how it's going. */
+  private refreshChallenge(): void {
+    const c = this.challenge;
+    if (!c) return;
+    const left = kitLeft(c.ch, this.save).reduce((n, k) => n + Math.max(0, k.n), 0);
+    const why = c.attempt?.done?.t === 'lost' ? c.attempt.done.why : null;
+    const key = `${c.phase}:${left}:${why}:${c.hint}:${!!this.placing}`;
+    if (key === this.chShown) return;
+    this.chShown = key;
+    const building = c.phase === 'build';
+    this.chBar.classList.toggle('hidden', !building || !!this.placing);
+    const note = this.chBar.querySelector<HTMLElement>('[data-ch=build] .tin-note')!;
+    note.textContent = left ? `${left} to put` : '';
+    const card = this.chCard;
+    const line = card.querySelector<HTMLElement>('.pg-tour-line')!;
+    const sub = card.querySelector<HTMLElement>('.pg-tour-sub')!;
+    const btns = card.querySelector<HTMLElement>('.pg-ch-btns')!;
+    card.classList.toggle('hidden', building || c.phase === 'won');
+    if (c.phase === 'go') {
+      line.textContent = 'Off it goes…';
+      sub.textContent = told(c.ch.goal);
+      btns.querySelector<HTMLElement>('[data-chc=hint]')!.hidden = true;
+      btns.querySelector<HTMLElement>('[data-chc=again]')!.textContent = 'Stop';
+    } else if (c.phase === 'lost') {
+      const name = NAMES[CHALLENGE_CAT];
+      line.textContent = 'Not quite!';
+      sub.textContent = c.hint ? `Hint: ${told(c.ch.hint)}.` : why === 'fell' ? `${name} fell into the clouds.` : why === 'stuck' ? `${name} stopped short.` : `That took a while: ${name} never got there.`;
+      btns.querySelector<HTMLElement>('[data-chc=hint]')!.hidden = c.hint;
+      btns.querySelector<HTMLElement>('[data-chc=again]')!.textContent = 'Try again';
+    }
+    this.lastHud = '';
   }
 
   // ---------------------------------------------------------------------------
@@ -416,8 +723,8 @@ export class Playground {
   }
 
   private write(): void {
-    // (the tour's course is never kept)
-    if (this.tour) return;
+    // (the tour's course, or a challenge's, is never kept)
+    if (this.tour || this.challenge) return;
     try {
       localStorage.setItem(PLAY_KEY, JSON.stringify(this.save));
     } catch {
@@ -498,7 +805,8 @@ export class Playground {
 
   private paintBack(ctx: Ctx, r: Rect): void {
     paintSky(ctx, r, this.cam.x, this.cam.y, this.seaY);
-    paintSpawn(ctx, this.time);
+    // (a challenge's course has no respawn cloud)
+    if (!this.challenge) paintSpawn(ctx, this.time);
     for (const t of this.save.tubes) if (overlaps(tubeBox(t), r)) this.paintTube(ctx, t, 'back', r);
     const tops = surfacesOf(this.save.pieces);
     for (const p of this.props) {
@@ -657,6 +965,7 @@ export class Playground {
   /** Over everything: what's being placed, and a little marker over the cat the view's following. */
   private paintOverlay(ctx: Ctx): void {
     if (this.tour) this.paintTourHint(ctx);
+    if (this.challenge) this.paintGoal(ctx);
     const f = this.follow;
     if (f && !this.tubes.riding(f)) {
       const b = f.body;
@@ -747,6 +1056,34 @@ export class Playground {
    * the tube itself, and its handles: an end each (drag one to draw on, or
    * back along it to take it in) and a grip in its middle to move it by.
    */
+  /** A challenge's goal: a gold star bobbing over it (till it's made). */
+  private paintGoal(ctx: Ctx): void {
+    const c = this.challenge!;
+    if (c.phase === 'won') return;
+    const p = this.save.pieces.find((q) => q.id === c.ch.target);
+    if (!p) return;
+    const b = pieceBox(p);
+    const x = (b.x0 + b.x1) / 2;
+    const y = b.y0 - 34 + Math.sin(this.time * 3) * 4;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(this.time * 1.6) * 0.12);
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const r = i % 2 ? 6.5 : 15;
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(246,200,95,0.98)';
+    ctx.strokeStyle = 'rgba(122,90,42,0.75)';
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /** The tour's pointers: rings round the cat to boop it, then the way to the cannon's mouth, and rings round that. */
   private paintTourHint(ctx: Ctx): void {
     const t = this.tour!;
@@ -1006,7 +1343,8 @@ export class Playground {
     this.cam.y = clamp(this.cam.y, reach.y0, reach.y1);
     this.syncCam();
     this.updateHud();
-    if (!this.tour && !this.placing && !this.host.overlayOpen()) this.tips();
+    if (!this.tour && !this.challenge && !this.placing && !this.host.overlayOpen()) this.tips();
+    if (this.challenge) this.refreshChallenge();
   }
 
   /** The Playground's tips, each once (ui/coach.ts): Build; then, with something built, how to ride a tube and change what's built. */
@@ -1071,11 +1409,17 @@ export class Playground {
   /** The top bar: where you are, and the cats here (tap one to follow it). */
   private updateHud(): void {
     const s = this.host.session;
-    const key = `${s.cats.map((c) => c.breed).join('|')}:${this.follow?.breed ?? ''}:${!!this.tour}`;
+    const key = `${s.cats.map((c) => c.breed).join('|')}:${this.follow?.breed ?? ''}:${!!this.tour}:${this.challenge?.ch.id ?? ''}`;
     if (key === this.lastHud) return;
     this.lastHud = key;
     const $ = (id: string): HTMLElement => document.getElementById(id)!;
-    $('roomName').textContent = 'Playground';
+    const ch = this.challenge?.ch;
+    $('roomName').textContent = ch ? `${CHALLENGES.indexOf(ch) + 1}. ${ch.name}` : 'Playground';
+    if (ch) {
+      $('roomSub').textContent = told(ch.goal);
+      $('faces').innerHTML = '';
+      return;
+    }
     $('roomSub').textContent = this.tour ? 'Your first visit' : this.follow ? `Following ${NAMES[this.follow.breed]}` : 'Tap a face to follow that cat';
     if (this.tour) {
       $('faces').innerHTML = '';
@@ -1095,7 +1439,7 @@ export class Playground {
   /** A finger down where there's no cat (the app has a cat that's touched). True if the playground takes it. */
   pointerDown(id: number, sx: number, sy: number, wx: number, wy: number): boolean {
     // (on the tour, the sky's just to look at)
-    if (!this.active || this.tour) return false;
+    if (!this.active || this.tour || (this.challenge && this.challenge.phase !== 'build')) return false;
     this.fingers.set(id, { sx, sy });
     if (this.fingers.size === 2) {
       // a second finger: a pinch (whatever the first was doing stops)
@@ -1338,6 +1682,8 @@ export class Playground {
   private pieceAt(wx: number, wy: number): PlayPiece | null {
     for (let i = this.save.pieces.length - 1; i >= 0; i--) {
       const p = this.save.pieces[i];
+      // (a challenge's course stays as it is)
+      if (this.challenge && ofCourse(this.challenge.ch, p.id)) continue;
       const b = pieceBox(p);
       if (wx > b.x0 && wx < b.x1 && wy > b.y0 && wy < b.y1) return p;
     }
@@ -1347,6 +1693,7 @@ export class Playground {
   private tubeAt(wx: number, wy: number): PlayTube | null {
     for (let i = this.save.tubes.length - 1; i >= 0; i--) {
       const t = this.save.tubes[i];
+      if (this.challenge && ofCourse(this.challenge.ch, t.id)) continue;
       if (distToTube(t, wx, wy) < TUBE.bell + 6) return t;
     }
     return null;
@@ -1357,6 +1704,10 @@ export class Playground {
 
   /** The pieces to build with: every perch, and a tube. */
   showBuild(): void {
+    if (this.challenge) {
+      this.showKit();
+      return;
+    }
     this.host.audio.click();
     coach.done('sky-build');
     // (nothing built yet: a tube's the thing to try first)
@@ -1392,6 +1743,44 @@ export class Playground {
           });
         });
       },
+    );
+  }
+
+  /** A challenge's pieces: only what's in its kit, and how many are left to put. */
+  private showKit(): void {
+    const c = this.challenge!;
+    if (c.phase !== 'build') return;
+    this.host.audio.click();
+    const rows = kitLeft(c.ch, this.save)
+      .map((k) => {
+        const kind = k.kind;
+        const name = kind === 'tube' ? 'Tube' : nameOf(kind);
+        const blurb = kind === 'tube' ? `Draw it with your finger (up to ${Math.round((k.max ?? 0) / 10) * 10} long)` : isGadget(kind) ? GADGETS[kind].blurb : SKY_BLURBS[kind];
+        return `<button class="pg-piece" data-piece="${k.kind}" ${k.n > 0 ? '' : 'disabled'}><span class="shop-pic"></span><span class="shop-what"><b>${name} <span class="pg-left">${k.n > 0 ? `${k.n} left` : 'all put'}</span></b><small>${blurb}</small></span></button>`;
+      })
+      .join('');
+    this.host.openOverlay(
+      `<div class="card shop-card" role="dialog" aria-label="Your pieces">
+        <h2>Your pieces</h2>
+        <p class="sub">${told(c.ch.goal)}. Put these anywhere, then press Go!</p>
+        <div class="shop-rows">${rows}</div>
+        <p class="shop-tip">Tap a piece you've put to move it, turn it, or take it back.</p>
+        <div class="btns"><button class="btn" data-close>Close</button></div>
+      </div>`,
+      (root) =>
+        root.querySelectorAll<HTMLElement>('[data-piece]').forEach((el) => {
+          const k = el.dataset.piece!;
+          const pic = el.querySelector('.shop-pic')!;
+          if (k === 'tube') pic.innerHTML = '<svg viewBox="0 0 64 46" aria-hidden="true"><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#BFD9E4" stroke-width="12" stroke-linecap="round"/><path d="M8 38 C 20 6, 34 44, 56 10" fill="none" stroke="#E8F4F8" stroke-width="5" stroke-linecap="round"/></svg>';
+          else if (isGadget(k)) pic.appendChild(gadgetThumb(k, 64, 46));
+          else pic.appendChild(perchThumb(k as PerchKind, 64, 46));
+          el.addEventListener('click', () => {
+            this.host.closeOverlay();
+            this.host.audio.seat(70);
+            if (k === 'tube') this.startTube(false);
+            else this.startPiece(k as PieceKind);
+          });
+        }),
     );
   }
 
@@ -1481,7 +1870,8 @@ export class Playground {
       if (pl.tube.pts.length < 2) return 'empty';
       const len = tubeLength(pl.tube);
       if (len < TUBE_LEN.min) return 'short';
-      if (len > TUBE_LEN.max + 1) return 'long';
+      const max = this.challenge?.ch.kit.find((k) => k.kind === 'tube')?.max ?? TUBE_LEN.max;
+      if (len > max + 1) return 'long';
     }
     // (one that's built and not changed is where it was: cats on it are fine)
     if (!pl.lifted) return null;
@@ -1687,7 +2077,8 @@ export class Playground {
   // Life up here
 
   canTouch(cat: Cat): boolean {
-    return !this.tubes.riding(cat) && this.works.inCannon(cat) === null && !this.tour?.handsOff;
+    // (on a challenge the cat's not to be carried: what you've built is to get it there)
+    return !this.tubes.riding(cat) && this.works.inCannon(cat) === null && !this.tour?.handsOff && !this.challenge;
   }
 
   /** A cat can be carried anywhere up here. */
@@ -1717,8 +2108,13 @@ export class Playground {
   /** One physics step: the springy pieces, the tubes, the toys, cats put in a tube's mouth or falling into the sea (sim.ts), and their sounds. */
   step(): void {
     if (!this.active) return;
+    const ch = this.challenge;
+    const going = ch?.phase === 'go' ? ch.attempt : null;
+    const own = !this.tour && !ch;
     for (const e of this.sim.step(this.seaY)) {
       const v = BREEDS[e.cat ? e.cat.breed : 'kitten'].voice;
+      going?.heard(e);
+      if (own && e.cat) this.firstFor(e);
       if (this.tour) {
         // (into the cannon, or straight into the tube: drawn in by its funnel, say)
         if (e.t === 'load' || e.t === 'in') this.tourRide(e.cat);
@@ -1754,11 +2150,45 @@ export class Playground {
           this.host.audio.boing(e.speed, e.cat ? clamp((e.cat.body.p.radius - 22) / 20, 0, 1) : 0);
           break;
         case 'fell':
-          this.respawn(e.cat);
+          // (on a challenge: that's that go done; see Attempt)
+          if (!ch) this.respawn(e.cat);
           break;
       }
     }
     if (this.tour) this.stepTour();
+    if (going && !going.done) {
+      const cat = this.host.session.cats[0];
+      const o = cat ? going.step(this.sim, cat) : null;
+      if (o) this.chEnded(o);
+    } else if (going?.done && ch?.phase === 'go') this.chEnded(going.done);
+    // a nap in a hammock (looked for now and then)
+    if (own && this.sim.frame % 30 === 0 && !this.firsts.has('hammock'))
+      for (const c of this.host.session.cats)
+        if (c.settled > 40 && this.props.some((p) => p.sling?.riders.includes(c.body))) this.first('hammock', c);
+  }
+
+  /** A first up here, from what just happened (a cannon shot, a tube...): treats, once each. */
+  private firstFor(e: SkyEvent): void {
+    const k: FirstKind | null =
+      e.t === 'fire' ? 'cannon' : e.t === 'in' ? 'tube' : e.t === 'suck' ? 'funnel' : e.t === 'blow' ? 'fan' : e.t === 'bump' ? 'bumper' : e.t === 'ride' ? 'belt' : e.t === 'boing' ? 'bounce' : null;
+    if (k && e.cat) this.first(k, e.cat);
+  }
+
+  private first(k: FirstKind, cat: Cat): void {
+    if (!this.firsts.claim(k)) return;
+    this.host.treats(FIRST_TREATS);
+    const b = cat.body;
+    b.computeCentroid();
+    this.host.renderer.hearts(b.cx, b.cy - b.p.radius - 6, 2);
+    this.host.audio.seat(90);
+    // (a pill under the top bar: where it can always be read)
+    const t = this.firstPill;
+    t.innerHTML = `<b>+${FIRST_TREATS} treats</b> ${FIRSTS[k]}`;
+    t.classList.remove('hidden', 'pg-first-go');
+    void t.offsetWidth;
+    t.classList.add('pg-first-go');
+    clearTimeout(this.firstTimer);
+    this.firstTimer = window.setTimeout(() => t.classList.add('hidden'), 2800);
   }
 
   /** The toys up in the sky, as the toys' works take them. */

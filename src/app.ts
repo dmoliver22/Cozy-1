@@ -14,6 +14,7 @@ import type { ExtraFloor } from './house/layout';
 import { pageStyles } from './pageStyles';
 import { Playground } from './playground/playground';
 import { TOUR_CAT, tourSeen } from './playground/tutorial';
+import { told } from './playground/challenges';
 import { mountDrop } from './proto/drop/mount';
 import { mountJar } from './proto/jar/mount';
 import { loadBest } from './proto/kit';
@@ -105,6 +106,8 @@ export class App {
       overlayOpen: () => !$('overlay').classList.contains('hidden'),
       carryFinger: () => this.carryFinger(),
       home: () => this.leavePlayground(),
+      again: () => this.goPlayground(this.playground.who),
+      treats: (n) => this.home.giveTreats(n),
     });
   }
 
@@ -510,6 +513,32 @@ export class App {
 
   /** Up in the clouds: home, everyone back on the respawn cloud, a clean sky. */
   private showSkyMenu(): void {
+    const ch = this.playground.challenge;
+    if (ch) {
+      this.openOverlay(
+        `<div class="card" role="dialog" aria-label="Menu">
+          <h2>${ch.ch.name}</h2>
+          <p class="sub">${told(ch.ch.goal)}</p>
+          <div class="menu-list">
+            <button class="menu-item" data-act="list"><span class="mi-icon">🏆</span><span>Challenges<small>All of them, and which are done</small></span></button>
+            <button class="menu-item" data-act="leave"><span class="mi-icon">☁️</span><span>My Playground<small>Back to your own sky</small></span></button>
+            <button class="menu-item" data-act="home"><span class="mi-icon">🏠</span><span>Back home<small>The house, and everyone in it</small></span></button>
+          </div>
+          ${this.togglesHtml()}
+          <div class="btns" style="margin-top:12px"><button class="btn" data-close>Back</button></div>
+        </div>`,
+        (root) => {
+          root.querySelector('[data-act=list]')!.addEventListener('click', () => this.playground.showChallenges());
+          root.querySelector('[data-act=leave]')!.addEventListener('click', () => {
+            this.closeOverlay();
+            this.playground.leaveChallenge();
+          });
+          root.querySelector('[data-act=home]')!.addEventListener('click', () => this.leavePlayground());
+          this.bindToggles(root);
+        },
+      );
+      return;
+    }
     if (this.playground.tour) {
       this.openOverlay(
         `<div class="card" role="dialog" aria-label="Menu">
@@ -535,6 +564,7 @@ export class App {
         <p class="sub">${n ? `${n} thing${n === 1 ? '' : 's'} built up here` : 'Nothing built up here yet: tap Build'}</p>
         <div class="menu-list">
           <button class="menu-item" data-act="home"><span class="mi-icon">🏠</span><span>Back home<small>The house, and everyone in it</small></span></button>
+          <button class="menu-item" data-act="challenges"><span class="mi-icon">🏆</span><span>Challenges<small>A course, a few pieces, a goal: treats the first time</small></span></button>
           <button class="menu-item" data-act="respawn"><span class="mi-icon">⭐</span><span>Respawn<small>Everyone back on the respawn cloud</small></span></button>
           <button class="menu-item" data-act="clear" ${n ? '' : 'disabled'}><span class="mi-icon">☁️</span><span>Clear the sky<small>Take away everything you've built</small></span></button>
         </div>
@@ -544,6 +574,7 @@ export class App {
       </div>`,
       (root) => {
         root.querySelector('[data-act=home]')!.addEventListener('click', () => this.leavePlayground());
+        root.querySelector('[data-act=challenges]')!.addEventListener('click', () => this.playground.showChallenges());
         root.querySelector('[data-act=respawn]')!.addEventListener('click', () => {
           this.closeOverlay();
           this.playground.respawnAll();

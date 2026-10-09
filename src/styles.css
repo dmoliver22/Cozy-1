@@ -1172,8 +1172,8 @@ button:focus-visible {
 
 /* ---------- the Playground ---------- */
 .play-bar {
-  gap: clamp(14px, 7vw, 34px);
-  padding: 9px 18px 7px;
+  gap: clamp(10px, 5vw, 26px);
+  padding: 9px 16px 7px;
 }
 .play-bar .tin-label {
   white-space: nowrap;
@@ -1342,7 +1342,8 @@ button:focus-visible {
   font-size: 16px;
 }
 /* the first-time tour's card (playground/tutorial.ts), where the Playground's bar goes */
-.pg-tour {
+.pg-tour,
+.pg-ch {
   position: absolute;
   left: 50%;
   bottom: calc(14px + var(--safe-bottom));
@@ -1400,7 +1401,8 @@ button:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pg-tour {
+  .pg-tour,
+  .pg-ch {
     animation: none;
   }
 }
@@ -1483,4 +1485,135 @@ button:focus-visible {
   font-size: 12px;
   font-weight: 800;
   vertical-align: 2px;
+}
+/* challenges (playground/challenges.ts): the list, a go's card, the kit */
+.ch-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--line);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ch-row[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.ch-num {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #3e3a4f;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 17px;
+}
+.ch-row[disabled] .ch-num {
+  background: var(--line);
+  color: var(--panel-muted);
+}
+.ch-state {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--panel-muted);
+}
+.ch-done {
+  color: #4f9a6a;
+  font-size: 20px;
+}
+.ch-open {
+  color: #c98a2e;
+}
+.ch-kit {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.ch-kit li {
+  padding: 4px 12px;
+  border-radius: 14px;
+  background: var(--line);
+  font-weight: 800;
+}
+.ch-prize {
+  margin: 4px 0 10px;
+  text-align: center;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 24px;
+  color: #c98a2e;
+}
+.pg-ch .pg-tour-line {
+  margin-inline: 0;
+}
+.pg-ch-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pg-ch-btns .btn {
+  flex: 1;
+  min-width: 0;
+}
+.pg-ch-btns .btn[hidden] {
+  display: none;
+}
+.pg-left {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #c98a2e;
+}
+.pg-piece[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.pg-first {
+  position: absolute;
+  left: 50%;
+  top: calc(76px + var(--safe-top));
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 7px 16px;
+  border-radius: 20px;
+  background: var(--panel-solid);
+  color: var(--panel-ink);
+  box-shadow: var(--shadow);
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 6;
+}
+.pg-first b {
+  color: #c98a2e;
+  margin-right: 4px;
+}
+.pg-first-go {
+  animation: pg-first-in 0.35s ease-out;
+}
+@keyframes pg-first-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pg-first-go {
+    animation: none;
+  }
 }

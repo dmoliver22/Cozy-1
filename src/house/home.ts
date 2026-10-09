@@ -735,6 +735,16 @@ export class Home {
     if (this.active) this.refreshBar();
   }
 
+  /** Treats earned somewhere else (up in the clouds): into the house, shown coming in when it's next on screen. */
+  giveTreats(n: number): void {
+    if (n <= 0) return;
+    this.house.treats += n;
+    this.house.earned += n;
+    writeHouse(this.house);
+    if (this.active) this.treatsGained(n);
+    else this.pendingTreats += n;
+  }
+
   /** A toast with a cat's face, over whatever's on screen. */
   toast(breed: BreedId, text: string, ms = 3600): void {
     const t = this.toastEl;

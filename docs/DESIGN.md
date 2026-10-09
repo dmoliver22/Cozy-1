@@ -685,6 +685,42 @@ the choices:
   in 15° steps like the others). The tube's mouth then does the rest.
   Without a tube a cat pours out of the spout. A cat in a funnel is drawn
   behind its near glass.
+- **Challenges** (`challenges.ts`). Each is a course (a save, with no
+  respawn cloud), a start, a goal piece and a kit:
+  - The start is a cannon holding the cat till Go (`GadgetWorks.load(...,
+    held)`), or a cloud it sits on that puffs away at Go.
+  - The kit is how many of which pieces (and a tube's longest).
+
+  It runs like the tour: the course goes up in place of your sky. Your own
+  sky and whoever came up wait, and come back as they were; nothing's
+  saved. You can't carry the cat, and the course's pieces can't be picked.
+  The bar is Leave, Pieces (the kit, how many left) and Go. Every Go builds
+  a fresh session from the course plus your pieces (`PlayHost.again`) and
+  sets the cat off fresh (`setOff`: a round cat, its counters reset), so a
+  go is the same whenever Go is pressed.
+
+  `Attempt` judges a go:
+  - won: lying still on the goal for half a second;
+  - lost: fell into the clouds, stopped anywhere else, or 12 s gone.
+
+  The card offers a hint and Try again (a fresh sky, your pieces kept).
+  Made it: the challenge is marked done (`cozy-challenges:v1`), the next
+  opens, and the first time its treats go into the house
+  (`PlayHost.treats` to `Home.giveTreats`).
+
+  The six (belt; fan; a funnel on a tube the cannon just misses; drawing a
+  tube; fan and funnel; the grand tour, which is the tour's course without
+  its funnel and fan) are each tested: their way works however long you
+  wait to press Go, nothing at all doesn't, and in the two-piece ones
+  neither piece alone does. They were tuned by searching where a piece can
+  go and still win, so each has a band of right answers, not one spot.
+- **Firsts** (`firsts.ts`): in your own sky (not the tour or a challenge),
+  the first time a cat does each thing is worth 5 treats, once each
+  (`cozy-firsts:v1`), shown in a pill under the top bar. Each thing is
+  heard from the sky's events: a shot, into a tube, a bumper, a boing,
+  and, new from the toys' works, a cat newly caught by a fan's wind, a
+  funnel's pull or a belt. A nap in a hammock is looked for every half
+  second.
 - **Tips** (`src/ui/coach.ts`): one line each, once each (`cozy-tips:v1`),
   in a bubble pointing at what it's about. One shows at a time: the first
   waiting tip whose thing is on screen, never over a card. Tap it, or do

@@ -182,7 +182,9 @@ export function gadgetSurface(g: Pick<Gadget, 'kind' | 'x' | 'y'>, propId: numbe
 export type GadgetEvent =
   | { t: 'load'; cat: Cat; id: number }
   | { t: 'fire'; cat: Cat; id: number; x: number; y: number }
-  | { t: 'bump'; cat: Cat; id: number; speed: number };
+  | { t: 'bump'; cat: Cat; id: number; speed: number }
+  /** Caught by a fan's wind, a funnel's pull, or a belt, just now (it wasn't the step before). */
+  | { t: 'blow' | 'suck' | 'ride'; cat: Cat; id: number };
 
 /** A cat in a cannon: how long it's been in, its shape as it went in (which way round each bit of it is, stuffed in), and where its back end sticks out. */
 interface Loaded {
@@ -191,6 +193,8 @@ interface Loaded {
   t: number;
   shape: Float64Array;
   rump: Rump | null;
+  /** Waiting to be fired (a challenge's cannon, till Go). */
+  held: boolean;
 }
 
 /** The back end of a cat stuffed in a cannon: the tip of it (world), the way it points (out of the muzzle), and how long and wide its bulge is. */
@@ -215,6 +219,8 @@ const tremble = (t: number): number => Math.sin(t * 70) * 1.6 * Math.min(1, t / 
 export class GadgetWorks {
   private loaded: Loaded[] = [];
   private bumped = new Map<Cat, number>();
+  /** Who each fan, funnel and belt had last step (to say when one's newly caught). */
+  private had = new Map<number, Set<Cat>>();
   /** Each bumper's flash (1 just hit, fading), each cannon's kick back. */
   readonly flash = new Map<number, number>();
   readonly recoil = new Map<number, number>();
@@ -232,6 +238,15 @@ export class GadgetWorks {
   charge(id: number): number {
     const l = this.loaded.find((q) => q.id === id);
     return l ? Math.min(1, l.t / CANNON.wait) : 0;
+  }
+
+  /** A held cannon goes: it trembles, and fires (false: no cat waiting in it). */
+  fire(id: number): boolean {
+    const l = this.loaded.find((q) => q.id === id && q.held);
+    if (!l) return false;
+    l.held = false;
+    l.t = 0;
+    return true;
   }
 
   /** How far a cannon's barrel is shaken across this frame (a cat in it, about to go). */
@@ -262,7 +277,7 @@ export class GadgetWorks {
   }
 
   /** Into the cannon a cat goes (if there's room: one at a time). */
-  load(cat: Cat, g: Gadget): boolean {
+  load(cat: Cat, g: Gadget, held = false): boolean {
     if (this.loaded.some((l) => l.id === g.id || l.cat === cat) || (this.fired.get(cat) ?? 0) > 0) return false;
     const b = cat.body;
     if (b.grab) b.releaseGrab();
@@ -273,7 +288,7 @@ export class GadgetWorks {
       shape[i * 2 + 1] = b.y[i] - b.cy;
     }
     this.world().removeBody(b);
-    const l: Loaded = { cat, id: g.id, t: 0, shape, rump: null };
+    const l: Loaded = { cat, id: g.id, t: 0, shape, rump: null, held };
     this.loaded.push(l);
     this.stuff(l, g);
     return true;
@@ -294,7 +309,7 @@ export class GadgetWorks {
     // the cats in cannons: squeezed into the barrel, till it fires
     for (const l of [...this.loaded]) {
       const g = byId.get(l.id);
-      l.t += dt;
+      if (!l.held) l.t += dt;
       if (!g) {
         // (its cannon's gone: out it comes, where it was)
         this.unload(l, null);
@@ -312,10 +327,14 @@ export class GadgetWorks {
       const b = cat.body;
       b.computeCentroid();
       for (const g of gadgets) {
-        if (g.kind === 'fan') this.blow(g, b);
-        else if (g.kind === 'belt') this.carry(g, b);
-        else if (g.kind === 'funnel') this.suck(g, b);
-        else if (g.kind === 'bumper') {
+        if (g.kind === 'fan' || g.kind === 'belt' || g.kind === 'funnel') {
+          const caught = g.kind === 'fan' ? this.blow(g, b) : g.kind === 'belt' ? this.carry(g, b) : this.suck(g, b);
+          const had = this.had.get(g.id) ?? new Set<Cat>();
+          this.had.set(g.id, had);
+          if (caught && !had.has(cat)) out.push({ t: g.kind === 'fan' ? 'blow' : g.kind === 'belt' ? 'ride' : 'suck', cat, id: g.id });
+          if (caught) had.add(cat);
+          else had.delete(cat);
+        } else if (g.kind === 'bumper') {
           const hit = this.bump(g, cat);
           if (hit) out.push({ t: 'bump', cat, id: g.id, speed: hit });
         } else if (g.kind === 'cannon') {
@@ -411,13 +430,13 @@ export class GadgetWorks {
   }
 
   /** A fan's wind: a push along it, strongest by the fan (a cat in an upward one floats where the push and its weight match). */
-  private blow(g: Gadget, b: SoftBody): void {
+  private blow(g: Gadget, b: SoftBody): boolean {
     const d = aimDir(g);
     const rx = b.cx - (g.x + d.x * FAN.r);
     const ry = b.cy - (g.y + d.y * FAN.r);
     const along = rx * d.x + ry * d.y;
     const across = Math.abs(rx * d.y - ry * d.x);
-    if (along < -b.p.radius * 0.5 || along > FAN.reach || across > FAN.half + b.p.radius * 0.5) return;
+    if (along < -b.p.radius * 0.5 || along > FAN.reach || across > FAN.half + b.p.radius * 0.5) return false;
     const push = FAN.push * (1 - 0.65 * Math.max(0, along) / FAN.reach);
     b.wake();
     for (let i = 0; i < b.n; i++) {
@@ -427,6 +446,7 @@ export class GadgetWorks {
       b.vx[i] += d.x * a;
       b.vy[i] += d.y * a;
     }
+    return true;
   }
 
   /**
@@ -435,11 +455,11 @@ export class GadgetWorks {
    * sideways swing damped, whichever way the funnel faces. Not one going out
    * of it fast: just shot out of the tube under it.
    */
-  private suck(g: Gadget, b: SoftBody): void {
-    if (!inFunnel(g, b.cx, b.cy)) return;
+  private suck(g: Gadget, b: SoftBody): boolean {
+    if (!inFunnel(g, b.cx, b.cy)) return false;
     const d = aimDir(g);
     const out = b.vcx * d.x + b.vcy * d.y;
-    if (out > 120) return;
+    if (out > 120) return false;
     const px = -d.y;
     const py = d.x;
     const v = (b.cx - g.x) * px + (b.cy - g.y) * py;
@@ -450,10 +470,11 @@ export class GadgetWorks {
       b.vx[i] += (-d.x * FUNNEL.pull + px * across) * FRAME_DT;
       b.vy[i] += (-d.y * FUNNEL.pull + py * across) * FRAME_DT;
     }
+    return true;
   }
 
   /** A belt: a cat sitting on it is carried along (its feet at the belt's speed). */
-  private carry(g: Gadget, b: SoftBody): void {
+  private carry(g: Gadget, b: SoftBody): boolean {
     const d = aimDir(g);
     const target = d.x * BELT.speed;
     let on = false;
@@ -463,9 +484,10 @@ export class GadgetWorks {
         break;
       }
     }
-    if (!on) return;
+    if (!on) return false;
     b.wake();
     for (let i = 0; i < b.n; i++) b.vx[i] += (target - b.vx[i]) * 0.18;
+    return true;
   }
 
   /** A bumper: touched, the cat's bounced straight off it (not again for a moment). Returns how hard, or 0. */

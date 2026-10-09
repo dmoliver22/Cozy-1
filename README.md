@@ -189,6 +189,17 @@ The Playground (the cloud tin on the bar along the bottom):
   tube's mouth. One that falls off everything drops into the sea of cloud far
   below and comes back on the respawn cloud; **Respawn** brings everyone back
   there.
+- **Challenges** (the Challenges tin): six little courses, each with a goal
+  (a cat bed or a hammock with a gold star over it) and a few pieces of your
+  own to put: a belt, a fan, a funnel, a tube... Put them, press **Go!**, and
+  watch Kitten set off (fired from a cannon, or dropped as the cloud it's
+  sitting on puffs away). Not quite? There's a hint, and Try again keeps what
+  you've put. Each one done opens the next and pays treats the first time
+  (10 up to 40). Every Go starts from the same fresh sky, so a way that works
+  once always works.
+- **Treats up here**: the first time a cat does each thing in your own sky
+  (a cannon shot, a tube ride, down a funnel, on a fan's wind, off a bumper,
+  along a belt, a boing, a nap in a hammock) is worth 5 treats, once each.
 - **The sky tube**: once the roof garden's open, a cat let go under the hood
   hanging over the middle of it goes up and away, out of the top of the house
   and down out of the clouds onto the respawn cloud.
